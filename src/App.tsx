@@ -1,7 +1,8 @@
 // src/App.tsx
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { db, SessionRepository, type InspectionSession, type InspectionPhoto } from './db/db';
-import { uploadToDrive } from './services/driveService'; import { exportToPDF } from './utils/pdfExport';
+import { SessionRepository, type InspectionSession, type InspectionPhoto } from './db/db';
+import { uploadToDrive } from './services/driveService'; 
+import { exportToPDF } from './utils/pdfExport';
 
 // ─────────────────────────────────────────────
 // TYPES
