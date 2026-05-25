@@ -1,7 +1,7 @@
 // src/App.tsx
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { db, SessionRepository, type InspectionSession, type InspectionPhoto } from './db/db';
-import { uploadToDrive } from './services/driveService';
+import { uploadToDrive } from './services/driveService'; import { exportToPDF } from './utils/pdfExport';
 
 // ─────────────────────────────────────────────
 // TYPES
@@ -574,6 +574,26 @@ export default function App() {
         ══════════════════════════════════════ */}
         {view === 'FORM' && (
           <div className="space-y-5">
+    
+    {/* --- TAMBAH INI --- */}
+    <button 
+      onClick={() => exportToPDF('area-cetak', 'Laporan-Inspeksi')}
+      className="w-full py-3 bg-blue-600 text-white font-bold rounded-xl shadow-lg hover:bg-blue-700 transition-all"
+    >
+      Download PDF
+    </button>
+    {/* ------------------ */}
+
+    {/* BUNGKUS DARI SINI */}
+    <div id="area-cetak" className="space-y-5">
+      
+      {/* Form header */}
+      <div className="flex items-center gap-3">
+      </div>
+
+      {/* ... semua kode form lu dari "Nama Perusahaan Klien" sampe "Save button" tetep di dalem sini ... */}
+      
+    </div>
             {/* Form header */}
             <div className="flex items-center gap-3">
               <button
@@ -1044,6 +1064,15 @@ function HistoryCard({
 
   return (
     <div className="bg-white border border-gray-100 shadow-sm rounded-xl p-4 space-y-3">
+      
+      {/* Tombol PDF (Panggil fungsi dari utils) */}
+      <button 
+        onClick={() => exportToPDF(item, `Laporan-${item.unitData?.namaUnit || 'Inspeksi'}`)}
+        className="w-full py-2 bg-blue-600 text-white text-[10px] font-bold rounded-lg hover:bg-blue-700 transition-all mb-2"
+      >
+        Download PDF Laporan
+      </button>
+
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
           <span className="text-2xl flex-shrink-0">{meta?.icon || '📋'}</span>
