@@ -7,21 +7,10 @@
     <title>Aksara K3 PWA</title>
     
     <link rel="manifest" href="/manifest.json">
-    
-    <script src="https://cdn.tailwindcss.com"></script>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
     
-    <script>
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js')
-            .then(() => console.log("Otak Offline Aksara K3 Aktif!"))
-            .catch(err => console.error("Gagal aktivasi:", err));
-        });
-      }
-    </script>
-  </body>
+    </body>
 </html>
