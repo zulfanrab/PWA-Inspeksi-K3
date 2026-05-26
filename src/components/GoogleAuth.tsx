@@ -4,8 +4,8 @@ import { GOOGLE_CONFIG } from '../config';
 export default function GoogleAuth() {
   
   const handleLogin = () => {
-    // Simulasi alur OAuth 2.0
-    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CONFIG.clientId}&redirect_uri=${window.location.origin}&response_type=token&scope=${GOOGLE_CONFIG.scope}`;
+    const redirectUri = GOOGLE_CONFIG.redirectUri || (typeof window !== 'undefined' ? window.location.origin : '');
+    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CONFIG.clientId}&redirect_uri=${redirectUri}&response_type=token&scope=${GOOGLE_CONFIG.scope}`;
     window.location.href = authUrl;
   };
 

@@ -288,9 +288,10 @@ const OBJECT_TYPES = [
 // ─── OAUTH ───────────────────────────────────────────────────────────────────
 
 function buildOAuthUrl() {
+  const redirectUri = GOOGLE_CONFIG.redirectUri || window.location.origin;
   const params = new URLSearchParams({
     client_id: GOOGLE_CONFIG.clientId,
-    redirect_uri: window.location.origin,
+    redirect_uri: redirectUri,
     response_type: 'token',
     scope: GOOGLE_CONFIG.scope + ' email profile',
     prompt: 'select_account',
