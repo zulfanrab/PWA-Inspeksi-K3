@@ -3,7 +3,7 @@
 // CHANGED: Tidak ada perubahan internal — props dan render tetap sama
 //          Perubahan UX ada di App.tsx (banner template di atas FormView)
 
-import { } from 'react';
+import type { ReactNode } from 'react';
 import type { InspectionPhoto } from '../db/db';
 
 // ==========================================
@@ -27,7 +27,7 @@ interface ObjectMeta {
   key: string;
   label: string;
   desc: string;
-  icon: string;
+  icon: ReactNode;
 }
 
 interface FormViewProps {
