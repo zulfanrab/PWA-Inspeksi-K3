@@ -3,7 +3,7 @@
 // CHANGED: Tidak ada perubahan internal — props dan render tetap sama
 //          Perubahan UX ada di App.tsx (banner template di atas FormView)
 
-import { useRef } from 'react';
+import { } from 'react';
 import type { InspectionPhoto } from '../db/db';
 
 // ==========================================

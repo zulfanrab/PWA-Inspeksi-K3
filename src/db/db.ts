@@ -91,7 +91,7 @@ export class MyDatabase extends Dexie {
       client_templates: 'id, name, createdAt, createdBy',
       unit_templates: 'id, clientId, objectType, createdAt, createdBy',
       user_roles: 'id, role, createdAt',
-    }).upgrade(async (trans) => {
+    }).upgrade(async (_trans) => {
       // Migration: data lama tetap aman, tabel baru kosong
       console.log('[DB] Migrating to v5: adding client_templates, unit_templates, user_roles');
     });
@@ -258,9 +258,7 @@ export const UnitRepository = {
 
 // Daftar email admin & ahli yang hardcoded sebagai seed awal
 // Admin bisa tambah/ubah melalui AdminPanel
-const SEED_ADMINS = [
-  // Tambahkan email owner/admin di sini
-];
+
 
 export const RoleRepository = {
   getAll: async (): Promise<UserRole[]> => {
