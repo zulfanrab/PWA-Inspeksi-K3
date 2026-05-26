@@ -1,10 +1,11 @@
 // src/components/GoogleAuth.tsx
-import { GOOGLE_CONFIG } from '../config';
+import { GOOGLE_CONFIG, getGoogleRedirectUri } from '../config';
 
 export default function GoogleAuth() {
   
   const handleLogin = () => {
-    const redirectUri = GOOGLE_CONFIG.redirectUri || (typeof window !== 'undefined' ? window.location.origin : '');
+    const redirectUri = getGoogleRedirectUri();
+    console.debug('[OAuth] redirect_uri:', redirectUri);
     const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CONFIG.clientId}&redirect_uri=${redirectUri}&response_type=token&scope=${GOOGLE_CONFIG.scope}`;
     window.location.href = authUrl;
   };

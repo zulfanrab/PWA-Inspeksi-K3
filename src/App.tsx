@@ -17,7 +17,7 @@ import {
   TokenExpiredError,
   type UploadProgress,
 } from './services/driveService';
-import { GOOGLE_CONFIG } from './config';
+import { GOOGLE_CONFIG, getGoogleRedirectUri } from './config';
 import { FormView } from './components/FormView';
 import { SyncHub } from './components/SyncHub';
 import { HistoryView } from './components/HistoryView';
@@ -68,7 +68,7 @@ const SPECIFIC_FIELDS: Record<string, FieldDef[]> = {
   ],
   PAA: [
     { name: 'jenisPAA',            label: 'Jenis Pesawat Angkat',       type: 'select', required: true, options: ['Overhead Crane','Mobile Crane','Tower Crane','Crawler Crane','Forklift','Reach Stacker','Hoist (Electric)','Hoist (Manual)','Gondola','Pallet Truck','Lainnya'] },
-    { name: 'kapasitasAngkat',     label: 'Kapasitas Angkat Maksimum',  type: 'number', unit: 'Ton', required: true },
+    { name: 'kapasitasAngKat',     label: 'Kapasitas Angkat Maksimum',  type: 'number', unit: 'Ton', required: true },
     { name: 'jangkauanBoom',       label: 'Jangkauan / Span Boom',      type: 'number', unit: 'm' },
     { name: 'tinggiAngkatMaks',    label: 'Tinggi Angkat Maksimum',     type: 'number', unit: 'm' },
     { name: 'jenisPenggerak',      label: 'Jenis Penggerak',            type: 'select', options: ['Electric','Diesel','Hydraulic','Manual','Pneumatic','Lainnya'] },
@@ -288,7 +288,8 @@ const OBJECT_TYPES = [
 // ─── OAUTH ───────────────────────────────────────────────────────────────────
 
 function buildOAuthUrl() {
-  const redirectUri = GOOGLE_CONFIG.redirectUri || window.location.origin;
+  const redirectUri = getGoogleRedirectUri();
+  console.debug('[OAuth] redirect_uri:', redirectUri);
   const params = new URLSearchParams({
     client_id: GOOGLE_CONFIG.clientId,
     redirect_uri: redirectUri,
