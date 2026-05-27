@@ -20,6 +20,8 @@ import {
   saveToken,
   clearToken,
   TokenExpiredError,
+  hasValidToken,
+  isTokenExpiringSoon,
   type UploadProgress,
 } from './services/driveService';
 import { GOOGLE_CONFIG, getGoogleRedirectUri } from './config';
@@ -558,6 +560,30 @@ export default function App() {
     refreshData();
   }, [refreshData, setupRole]);
 
+  // NEW: Auto sync semua draft saat online
+  const triggerAutoSync = useCallback(async () => {
+    if (!hasValidToken()) return;
+    const currentDrafts = await SessionRepository.getDrafts();
+    if (currentDrafts.length === 0) return;
+    for (const draft of currentDrafts) {
+      try {
+        setUploadingId(draft.id);
+        await uploadToDrive(draft, draft.photos, (p) => setUploadProgress(p));
+        await SessionRepository.markSynced(draft.id);
+      } catch (err: unknown) {
+        const e = err as Error;
+        if (err instanceof TokenExpiredError) {
+          setIsAuthenticated(false);
+          setTokenError(e.message);
+          break;
+        }
+      }
+    }
+    setUploadingId(null);
+    setUploadProgress(null);
+    await refreshData();
+  }, [refreshData]);
+
   // NEW: Online/offline listener + auto sync
   useEffect(() => {
     const handleOnline = () => {
@@ -579,32 +605,17 @@ export default function App() {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, []);
+  }, [triggerAutoSync]);
 
-  // NEW: Auto sync semua draft saat online
-  const triggerAutoSync = useCallback(async () => {
-    if (!isAuthenticated) return;
-    const currentDrafts = await SessionRepository.getDrafts();
-    if (currentDrafts.length === 0) return;
-    console.log(`[AutoSync] Memulai sync ${currentDrafts.length} draft...`);
-    for (const draft of currentDrafts) {
-      try {
-        setUploadingId(draft.id);
-        await uploadToDrive(draft, draft.photos, (p) => setUploadProgress(p));
-        await SessionRepository.markSynced(draft.id);
-      } catch (err: any) {
-        console.warn(`[AutoSync] Gagal sync ${draft.id}:`, err.message);
-        if (err instanceof TokenExpiredError) {
-          setIsAuthenticated(false);
-          setTokenError(err.message);
-          break;
-        }
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (isAuthenticated && isTokenExpiringSoon(10)) {
+        setTokenError('Sesi akan berakhir. Login ulang untuk lanjut sync.');
+        setIsAuthenticated(false);
       }
-    }
-    setUploadingId(null);
-    setUploadProgress(null);
-    await refreshData();
-  }, [isAuthenticated, refreshData]);
+    }, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [isAuthenticated]);
 
   // NEW: Toggle auto sync
   const handleAutoSyncToggle = (val: boolean) => {

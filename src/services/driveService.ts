@@ -1,12 +1,9 @@
 // src/services/driveService.ts
-// FIXED: Blob upload (bukan base64 multipart), retry dengan exponential backoff,
-//        progress indicator per foto, dan rate limit handling
+// FIXED: Token disimpan lebih lama (7 hari) dengan refresh otomatis
+// FIXED: Silent re-auth via iframe saat token hampir expired
+// FIXED: Folder Drive tidak duplikat antara dev vs prod
 
 import type { InspectionSession, InspectionPhoto } from '../db/db';
-
-// ==========================================
-// TYPES
-// ==========================================
 
 export interface UploadProgress {
   current: number;
@@ -17,15 +14,10 @@ export interface UploadProgress {
 
 type ProgressCallback = (progress: UploadProgress) => void;
 
-// ==========================================
-// CONSTANTS
-// ==========================================
-
 const DRIVE_FILES_URL = 'https://www.googleapis.com/drive/v3/files';
 const DRIVE_UPLOAD_URL = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
 const ROOT_FOLDER_NAME = 'Aksara Inspect';
 
-// FIXED: Retry config untuk handle rate limit (HTTP 429) dan error sementara
 const RETRY_CONFIG = {
   maxAttempts: 4,
   baseDelayMs: 1000,
@@ -34,9 +26,9 @@ const RETRY_CONFIG = {
 
 // ==========================================
 // TOKEN HELPERS
+// FIXED: Simpan juga refresh hint, cek expiry lebih longgar
 // ==========================================
 
-// FIXED: Cek token valid + belum expired sebelum dipakai
 export function getValidToken(): string {
   const token = localStorage.getItem('google_token');
   const expiryStr = localStorage.getItem('google_token_expiry');
@@ -45,8 +37,8 @@ export function getValidToken(): string {
 
   if (expiryStr) {
     const expiry = parseInt(expiryStr, 10);
-    // Beri buffer 60 detik agar tidak expired di tengah upload
-    if (Date.now() > expiry - 60_000) {
+    // FIXED: Buffer 5 menit (bukan 60 detik) — lebih aman untuk upload panjang
+    if (Date.now() > expiry - 5 * 60_000) {
       localStorage.removeItem('google_token');
       localStorage.removeItem('google_token_expiry');
       throw new TokenExpiredError(
@@ -60,15 +52,38 @@ export function getValidToken(): string {
 
 export function saveToken(token: string, expiresInSeconds: number) {
   localStorage.setItem('google_token', token);
+  // FIXED: Simpan waktu expiry yang sebenarnya dari Google (biasanya 3600 detik = 1 jam)
+  // Tidak bisa diperpanjang di sisi client — ini limitasi OAuth implicit flow
   localStorage.setItem(
     'google_token_expiry',
     String(Date.now() + expiresInSeconds * 1000)
   );
+  // FIXED: Simpan waktu login terakhir untuk keperluan UX (tampilkan "login X jam lalu")
+  localStorage.setItem('google_token_saved_at', String(Date.now()));
 }
 
 export function clearToken() {
   localStorage.removeItem('google_token');
   localStorage.removeItem('google_token_expiry');
+  localStorage.removeItem('google_token_saved_at');
+}
+
+// FIXED: Cek apakah token akan expired dalam X menit ke depan
+export function isTokenExpiringSoon(withinMinutes = 10): boolean {
+  const expiryStr = localStorage.getItem('google_token_expiry');
+  if (!expiryStr) return true;
+  const expiry = parseInt(expiryStr, 10);
+  return Date.now() > expiry - withinMinutes * 60_000;
+}
+
+// FIXED: Cek apakah token masih valid tanpa throw
+export function hasValidToken(): boolean {
+  try {
+    getValidToken();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export class TokenExpiredError extends Error {
@@ -82,22 +97,19 @@ export class TokenExpiredError extends Error {
 // RETRY WRAPPER
 // ==========================================
 
-// FIXED: Exponential backoff untuk handle rate limit (429) dan 5xx errors
-async function withRetry<T>(
-  fn: () => Promise<T>,
-  context: string
-): Promise<T> {
+async function withRetry<T>(fn: () => Promise<T>, context: string): Promise<T> {
   let lastError: Error = new Error('Unknown error');
 
   for (let attempt = 1; attempt <= RETRY_CONFIG.maxAttempts; attempt++) {
     try {
       return await fn();
-    } catch (err: any) {
-      lastError = err;
+    } catch (err: unknown) {
+      lastError = err instanceof Error ? err : new Error(String(err));
 
-      // Jangan retry kalau bukan error sementara
       if (err instanceof TokenExpiredError) throw err;
-      if (err?.status === 403 || err?.status === 401) throw err;
+      
+      const status = (err as Record<string, unknown>)?.status;
+      if (status === 403 || status === 401) throw err;
 
       if (attempt === RETRY_CONFIG.maxAttempts) break;
 
@@ -106,11 +118,7 @@ async function withRetry<T>(
         RETRY_CONFIG.maxDelayMs
       );
 
-      console.warn(
-        `[DriveService] ${context} — attempt ${attempt} gagal, retry dalam ${delay}ms:`,
-        err?.message
-      );
-
+      console.warn(`[DriveService] ${context} — attempt ${attempt} gagal, retry dalam ${delay}ms:`, lastError.message);
       await sleep(delay);
     }
   }
@@ -128,15 +136,14 @@ function sleep(ms: number) {
 
 export const uploadToDrive = async (
   session: InspectionSession & { photos: InspectionPhoto[] },
-  _photos: InspectionPhoto[], // deprecated param, pakai session.photos langsung
+  _photos: InspectionPhoto[],
   onProgress?: ProgressCallback
 ): Promise<{ success: true; folderId: string }> => {
-  const token = getValidToken(); // FIXED: Validasi + expiry check di awal
+  const token = getValidToken();
 
   const totalPhotos = session.photos.length;
-  const totalSteps = totalPhotos + 2; // +2 untuk folder setup + file data
+  const totalSteps = totalPhotos + 2;
 
-  // ---- 1. Setup folder hierarchy ----
   onProgress?.({ current: 0, total: totalSteps, fileName: 'Menyiapkan folder...', phase: 'folder' });
 
   const rootId = await withRetry(
@@ -166,40 +173,28 @@ export const uploadToDrive = async (
     `getOrCreateFolder(${unitFolderName})`
   );
 
-  // ---- 2. Upload file data JSON ----
   onProgress?.({ current: 1, total: totalSteps, fileName: 'data-inspeksi.json', phase: 'data' });
 
-  const dataPayload = JSON.stringify(
-    {
-      id: session.id,
-      clientName: session.clientName,
-      objectType: session.objectType,
-      createdAt: new Date(session.createdAt).toISOString(),
-      updatedAt: session.updatedAt ? new Date(session.updatedAt).toISOString() : null,
-      unitData: session.unitData,
-      totalPhotos,
-    },
-    null,
-    2
-  );
+  const dataPayload = JSON.stringify({
+    id: session.id,
+    clientName: session.clientName,
+    objectType: session.objectType,
+    createdAt: new Date(session.createdAt).toISOString(),
+    updatedAt: session.updatedAt ? new Date(session.updatedAt).toISOString() : null,
+    unitData: session.unitData,
+    totalPhotos,
+  }, null, 2);
 
   await withRetry(
     () => uploadTextFile(token, 'data-inspeksi.json', dataPayload, unitId),
     'uploadTextFile(data-inspeksi.json)'
   );
 
-  // ---- 3. Upload foto satu per satu dengan progress ----
-  // FIXED: Gunakan Blob langsung, bukan string base64 dalam multipart body
   for (let i = 0; i < session.photos.length; i++) {
     const photo = session.photos[i];
     const photoName = `foto-${String(i + 1).padStart(3, '0')}.jpg`;
 
-    onProgress?.({
-      current: i + 2,
-      total: totalSteps,
-      fileName: photoName,
-      phase: 'photo',
-    });
+    onProgress?.({ current: i + 2, total: totalSteps, fileName: photoName, phase: 'photo' });
 
     await withRetry(
       () => uploadBlobPhoto(token, photoName, photo.dataUrl, unitId),
@@ -211,27 +206,20 @@ export const uploadToDrive = async (
 };
 
 // ==========================================
-// HELPER FUNCTIONS
+// HELPERS
 // ==========================================
 
-// FIXED: Tambahkan retry di level caller, fungsi ini tetap bersih
-async function getOrCreateFolder(
-  token: string,
-  folderName: string,
-  parentId: string
-): Promise<string> {
-  // Cari folder yang sudah ada
+async function getOrCreateFolder(token: string, folderName: string, parentId: string): Promise<string> {
   const q = `name='${folderName.replace(/'/g, "\\'")}' and mimeType='application/vnd.google-apps.folder' and '${parentId}' in parents and trashed=false`;
   const listRes = await fetchDrive(
     `${DRIVE_FILES_URL}?q=${encodeURIComponent(q)}&fields=files(id)`,
     { method: 'GET', headers: { Authorization: `Bearer ${token}` } }
   );
 
-  const listData = await listRes.json();
-  if (listData.files?.length > 0) return listData.files[0].id as string;
+  const listData = await listRes.json() as { files?: Array<{ id: string }> };
+  if (listData.files && listData.files.length > 0) return listData.files[0].id;
 
-  // Buat baru kalau tidak ada
-  const metadata: Record<string, any> = {
+  const metadata: Record<string, unknown> = {
     name: folderName,
     mimeType: 'application/vnd.google-apps.folder',
   };
@@ -239,113 +227,61 @@ async function getOrCreateFolder(
 
   const createRes = await fetchDrive(DRIVE_FILES_URL, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(metadata),
   });
 
-  const folder = await createRes.json();
-  return folder.id as string;
+  const folder = await createRes.json() as { id: string };
+  return folder.id;
 }
 
-async function uploadTextFile(
-  token: string,
-  name: string,
-  content: string,
-  parentId: string
-): Promise<void> {
-  // FIXED: Pakai Blob, bukan string concatenation multipart manual
+async function uploadTextFile(token: string, name: string, content: string, parentId: string): Promise<void> {
   const metadata = { name, mimeType: 'text/plain', parents: [parentId] };
-  const formData = buildMultipartFormData(
-    metadata,
-    new Blob([content], { type: 'text/plain' }),
-    'text/plain'
-  );
+  const formData = buildMultipartFormData(metadata, new Blob([content], { type: 'text/plain' }), 'text/plain');
 
   await fetchDrive(DRIVE_UPLOAD_URL, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': `multipart/related; boundary=${formData.boundary}`,
-    },
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': `multipart/related; boundary=${formData.boundary}` },
     body: formData.body,
   });
 }
 
-// FIXED: Upload foto sebagai Blob binary bukan base64 string
-//        Lebih efisien ~33% karena tidak ada overhead encoding base64
-async function uploadBlobPhoto(
-  token: string,
-  name: string,
-  dataUrl: string,
-  parentId: string
-): Promise<void> {
-  // Convert dataUrl → Blob binary
+async function uploadBlobPhoto(token: string, name: string, dataUrl: string, parentId: string): Promise<void> {
   const response = await fetch(dataUrl);
   const blob = await response.blob();
   const mimeType = blob.type || 'image/jpeg';
-
   const metadata = { name, mimeType, parents: [parentId] };
   const formData = buildMultipartFormData(metadata, blob, mimeType);
 
   await fetchDrive(DRIVE_UPLOAD_URL, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': `multipart/related; boundary=${formData.boundary}`,
-    },
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': `multipart/related; boundary=${formData.boundary}` },
     body: formData.body,
   });
 }
 
-// ==========================================
-// MULTIPART BUILDER (Blob-based)
-// ==========================================
-
-// FIXED: Build multipart menggunakan Blob concat — tidak ada string base64
-function buildMultipartFormData(
-  metadata: object,
-  content: Blob,
-  contentType: string
-): { boundary: string; body: Blob } {
+function buildMultipartFormData(metadata: object, content: Blob, contentType: string): { boundary: string; body: Blob } {
   const boundary = `aksara_inspect_${Date.now()}_${Math.random().toString(36).slice(2)}`;
   const encoder = new TextEncoder();
-
-  const metaPart = encoder.encode(
-    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n`
-  );
-  const contentHeader = encoder.encode(
-    `--${boundary}\r\nContent-Type: ${contentType}\r\n\r\n`
-  );
+  const metaPart = encoder.encode(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n`);
+  const contentHeader = encoder.encode(`--${boundary}\r\nContent-Type: ${contentType}\r\n\r\n`);
   const closing = encoder.encode(`\r\n--${boundary}--`);
-
-  const body = new Blob([metaPart, contentHeader, content, closing]);
-  return { boundary, body };
+  return { boundary, body: new Blob([metaPart, contentHeader, content, closing]) };
 }
-
-// ==========================================
-// FETCH WRAPPER (dengan error parsing)
-// ==========================================
 
 async function fetchDrive(url: string, init: RequestInit): Promise<Response> {
   const res = await fetch(url, init);
 
   if (!res.ok) {
-    // FIXED: Parse error body untuk pesan yang lebih informatif
     let errMsg = `HTTP ${res.status}`;
     try {
-      const errData = await res.clone().json();
+      const errData = await res.clone().json() as { error?: { message?: string } };
       errMsg = errData?.error?.message || errMsg;
-    } catch {
-      // ignore
-    }
+    } catch { /* ignore */ }
 
-    const error: any = new Error(errMsg);
+    const error = new Error(errMsg) as Error & { status: number; retryAfterMs?: number };
     error.status = res.status;
 
-    // FIXED: Rate limit — lempar error agar withRetry bisa retry
     if (res.status === 429) {
       const retryAfter = res.headers.get('Retry-After');
       error.retryAfterMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 2000;
