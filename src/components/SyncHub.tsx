@@ -1,5 +1,6 @@
 // src/components/SyncHub.tsx
-// FIXED: Pecahan dari App.tsx + progress indicator per foto saat upload ke Drive
+// FIXED: Progress indicator per foto saat upload ke Drive
+// NEW: Auto sync toggle + online/offline status indicator
 
 import type { InspectionSession, InspectionPhoto } from '../db/db';
 import type { UploadProgress } from '../services/driveService';
@@ -11,6 +12,11 @@ interface SyncHubProps {
   isAuthenticated: boolean;
   uploadingId: string | null;
   uploadProgress: UploadProgress | null;
+  // NEW: Online/offline status dari App.tsx
+  isOnline: boolean;
+  // NEW: Auto sync toggle state + handler
+  autoSync: boolean;
+  onAutoSyncToggle: (val: boolean) => void;
   onLogin: () => void;
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
@@ -18,14 +24,14 @@ interface SyncHubProps {
 }
 
 const OBJECT_TYPES = [
-  { key: 'Angkur',             label: 'Angkur',             desc: 'Safety Anchor',                icon: '⚓' },
-  { key: 'PAA',                label: 'PAA',                desc: 'Pesawat Angkat & Angkut',      icon: '🏗️' },
-  { key: 'PUBT',               label: 'PUBT',               desc: 'Pesawat Uap & Bejana Tekan',   icon: '⚗️' },
-  { key: 'PTP',                label: 'PTP',                desc: 'Pesawat Tenaga & Produksi',    icon: '⚙️' },
-  { key: 'Listrik',            label: 'Listrik',            desc: 'Instalasi Listrik',            icon: '⚡' },
-  { key: 'Penyalur Petir',     label: 'Penyalur Petir',     desc: 'Instalasi Penyalur Petir',     icon: '🌩️' },
-  { key: 'Lift',               label: 'Lift / Eskalator',   desc: 'Elevator & Eskalator',         icon: '🛗' },
-  { key: 'Proteksi Kebakaran', label: 'Proteksi Kebakaran', desc: 'Instalasi Proteksi Kebakaran', icon: '🧯' },
+  { key: 'Angkur',             label: 'Angkur',             icon: '⚓' },
+  { key: 'PAA',                label: 'PAA',                icon: '🏗️' },
+  { key: 'PUBT',               label: 'PUBT',               icon: '⚗️' },
+  { key: 'PTP',                label: 'PTP',                icon: '⚙️' },
+  { key: 'Listrik',            label: 'Listrik',            icon: '⚡' },
+  { key: 'Penyalur Petir',     label: 'Penyalur Petir',     icon: '🌩️' },
+  { key: 'Lift',               label: 'Lift / Eskalator',   icon: '🛗' },
+  { key: 'Proteksi Kebakaran', label: 'Proteksi Kebakaran', icon: '🧯' },
 ];
 
 function formatDate(ts: number) {
@@ -44,6 +50,9 @@ export function SyncHub({
   isAuthenticated,
   uploadingId,
   uploadProgress,
+  isOnline,
+  autoSync,
+  onAutoSyncToggle,
   onLogin,
   onEdit,
   onDelete,
@@ -56,6 +65,86 @@ export function SyncHub({
         <p className="text-xs text-gray-400 font-medium mt-0.5">
           Upload draft ke Google Drive perusahaan
         </p>
+      </div>
+
+      {/* NEW: Status koneksi + Auto sync toggle dalam satu card */}
+      <div className="bg-white border border-gray-200 rounded-xl p-3 space-y-3">
+        {/* Status koneksi */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span
+              style={{
+                display: 'inline-block',
+                width: 8,
+                height: 8,
+                borderRadius: '50%',
+                background: isOnline ? '#10B981' : '#EF4444',
+                // Animasi pulse saat online
+                boxShadow: isOnline ? '0 0 0 2px rgba(16,185,129,0.3)' : 'none',
+              }}
+            />
+            <span className="text-sm font-bold text-gray-700">
+              {isOnline ? 'Terhubung ke Internet' : 'Tidak Ada Koneksi'}
+            </span>
+          </div>
+          <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${isOnline ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : 'bg-red-50 text-red-600 border border-red-100'}`}>
+            {isOnline ? 'Online' : 'Offline'}
+          </span>
+        </div>
+
+        {/* Divider */}
+        <div className="h-px bg-gray-100" />
+
+        {/* NEW: Auto sync toggle */}
+        <div className="flex items-center justify-between">
+          <div className="flex-1 min-w-0 pr-3">
+            <p className="text-sm font-bold text-gray-700">Auto sync saat terhubung WiFi</p>
+            <p className="text-[10px] text-gray-400 mt-0.5">
+              Draft otomatis diupload saat koneksi tersedia
+            </p>
+          </div>
+          {/* Toggle switch */}
+          <button
+            onClick={() => onAutoSyncToggle(!autoSync)}
+            role="switch"
+            aria-checked={autoSync}
+            style={{
+              width: 44,
+              height: 24,
+              borderRadius: 12,
+              background: autoSync ? '#10B981' : '#E2E8F0',
+              border: 'none',
+              cursor: 'pointer',
+              padding: 2,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: autoSync ? 'flex-end' : 'flex-start',
+              transition: 'background 0.2s',
+              flexShrink: 0,
+            }}
+          >
+            <span
+              style={{
+                width: 20,
+                height: 20,
+                borderRadius: '50%',
+                background: '#fff',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                display: 'block',
+                transition: 'transform 0.2s',
+              }}
+            />
+          </button>
+        </div>
+
+        {/* Info jika auto sync ON */}
+        {autoSync && (
+          <div className="bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2">
+            <p className="text-[10px] text-emerald-700 font-medium">
+              ✅ Auto sync aktif — {drafts.length > 0 ? `${drafts.length} draft akan diupload otomatis saat online` : 'Tidak ada draft tertunda'}
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Banner login kalau belum auth */}
@@ -92,6 +181,7 @@ export function SyncHub({
               onSync={onSync}
               isUploading={uploadingId === item.id}
               isAuthenticated={isAuthenticated}
+              isOnline={isOnline}
               progress={uploadingId === item.id ? uploadProgress : null}
             />
           ))}
@@ -105,7 +195,6 @@ export function SyncHub({
 // UPLOAD PROGRESS BAR
 // ==========================================
 
-// FIXED: Progress indicator per foto — tampil saat upload berlangsung
 function UploadProgressBar({ progress }: { progress: UploadProgress }) {
   const pct = Math.round((progress.current / progress.total) * 100);
   const phaseLabel: Record<UploadProgress['phase'], string> = {
@@ -144,6 +233,7 @@ function SyncCard({
   onSync,
   isUploading,
   isAuthenticated,
+  isOnline,
   progress,
 }: {
   item: SessionWithPhotos;
@@ -152,10 +242,13 @@ function SyncCard({
   onSync: (id: string) => void;
   isUploading: boolean;
   isAuthenticated: boolean;
+  isOnline: boolean;
   progress: UploadProgress | null;
 }) {
   const meta = OBJECT_TYPES.find((o) => o.key === item.objectType);
   const dateStr = formatDate(item.updatedAt || item.createdAt);
+  // Disable upload jika tidak ada koneksi atau belum auth
+  const canUpload = isAuthenticated && isOnline && !isUploading;
 
   return (
     <div className="bg-white border border-gray-200 shadow-sm rounded-xl p-4 space-y-3">
@@ -204,7 +297,7 @@ function SyncCard({
         </p>
       </div>
 
-      {/* FIXED: Progress inline per card kalau sedang upload card ini */}
+      {/* Progress inline per card kalau sedang upload card ini */}
       {isUploading && progress && (
         <UploadProgressBar progress={progress} />
       )}
@@ -212,8 +305,13 @@ function SyncCard({
       {/* Upload button */}
       <button
         onClick={() => onSync(item.id)}
-        disabled={isUploading || !isAuthenticated}
+        disabled={!canUpload}
         className="w-full py-2.5 flex items-center justify-center gap-2 bg-emerald-500 hover:bg-emerald-600 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-lg transition-all shadow-sm"
+        title={
+          !isAuthenticated ? 'Login Google Drive terlebih dahulu' :
+          !isOnline ? 'Tidak ada koneksi internet' :
+          'Upload ke Google Drive'
+        }
       >
         {isUploading ? (
           <>
@@ -223,6 +321,8 @@ function SyncCard({
             </svg>
             Sedang Upload ke Drive...
           </>
+        ) : !isOnline ? (
+          <>🔴 Offline — Tidak bisa upload</>
         ) : (
           <>☁️ Upload ke Google Drive</>
         )}

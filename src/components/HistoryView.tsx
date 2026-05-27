@@ -1,7 +1,11 @@
 // src/components/HistoryView.tsx
-// Komponen untuk menampilkan riwayat inspeksi yang sudah di-sync
+// FIXED: Kembalikan tombol "Download PDF" di setiap HistoryCard
+// Import exportToPDF dari '../utils/pdfExport'
 
+import { useState } from 'react';
 import type { InspectionSession, InspectionPhoto } from '../db/db';
+// FIXED: Import exportToPDF yang sudah ada di utils
+import { exportToPDF } from '../utils/pdfExport';
 
 type SessionWithPhotos = InspectionSession & { photos: InspectionPhoto[] };
 
@@ -61,6 +65,7 @@ export function HistoryView({ history, onEdit, onDelete }: HistoryViewProps) {
   );
 }
 
+// FIXED: HistoryCard dengan tombol Download PDF
 function HistoryCard({
   item,
   onEdit,
@@ -72,6 +77,24 @@ function HistoryCard({
 }) {
   const meta = OBJECT_TYPES.find((o) => o.key === item.objectType);
   const dateStr = formatDate(item.updatedAt || item.createdAt);
+  // FIXED: State loading untuk PDF export
+  const [pdfLoading, setPdfLoading] = useState(false);
+
+  // FIXED: Handler download PDF
+  const handleDownloadPDF = async () => {
+    setPdfLoading(true);
+    try {
+      const unitName = item.unitData?.namaUnit || 'Unit';
+      const clientSlug = item.clientName.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 20);
+      const dateSlug = new Date(item.createdAt).toISOString().slice(0, 10);
+      const fileName = `Laporan_${item.objectType}_${unitName}_${clientSlug}_${dateSlug}`.replace(/\s+/g, '_');
+      await exportToPDF(item, fileName);
+    } catch (err: any) {
+      alert('Gagal export PDF: ' + err.message);
+    } finally {
+      setPdfLoading(false);
+    }
+  };
 
   return (
     <div className="bg-white border border-gray-200 shadow-sm rounded-xl p-4 space-y-3">
@@ -137,6 +160,36 @@ function HistoryCard({
           </p>
         )}
       </div>
+
+      {/* FIXED: Tombol Download PDF */}
+      <button
+        onClick={handleDownloadPDF}
+        disabled={pdfLoading}
+        className="w-full py-2.5 flex items-center justify-center gap-2 bg-slate-700 hover:bg-slate-800 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-lg transition-all"
+        title="Download laporan sebagai PDF"
+      >
+        {pdfLoading ? (
+          <>
+            <PdfSpinner />
+            Membuat PDF...
+          </>
+        ) : (
+          <>
+            <span>📄</span>
+            Download PDF
+          </>
+        )}
+      </button>
     </div>
+  );
+}
+
+// FIXED: Spinner kecil untuk PDF loading
+function PdfSpinner() {
+  return (
+    <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+    </svg>
   );
 }

@@ -1,14 +1,8 @@
 // src/components/FormView.tsx
-// FIXED: Komponen form dipecah dari App.tsx
-// CHANGED: Tidak ada perubahan internal — props dan render tetap sama
-//          Perubahan UX ada di App.tsx (banner template di atas FormView)
+// FIXED: onAddPhotoClick diganti onCameraClick + onGalleryClick (dual foto option)
 
 import type { ReactNode } from 'react';
 import type { InspectionPhoto } from '../db/db';
-
-// ==========================================
-// TYPES (mirror dari App.tsx agar konsisten)
-// ==========================================
 
 export type FieldType = 'text' | 'number' | 'select' | 'textarea';
 export type FormMode = 'create' | 'edit';
@@ -49,16 +43,14 @@ interface FormViewProps {
   onClientNameFocus: () => void;
   onClientSuggestionSelect: (name: string) => void;
   onFieldChange: (name: string, value: string) => void;
-  onAddPhotoClick: () => void;
+  // FIXED: dual option — kamera langsung + pilih dari galeri
+  onCameraClick: () => void;
+  onGalleryClick: () => void;
   onRemoveExistingPhoto: (id: string) => void;
   onRemoveNewPhoto: (idx: number) => void;
   onSave: () => void;
   onCancel: () => void;
 }
-
-// ==========================================
-// FORM VIEW
-// ==========================================
 
 export function FormView({
   formMode,
@@ -78,7 +70,9 @@ export function FormView({
   onClientNameFocus,
   onClientSuggestionSelect,
   onFieldChange,
-  onAddPhotoClick,
+  // FIXED: pakai dua prop baru, hapus onAddPhotoClick
+  onCameraClick,
+  onGalleryClick,
   onRemoveExistingPhoto,
   onRemoveNewPhoto,
   onSave,
@@ -89,7 +83,7 @@ export function FormView({
   return (
     <div className="space-y-5 pb-10">
 
-      {/* ---- Header Seksi ---- */}
+      {/* Header */}
       <div className="flex items-center gap-3 pb-1">
         <span className="text-3xl">{objMeta?.icon || '📦'}</span>
         <div>
@@ -100,7 +94,7 @@ export function FormView({
         </div>
       </div>
 
-      {/* ---- Nama Klien ---- */}
+      {/* Nama Klien */}
       <div className="relative">
         <label className="block text-[10px] font-bold uppercase tracking-widest text-emerald-700 mb-1.5">
           Nama Perusahaan Klien <span className="text-red-500">*</span>
@@ -131,7 +125,7 @@ export function FormView({
         )}
       </div>
 
-      {/* ---- Common Fields ---- */}
+      {/* Common Fields */}
       <div className="space-y-4">
         <SectionDivider label="Identitas Unit" />
         {commonFields.map((field) => (
@@ -145,7 +139,7 @@ export function FormView({
         ))}
       </div>
 
-      {/* ---- Specific Fields ---- */}
+      {/* Specific Fields */}
       {specificFields.length > 0 && (
         <div className="space-y-4">
           <SectionDivider label={`Data Teknis — ${objMeta?.label || activeObject}`} />
@@ -160,11 +154,10 @@ export function FormView({
         </div>
       )}
 
-      {/* ---- Foto Dokumentasi ---- */}
+      {/* Foto Dokumentasi */}
       <div className="space-y-3">
         <SectionDivider label={`Foto Dokumentasi (${totalPhotos})`} />
 
-        {/* Foto lama (existing) */}
         {existingPhotos.length > 0 && (
           <div>
             <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-2">
@@ -186,7 +179,6 @@ export function FormView({
           </div>
         )}
 
-        {/* Foto baru */}
         {newPhotos.length > 0 && (
           <div>
             <p className="text-[9px] font-bold text-emerald-600 uppercase tracking-widest mb-2">
@@ -208,16 +200,24 @@ export function FormView({
           </div>
         )}
 
-        {/* Tombol tambah foto */}
-        <button
-          onClick={onAddPhotoClick}
-          className="w-full py-3 border-2 border-dashed border-emerald-300 rounded-xl text-emerald-600 text-sm font-bold hover:bg-emerald-50 transition-all flex items-center justify-center gap-2"
-        >
-          📷 Tambah Foto
-        </button>
+        {/* FIXED: Dua tombol — kamera langsung + galeri */}
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            onClick={onCameraClick}
+            className="py-3 border-2 border-dashed border-emerald-300 rounded-xl text-emerald-600 text-sm font-bold hover:bg-emerald-50 transition-all flex items-center justify-center gap-2"
+          >
+            📷 Kamera
+          </button>
+          <button
+            onClick={onGalleryClick}
+            className="py-3 border-2 border-dashed border-emerald-300 rounded-xl text-emerald-600 text-sm font-bold hover:bg-emerald-50 transition-all flex items-center justify-center gap-2"
+          >
+            🖼️ Galeri
+          </button>
+        </div>
       </div>
 
-      {/* ---- Action Buttons ---- */}
+      {/* Action Buttons */}
       <div className="sticky bottom-0 bg-slate-50/95 backdrop-blur pt-3 pb-2 -mx-4 px-4 border-t border-gray-200 flex gap-3">
         <button
           onClick={onCancel}
@@ -231,10 +231,7 @@ export function FormView({
           className="flex-[2] py-3 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:bg-gray-300 disabled:text-gray-500 text-white text-sm font-bold transition-all shadow-sm flex items-center justify-center gap-2"
         >
           {isSaving ? (
-            <>
-              <Spinner />
-              Menyimpan...
-            </>
+            <><Spinner />Menyimpan...</>
           ) : isEdit ? (
             <>✏️ Perbarui Data ({totalPhotos} foto)</>
           ) : (
@@ -245,10 +242,6 @@ export function FormView({
     </div>
   );
 }
-
-// ==========================================
-// SUB COMPONENTS
-// ==========================================
 
 function SectionDivider({ label }: { label: string }) {
   return (
@@ -268,10 +261,6 @@ function Spinner() {
     </svg>
   );
 }
-
-// ==========================================
-// FORM FIELD
-// ==========================================
 
 export function FormField({
   field,
