@@ -102,6 +102,16 @@ async function upsertTextFile(
   }
 }
 
+// Hitung jumlah foto existing di folder Drive (exclude JSON dan folder)
+async function countExistingPhotos(
+  drive: ReturnType<typeof google.drive>,
+  parentId: string
+): Promise<number> {
+  const q = `'${parentId}' in parents and mimeType != 'application/vnd.google-apps.folder' and name != 'data-inspeksi.json' and trashed=false`;
+  const res = await drive.files.list({ q, fields: 'files(id)', spaces: 'drive', pageSize: 1000 });
+  return res.data.files?.length ?? 0;
+}
+
 async function uploadPhoto(
   drive: ReturnType<typeof google.drive>,
   name: string,
@@ -159,9 +169,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }, null, 2);
     await upsertTextFile(drive, 'data-inspeksi.json', dataPayload, unitFolderId);
 
-    // Upload foto
-    for (const photo of photos) {
-      await uploadPhoto(drive, photo.name, photo.dataUrl, unitFolderId);
+    // FIXED: Lanjutkan penomoran dari foto terakhir di Drive
+    // Tidak hapus foto lama — setiap device hanya menambah foto baru
+    const existingCount = await countExistingPhotos(drive, unitFolderId);
+    for (let i = 0; i < photos.length; i++) {
+      const photoNumber = existingCount + i + 1;
+      const paddedNum = String(photoNumber).padStart(3, '0');
+      const photoName = `foto-${paddedNum}.jpg`;
+      await uploadPhoto(drive, photoName, photos[i].dataUrl, unitFolderId);
     }
 
     return res.status(200).json({
