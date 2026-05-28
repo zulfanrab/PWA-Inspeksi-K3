@@ -1,31 +1,26 @@
 // api/pull-inspections.ts
-// NEW: Vercel serverless function
-// Baca semua file data-inspeksi.json dari Drive owner
-// Return ke frontend untuk di-merge ke IndexedDB lokal
+// FIXED: Ganti Service Account → OAuth Refresh Token
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { google } from 'googleapis';
 
-// ─── HELPERS ─────────────────────────────────────────────────────────────────
-
 function getDriveClient() {
-  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  const privateKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?.replace(/\\n/g, '\n');
+  const clientId = process.env.VITE_GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
 
-  if (!email || !privateKey) {
-    throw new Error('Service Account env vars tidak ditemukan.');
+  if (!clientId || !clientSecret || !refreshToken) {
+    throw new Error('ENV tidak lengkap: butuh VITE_GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN');
   }
 
-  const auth = new google.auth.JWT({
-    email,
-    key: privateKey,
-    scopes: ['https://www.googleapis.com/auth/drive.readonly'],
-  });
-
-  return google.drive({ version: 'v3', auth });
+  const oauth2Client = new google.auth.OAuth2(
+    clientId,
+    clientSecret,
+    'https://developers.google.com/oauthplayground'
+  );
+  oauth2Client.setCredentials({ refresh_token: refreshToken });
+  return google.drive({ version: 'v3', auth: oauth2Client });
 }
-
-// ─── MAIN HANDLER ────────────────────────────────────────────────────────────
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -38,7 +33,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const drive = getDriveClient();
 
-    // Cari semua file bernama 'data-inspeksi.json' di seluruh Drive owner
+    // Cari semua data-inspeksi.json di Drive owner
     const q = `name='data-inspeksi.json' and mimeType='text/plain' and trashed=false`;
     const listRes = await drive.files.list({
       q,
@@ -50,7 +45,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const files = listRes.data.files ?? [];
     const results: any[] = [];
 
-    // Download isi setiap file
     for (const file of files) {
       try {
         const contentRes = await drive.files.get(
@@ -60,7 +54,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const parsed = JSON.parse(contentRes.data as string);
         results.push(parsed);
       } catch (fileErr) {
-        // Skip file yang gagal di-parse, jangan crash semua
         console.warn(`[pull-inspections] Skip file ${file.id}:`, fileErr);
       }
     }

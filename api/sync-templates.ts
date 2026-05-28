@@ -1,29 +1,26 @@
 // api/sync-templates.ts
-// NEW: Vercel serverless function
-// GET  → pull _sync_templates.json dari Drive owner ke frontend
-// POST → push _sync_templates.json dari frontend ke Drive owner
+// FIXED: Ganti Service Account → OAuth Refresh Token
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { google } from 'googleapis';
 import { Readable } from 'stream';
 
-// ─── HELPERS ─────────────────────────────────────────────────────────────────
-
 function getDriveClient() {
-  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  const privateKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?.replace(/\\n/g, '\n');
+  const clientId = process.env.VITE_GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
 
-  if (!email || !privateKey) {
-    throw new Error('Service Account env vars tidak ditemukan.');
+  if (!clientId || !clientSecret || !refreshToken) {
+    throw new Error('ENV tidak lengkap: butuh VITE_GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN');
   }
 
-  const auth = new google.auth.JWT({
-    email,
-    key: privateKey,
-    scopes: ['https://www.googleapis.com/auth/drive'],
-  });
-
-  return google.drive({ version: 'v3', auth });
+  const oauth2Client = new google.auth.OAuth2(
+    clientId,
+    clientSecret,
+    'https://developers.google.com/oauthplayground'
+  );
+  oauth2Client.setCredentials({ refresh_token: refreshToken });
+  return google.drive({ version: 'v3', auth: oauth2Client });
 }
 
 async function findFile(
@@ -34,6 +31,21 @@ async function findFile(
   const q = `name='${name}' and '${parentId}' in parents and trashed=false`;
   const res = await drive.files.list({ q, fields: 'files(id)', spaces: 'drive' });
   return res.data.files?.[0]?.id ?? null;
+}
+
+async function getOrCreateFolder(
+  drive: ReturnType<typeof google.drive>,
+  name: string
+): Promise<string> {
+  const q = `name='${name}' and mimeType='application/vnd.google-apps.folder' and 'root' in parents and trashed=false`;
+  const res = await drive.files.list({ q, fields: 'files(id)', spaces: 'drive' });
+  if (res.data.files?.[0]?.id) return res.data.files[0].id;
+
+  const created = await drive.files.create({
+    requestBody: { name, mimeType: 'application/vnd.google-apps.folder' },
+    fields: 'id',
+  });
+  return created.data.id!;
 }
 
 async function upsertTextFile(
@@ -61,8 +73,6 @@ async function upsertTextFile(
   }
 }
 
-// ─── MAIN HANDLER ────────────────────────────────────────────────────────────
-
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -70,47 +80,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  const rootFolderId = process.env.GOOGLE_OWNER_DRIVE_FOLDER_ID;
-  if (!rootFolderId) {
-    return res.status(500).json({ error: 'GOOGLE_OWNER_DRIVE_FOLDER_ID belum diset' });
-  }
-
   try {
     const drive = getDriveClient();
+    const rootFolderId = await getOrCreateFolder(drive, 'Aksara Inspect');
 
-    // ── GET: Pull templates dari Drive ke frontend ──
     if (req.method === 'GET') {
       const fileId = await findFile(drive, '_sync_templates.json', rootFolderId);
-
       if (!fileId) {
-        // Belum ada — return empty, bukan error
         return res.status(200).json({ clients: [], version: 0, exportedAt: null });
       }
-
       const contentRes = await drive.files.get(
         { fileId, alt: 'media' },
         { responseType: 'text' }
       );
-
-      const parsed = JSON.parse(contentRes.data as string);
-      return res.status(200).json(parsed);
+      return res.status(200).json(JSON.parse(contentRes.data as string));
     }
 
-    // ── POST: Push templates dari frontend ke Drive ──
     if (req.method === 'POST') {
-      const payload = req.body;
-
-      if (!payload?.clients) {
+      if (!req.body?.clients) {
         return res.status(400).json({ error: 'Payload tidak valid: clients wajib ada' });
       }
-
       await upsertTextFile(
         drive,
         '_sync_templates.json',
-        JSON.stringify(payload, null, 2),
+        JSON.stringify(req.body, null, 2),
         rootFolderId
       );
-
       return res.status(200).json({ success: true });
     }
 
