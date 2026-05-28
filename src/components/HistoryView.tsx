@@ -1,23 +1,24 @@
 // src/components/HistoryView.tsx
-// FIXED: Kembalikan tombol "Download PDF" di setiap HistoryCard
-// Import exportToPDF dari '../utils/pdfExport'
+// FIXED: Tambah props onReSync, isAuthenticated, isOnline, uploadingId, uploadProgress
+// FIXED: Tombol "Upload Ulang ke Drive" pakai onReSync
+// FIXED: Tombol Download PDF tetap ada
 
 import { useState } from 'react';
 import type { InspectionSession, InspectionPhoto } from '../db/db';
-// FIXED: Import exportToPDF yang sudah ada di utils
 import { exportToPDF } from '../utils/pdfExport';
+import type { UploadProgress } from '../services/driveService';
 
 type SessionWithPhotos = InspectionSession & { photos: InspectionPhoto[] };
 
 const OBJECT_TYPES = [
-  { key: 'Angkur',             label: 'Angkur',             desc: 'Safety Anchor',                icon: '⚓' },
-  { key: 'PAA',                label: 'PAA',                desc: 'Pesawat Angkat & Angkut',      icon: '🏗️' },
-  { key: 'PUBT',               label: 'PUBT',               desc: 'Pesawat Uap & Bejana Tekan',   icon: '🔥' },
-  { key: 'PTP',                label: 'PTP',                desc: 'Pesawat Tenaga & Produksi',    icon: '⚙️' },
-  { key: 'Listrik',            label: 'Listrik',            desc: 'Instalasi Listrik',            icon: '⚡' },
-  { key: 'Penyalur Petir',     label: 'Penyalur Petir',     desc: 'Instalasi Penyalur Petir',     icon: '🌩️' },
-  { key: 'Lift',               label: 'Lift / Eskalator',   desc: 'Elevator & Eskalator',         icon: '🛗' },
-  { key: 'Proteksi Kebakaran', label: 'Proteksi Kebakaran', desc: 'Instalasi Proteksi Kebakaran', icon: '🧯' },
+  { key: 'Angkur',             label: 'Angkur',             icon: '⚓' },
+  { key: 'PAA',                label: 'PAA',                icon: '🏗️' },
+  { key: 'PUBT',               label: 'PUBT',               icon: '🔥' },
+  { key: 'PTP',                label: 'PTP',                icon: '⚙️' },
+  { key: 'Listrik',            label: 'Listrik',            icon: '⚡' },
+  { key: 'Penyalur Petir',     label: 'Penyalur Petir',     icon: '🌩️' },
+  { key: 'Lift',               label: 'Lift / Eskalator',   icon: '🛗' },
+  { key: 'Proteksi Kebakaran', label: 'Proteksi Kebakaran', icon: '🧯' },
 ];
 
 function formatDate(ts: number) {
@@ -27,13 +28,28 @@ function formatDate(ts: number) {
   });
 }
 
+// FIXED: Interface lengkap dengan props baru
 interface HistoryViewProps {
   history: SessionWithPhotos[];
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
+  onReSync: (id: string) => void;         // NEW: upload ulang ke Drive
+  isAuthenticated: boolean;               // NEW: untuk enable/disable tombol
+  isOnline: boolean;                      // NEW: cek koneksi
+  uploadingId: string | null;             // NEW: id yang sedang diupload
+  uploadProgress: UploadProgress | null;  // NEW: progress upload
 }
 
-export function HistoryView({ history, onEdit, onDelete }: HistoryViewProps) {
+export function HistoryView({
+  history,
+  onEdit,
+  onDelete,
+  onReSync,
+  isAuthenticated,
+  isOnline,
+  uploadingId,
+  uploadProgress,
+}: HistoryViewProps) {
   return (
     <div className="space-y-4">
       <div>
@@ -57,6 +73,11 @@ export function HistoryView({ history, onEdit, onDelete }: HistoryViewProps) {
               item={item}
               onEdit={onEdit}
               onDelete={onDelete}
+              onReSync={onReSync}
+              isAuthenticated={isAuthenticated}
+              isOnline={isOnline}
+              isUploading={uploadingId === item.id}
+              progress={uploadingId === item.id ? uploadProgress : null}
             />
           ))}
         </div>
@@ -65,22 +86,31 @@ export function HistoryView({ history, onEdit, onDelete }: HistoryViewProps) {
   );
 }
 
-// FIXED: HistoryCard dengan tombol Download PDF
 function HistoryCard({
   item,
   onEdit,
   onDelete,
+  onReSync,
+  isAuthenticated,
+  isOnline,
+  isUploading,
+  progress,
 }: {
   item: SessionWithPhotos;
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
+  onReSync: (id: string) => void;
+  isAuthenticated: boolean;
+  isOnline: boolean;
+  isUploading: boolean;
+  progress: UploadProgress | null;
 }) {
   const meta = OBJECT_TYPES.find((o) => o.key === item.objectType);
   const dateStr = formatDate(item.updatedAt || item.createdAt);
-  // FIXED: State loading untuk PDF export
   const [pdfLoading, setPdfLoading] = useState(false);
 
-  // FIXED: Handler download PDF
+  const canReSync = isAuthenticated && isOnline && !isUploading;
+
   const handleDownloadPDF = async () => {
     setPdfLoading(true);
     try {
@@ -112,12 +142,14 @@ function HistoryCard({
         <div className="flex items-center gap-1.5 flex-shrink-0">
           <button
             onClick={() => onEdit(item.id)}
-            className="w-7 h-7 rounded-lg bg-blue-50 text-blue-500 hover:bg-blue-100 flex items-center justify-center border border-blue-100 transition-all text-sm"
+            disabled={isUploading}
+            className="w-7 h-7 rounded-lg bg-blue-50 text-blue-500 hover:bg-blue-100 flex items-center justify-center border border-blue-100 transition-all text-sm disabled:opacity-40"
             title="Edit"
           >✏️</button>
           <button
             onClick={() => onDelete(item.id)}
-            className="w-7 h-7 rounded-lg bg-red-50 text-red-500 hover:bg-red-100 flex items-center justify-center border border-red-100 transition-all text-sm"
+            disabled={isUploading}
+            className="w-7 h-7 rounded-lg bg-red-50 text-red-500 hover:bg-red-100 flex items-center justify-center border border-red-100 transition-all text-sm disabled:opacity-40"
             title="Hapus"
           >🗑️</button>
         </div>
@@ -161,31 +193,63 @@ function HistoryCard({
         )}
       </div>
 
-      {/* FIXED: Tombol Download PDF */}
-      <button
-        onClick={handleDownloadPDF}
-        disabled={pdfLoading}
-        className="w-full py-2.5 flex items-center justify-center gap-2 bg-slate-700 hover:bg-slate-800 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-lg transition-all"
-        title="Download laporan sebagai PDF"
-      >
-        {pdfLoading ? (
-          <>
-            <PdfSpinner />
-            Membuat PDF...
-          </>
-        ) : (
-          <>
-            <span>📄</span>
-            Download PDF
-          </>
-        )}
-      </button>
+      {/* Progress bar kalau sedang upload ulang */}
+      {isUploading && progress && (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-bold text-emerald-700">
+              {progress.phase === 'folder' && '📁 Menyiapkan...'}
+              {progress.phase === 'data' && '📄 Upload data...'}
+              {progress.phase === 'photo' && `📷 ${progress.fileName}`}
+            </p>
+            <p className="text-xs font-black text-emerald-600">
+              {Math.round((progress.current / progress.total) * 100)}%
+            </p>
+          </div>
+          <div className="w-full h-2 bg-emerald-100 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+              style={{ width: `${Math.round((progress.current / progress.total) * 100)}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Tombol bawah: Upload Ulang + Download PDF */}
+      <div className="grid grid-cols-2 gap-2">
+        {/* FIXED: Tombol Upload Ulang ke Drive */}
+        <button
+          onClick={() => onReSync(item.id)}
+          disabled={!canReSync}
+          className="py-2.5 flex items-center justify-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-lg transition-all"
+          title={!isOnline ? 'Tidak ada koneksi' : !isAuthenticated ? 'Login dulu' : 'Upload ulang ke Drive'}
+        >
+          {isUploading ? (
+            <><Spinner />Uploading...</>
+          ) : (
+            <>☁️ Upload Ulang</>
+          )}
+        </button>
+
+        {/* Tombol Download PDF */}
+        <button
+          onClick={handleDownloadPDF}
+          disabled={pdfLoading}
+          className="py-2.5 flex items-center justify-center gap-1.5 bg-slate-700 hover:bg-slate-800 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-lg transition-all"
+          title="Download laporan sebagai PDF"
+        >
+          {pdfLoading ? (
+            <><Spinner />PDF...</>
+          ) : (
+            <>📄 Download PDF</>
+          )}
+        </button>
+      </div>
     </div>
   );
 }
 
-// FIXED: Spinner kecil untuk PDF loading
-function PdfSpinner() {
+function Spinner() {
   return (
     <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />

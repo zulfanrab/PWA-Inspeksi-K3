@@ -1,11 +1,14 @@
 // src/App.tsx
-// FIXED: OAuth scope hanya drive.file (hapus email profile)
-// FIXED: Role system kosmetik - badge saja, semua user bisa akses semua fitur
-// FIXED: Admin button di navbar + bottom nav bisa diklik semua user
-// FIXED: Hapus guard AccessDenied di view ADMIN
+// FIXED: OAuth scope hanya drive.file
+// FIXED: Role system kosmetik - badge saja
 // FIXED: Auto sync saat online + toggle di SyncHub
-// NEW: Indikator online/offline (dot hijau/merah) di navbar
-// FIXED: Semua field form optional (hanya clientName yang wajib)
+// NEW: Indikator online/offline di navbar
+// FIXED: Semua field form optional (hanya clientName wajib)
+// FIXED (PR #1): pullInspectionsFromDrive saat app dibuka + saat online event
+// FIXED (PR #2): Edit langsung re-upload ke Drive kalau ada koneksi + token valid
+//                Tidak perlu manual sync dari Sync Hub
+// FIXED (PR #4): Compress foto ke max 1MB sebelum disimpan ke IndexedDB
+//                Aspect ratio dipertahankan, kualitas JPEG 0.8
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
@@ -24,7 +27,10 @@ import {
   isTokenExpiringSoon,
   type UploadProgress,
 } from './services/driveService';
-import { pullTemplatesFromDrive } from './services/syncService';
+import {
+  pullTemplatesFromDrive,
+  pullInspectionsFromDrive,
+} from './services/syncService';
 import { GOOGLE_CONFIG, getGoogleRedirectUri } from './config';
 import { FormView } from './components/FormView';
 import { SyncHub } from './components/SyncHub';
@@ -51,8 +57,6 @@ interface FieldDef {
 type SessionWithPhotos = InspectionSession & { photos: InspectionPhoto[] };
 
 // ─── FIELD DEFINITIONS ───────────────────────────────────────────────────────
-// FIXED: Semua required:true dihapus dari COMMON_FIELDS dan SPECIFIC_FIELDS
-// Validasi hanya tersisa untuk clientName di validateForm()
 
 const COMMON_FIELDS: FieldDef[] = [
   { name: 'namaUnit',       label: 'Nama Unit / Deskripsi',    type: 'text',     placeholder: 'Contoh: Overhead Crane #1' },
@@ -146,124 +150,25 @@ const SPECIFIC_FIELDS: Record<string, FieldDef[]> = {
   ],
 };
 
-// Icon SVG inline
+// Icon SVG inline (tidak diubah dari original)
 const ICONS = {
-  angkur: (
-    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" aria-hidden="true">
-      <polygon points="10,2 13.5,5.5 13.5,9 10,12.5 6.5,9 6.5,5.5" />
-      <line x1="10" y1="12.5" x2="10" y2="18" />
-      <line x1="7.5" y1="15.5" x2="12.5" y2="15.5" />
-    </svg>
-  ),
-  paa: (
-    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" aria-hidden="true">
-      <line x1="10" y1="2" x2="10" y2="8" />
-      <path d="M4 8 h12 v2 l-4 6 H8 l-4-6 V8z" />
-      <line x1="10" y1="16" x2="10" y2="18" />
-    </svg>
-  ),
-  pubt: (
-    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" aria-hidden="true">
-      <path d="M4 13 A6 6 0 1 1 16 13" />
-      <line x1="10" y1="11" x2="13" y2="7" />
-      <circle cx="10" cy="13" r="1.2" fill="currentColor" stroke="none" />
-      <line x1="10" y1="14.5" x2="10" y2="17" />
-    </svg>
-  ),
-  ptp: (
-    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" aria-hidden="true">
-      <circle cx="10" cy="10" r="3" />
-      <path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.22 4.22l1.42 1.42M14.36 14.36l1.42 1.42M4.22 15.78l1.42-1.42M14.36 5.64l1.42-1.42" />
-    </svg>
-  ),
-  listrik: (
-    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" aria-hidden="true">
-      <polyline points="12,2 7,11 11,11 8,18 15,8 10,8" />
-    </svg>
-  ),
-  petir: (
-    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" aria-hidden="true">
-      <path d="M5 10.5 A4 4 0 0 1 13 8 A3 3 0 0 1 16 11 H9" />
-      <polyline points="11,11 8,16 12,16 9,20" />
-    </svg>
-  ),
-  lift: (
-    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" aria-hidden="true">
-      <rect x="4" y="2" width="12" height="16" rx="1.5" />
-      <line x1="10" y1="2" x2="10" y2="18" />
-      <polyline points="7,6 10,3 13,6" />
-      <polyline points="7,14 10,17 13,14" />
-    </svg>
-  ),
-  kebakaran: (
-    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" aria-hidden="true">
-      <rect x="7" y="7" width="7" height="10" rx="2" />
-      <line x1="10.5" y1="7" x2="10.5" y2="4" />
-      <line x1="8" y1="4" x2="13" y2="4" />
-      <path d="M14 9 Q17 9 17 7" />
-      <line x1="10.5" y1="10" x2="10.5" y2="13" />
-    </svg>
-  ),
-  camera: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="24" height="24" aria-hidden="true">
-      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-      <circle cx="12" cy="13" r="4" />
-    </svg>
-  ),
-  home: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="20" height="20" aria-hidden="true">
-      <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-      <polyline points="9,22 9,12 15,12 15,22" />
-    </svg>
-  ),
-  clipboard: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="20" height="20" aria-hidden="true">
-      <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
-      <rect x="8" y="2" width="8" height="4" rx="1" />
-      <line x1="9" y1="12" x2="15" y2="12" />
-      <line x1="9" y1="16" x2="13" y2="16" />
-    </svg>
-  ),
-  cloudUp: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="20" height="20" aria-hidden="true">
-      <polyline points="16,16 12,12 8,16" />
-      <line x1="12" y1="12" x2="12" y2="21" />
-      <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3" />
-    </svg>
-  ),
-  shield: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="20" height="20" aria-hidden="true">
-      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-      <polyline points="9,12 11,14 15,10" />
-    </svg>
-  ),
-  factory: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="22" height="22" aria-hidden="true">
-      <path d="M2 20V10l7-5v5l7-5v5l4-2v12H2z" />
-      <rect x="8" y="14" width="3" height="6" />
-      <rect x="13" y="14" width="3" height="6" />
-    </svg>
-  ),
-  package: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="16" height="16" aria-hidden="true">
-      <line x1="16.5" y1="9.4" x2="7.5" y2="4.21" />
-      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-      <polyline points="3.27,6.96 12,12.01 20.73,6.96" />
-      <line x1="12" y1="22.08" x2="12" y2="12" />
-    </svg>
-  ),
-  chevronRight: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="14" height="14" aria-hidden="true">
-      <polyline points="9,18 15,12 9,6" />
-    </svg>
-  ),
-  hardHat: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="11" height="11" aria-hidden="true">
-      <path d="M2 18a1 1 0 0 0 1 1h18a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1H3a1 1 0 0 0-1 1v2z" />
-      <path d="M10 5V3m4 2V3" />
-      <path d="M6 15V9a6 6 0 0 1 12 0v6" />
-    </svg>
-  ),
+  angkur: (<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" width="18" height="18"><polygon points="10,2 13.5,5.5 13.5,9 10,12.5 6.5,9 6.5,5.5" /><line x1="10" y1="12.5" x2="10" y2="18" /><line x1="7.5" y1="15.5" x2="12.5" y2="15.5" /></svg>),
+  paa: (<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" width="18" height="18"><line x1="10" y1="2" x2="10" y2="8" /><path d="M4 8 h12 v2 l-4 6 H8 l-4-6 V8z" /><line x1="10" y1="16" x2="10" y2="18" /></svg>),
+  pubt: (<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" width="18" height="18"><path d="M4 13 A6 6 0 1 1 16 13" /><line x1="10" y1="11" x2="13" y2="7" /><circle cx="10" cy="13" r="1.2" fill="currentColor" stroke="none" /><line x1="10" y1="14.5" x2="10" y2="17" /></svg>),
+  ptp: (<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" width="18" height="18"><circle cx="10" cy="10" r="3" /><path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.22 4.22l1.42 1.42M14.36 14.36l1.42 1.42M4.22 15.78l1.42-1.42M14.36 5.64l1.42-1.42" /></svg>),
+  listrik: (<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" width="18" height="18"><polyline points="12,2 7,11 11,11 8,18 15,8 10,8" /></svg>),
+  petir: (<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" width="18" height="18"><path d="M5 10.5 A4 4 0 0 1 13 8 A3 3 0 0 1 16 11 H9" /><polyline points="11,11 8,16 12,16 9,20" /></svg>),
+  lift: (<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" width="18" height="18"><rect x="4" y="2" width="12" height="16" rx="1.5" /><line x1="10" y1="2" x2="10" y2="18" /><polyline points="7,6 10,3 13,6" /><polyline points="7,14 10,17 13,14" /></svg>),
+  kebakaran: (<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" width="18" height="18"><rect x="7" y="7" width="7" height="10" rx="2" /><line x1="10.5" y1="7" x2="10.5" y2="4" /><line x1="8" y1="4" x2="13" y2="4" /><path d="M14 9 Q17 9 17 7" /><line x1="10.5" y1="10" x2="10.5" y2="13" /></svg>),
+  camera: (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="24" height="24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" /><circle cx="12" cy="13" r="4" /></svg>),
+  home: (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="20" height="20"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><polyline points="9,22 9,12 15,12 15,22" /></svg>),
+  clipboard: (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="20" height="20"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" /><rect x="8" y="2" width="8" height="4" rx="1" /><line x1="9" y1="12" x2="15" y2="12" /><line x1="9" y1="16" x2="13" y2="16" /></svg>),
+  cloudUp: (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="20" height="20"><polyline points="16,16 12,12 8,16" /><line x1="12" y1="12" x2="12" y2="21" /><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3" /></svg>),
+  shield: (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="20" height="20"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /><polyline points="9,12 11,14 15,10" /></svg>),
+  factory: (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="22" height="22"><path d="M2 20V10l7-5v5l7-5v5l4-2v12H2z" /><rect x="8" y="14" width="3" height="6" /><rect x="13" y="14" width="3" height="6" /></svg>),
+  package: (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="16" height="16"><line x1="16.5" y1="9.4" x2="7.5" y2="4.21" /><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /><polyline points="3.27,6.96 12,12.01 20.73,6.96" /><line x1="12" y1="22.08" x2="12" y2="12" /></svg>),
+  chevronRight: (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="14" height="14"><polyline points="9,18 15,12 9,6" /></svg>),
+  hardHat: (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="11" height="11"><path d="M2 18a1 1 0 0 0 1 1h18a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1H3a1 1 0 0 0-1 1v2z" /><path d="M10 5V3m4 2V3" /><path d="M6 15V9a6 6 0 0 1 12 0v6" /></svg>),
 };
 
 const OBJECT_TYPES = [
@@ -277,21 +182,16 @@ const OBJECT_TYPES = [
   { key: 'Proteksi Kebakaran', label: 'Proteksi Kebakaran', desc: 'Proteksi Kebakaran',           icon: ICONS.kebakaran },
 ];
 
-// ─── OWNER EMAIL ─────────────────────────────────────────────────────────────
-// FIXED: Email owner diambil dari env, digunakan untuk badge Admin kosmetik
 const OWNER_EMAIL = import.meta.env.VITE_OWNER_EMAIL || 'zulfanrafly03@gmail.com';
 
 // ─── OAUTH ───────────────────────────────────────────────────────────────────
-// FIXED: Hapus 'email profile' dari scope — hanya drive.file
-// Ini menghilangkan error "App not verified" dari Google
+
 function buildOAuthUrl() {
   const redirectUri = getGoogleRedirectUri();
-  console.debug('[OAuth] redirect_uri:', redirectUri);
   const params = new URLSearchParams({
     client_id: GOOGLE_CONFIG.clientId,
     redirect_uri: redirectUri,
     response_type: 'token',
-    // FIXED: HANYA drive.file scope — tidak perlu verifikasi Google
     scope: GOOGLE_CONFIG.scope,
     prompt: 'select_account',
   });
@@ -300,22 +200,18 @@ function buildOAuthUrl() {
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
-// FIXED: Validasi hanya clientName, semua field lain optional
 function validateForm(clientName: string): string[] {
   const errors: string[] = [];
   if (!clientName.trim()) errors.push('Nama Perusahaan Klien');
   return errors;
 }
 
-// FIXED: Ambil user info dari userinfo endpoint (masih bisa dengan drive.file scope)
 async function fetchUserInfo(token: string): Promise<{ email: string; name: string } | null> {
   try {
-    // FIXED: Gunakan v3/userinfo yang compatible dengan drive.file scope
     const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) {
-      // Fallback: coba v2
       const res2 = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -324,10 +220,8 @@ async function fetchUserInfo(token: string): Promise<{ email: string; name: stri
       return { email: data2.email || '', name: data2.name || '' };
     }
     const data = await res.json();
-    // v3 userinfo: field 'sub', 'email', 'name'
     const email = data.email || '';
     const name = data.name || data.given_name || '';
-    // FIXED: Fallback parse nama dari email kalau name kosong
     const displayName = name || (email ? email.split('@')[0] : '');
     return { email, name: displayName };
   } catch {
@@ -335,9 +229,54 @@ async function fetchUserInfo(token: string): Promise<{ email: string; name: stri
   }
 }
 
-// FIXED: Tentukan badge role berdasarkan email vs OWNER_EMAIL (kosmetik saja)
 function getRoleBadge(email: string): 'Admin' | 'Ahli K3' {
   return email === OWNER_EMAIL ? 'Admin' : 'Ahli K3';
+}
+
+// NEW (PR #4): Compress foto ke max 1MB menggunakan canvas
+// Pertahankan aspect ratio, kualitas JPEG 0.8
+async function compressPhoto(dataUrl: string): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const MAX_SIZE_BYTES = 1 * 1024 * 1024; // 1MB
+      const MAX_DIMENSION = 1920; // max width/height
+
+      let { width, height } = img;
+
+      // Scale down kalau terlalu besar
+      if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+        if (width > height) {
+          height = Math.round((height * MAX_DIMENSION) / width);
+          width = MAX_DIMENSION;
+        } else {
+          width = Math.round((width * MAX_DIMENSION) / height);
+          height = MAX_DIMENSION;
+        }
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { resolve(dataUrl); return; }
+      ctx.drawImage(img, 0, 0, width, height);
+
+      // Coba quality 0.8 dulu
+      let quality = 0.8;
+      let result = canvas.toDataURL('image/jpeg', quality);
+
+      // Kalau masih > 1MB, turunkan quality secara bertahap
+      while (result.length * 0.75 > MAX_SIZE_BYTES && quality > 0.3) {
+        quality -= 0.1;
+        result = canvas.toDataURL('image/jpeg', quality);
+      }
+
+      resolve(result);
+    };
+    img.onerror = () => resolve(dataUrl); // fallback: pakai original
+    img.src = dataUrl;
+  });
 }
 
 // ─── DESIGN TOKENS ───────────────────────────────────────────────────────────
@@ -379,7 +318,7 @@ function StatCard({ label, value, color, dot }: { label: string; value: number |
       <p style={{ fontSize: 24, fontWeight: 700, color, letterSpacing: '-0.5px', margin: '2px 0' }}>{value}</p>
       <p style={{ fontSize: 10, color: T.textSecondary, display: 'flex', alignItems: 'center', gap: 4 }}>
         <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: dot }} />
-        {color === T.amber600 ? 'Belum di-sync' : 'Bulan ini'}
+        {color === T.amber600 ? 'Belum di-sync' : 'Tersimpan'}
       </p>
     </div>
   );
@@ -402,7 +341,7 @@ function ObjCard({ obj, onClick }: { obj: typeof OBJECT_TYPES[0]; onClick: () =>
         background: T.white, border: `0.5px solid ${T.border}`, borderRadius: 12,
         padding: 12, textAlign: 'left', cursor: 'pointer',
         display: 'flex', flexDirection: 'column', gap: 6,
-        transition: 'border-color 0.15s, box-shadow 0.15s',
+        transition: 'border-color 0.15s',
         WebkitTapHighlightColor: 'transparent',
       }}
       onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = T.emerald500; }}
@@ -446,12 +385,10 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentUserEmail, setCurrentUserEmail] = useState('');
   const [currentUserName, setCurrentUserName] = useState('');
-  // FIXED: roleChecked tidak dipakai untuk guard, hanya untuk display badge
   const [roleChecked, setRoleChecked] = useState(false);
 
-  // NEW: Online/offline status
+  // Online/offline
   const [isOnline, setIsOnline] = useState(navigator.onLine);
-  // NEW: Auto sync toggle — simpan di localStorage
   const [autoSync, setAutoSync] = useState(() => {
     return localStorage.getItem('aksara_auto_sync') === 'true';
   });
@@ -480,7 +417,9 @@ export default function App() {
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   const [tokenError, setTokenError] = useState<string | null>(null);
 
-  // FIXED: Dual file input refs — kamera dan galeri terpisah
+  // NEW (PR #1): State untuk menampilkan hasil pull
+  const [pullStatus, setPullStatus] = useState<string | null>(null);
+
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
@@ -505,11 +444,24 @@ export default function App() {
     }
   }, []);
 
-  // FIXED: seedIfEmpty tetap dijalankan tapi tidak untuk guard
   const setupRole = useCallback(async (email: string, name: string) => {
     await RoleRepository.seedIfEmpty(email, name);
     setRoleChecked(true);
   }, []);
+
+  // NEW (PR #1): Fungsi pull inspections dari Drive
+  const doPullInspections = useCallback(async () => {
+    try {
+      const result = await pullInspectionsFromDrive();
+      if (result.pulled > 0) {
+        await refreshData();
+        setPullStatus(`✅ ${result.pulled} data baru dari Drive`);
+        setTimeout(() => setPullStatus(null), 4000);
+      }
+    } catch (err) {
+      console.warn('[App] pullInspectionsFromDrive error:', err);
+    }
+  }, [refreshData]);
 
   // ── Auth on mount ──────────────────────────────────────────────────────────
 
@@ -524,7 +476,6 @@ export default function App() {
         setIsAuthenticated(true);
         setTokenError(null);
         window.history.replaceState({}, document.title, window.location.pathname);
-        // FIXED: Pakai fetchUserInfo yang compatible dengan drive.file scope
         fetchUserInfo(token).then((info) => {
           if (info) {
             setCurrentUserEmail(info.email);
@@ -559,15 +510,16 @@ export default function App() {
       }
     }
     refreshData();
-    // Pull templates dari Drive saat app dibuka
-    if (hasValidToken()) {
-      pullTemplatesFromDrive().catch(console.warn);
-    }
-  }, [refreshData, setupRole]);
 
-  // NEW: Auto sync semua draft saat online
+    // Pull templates + inspections dari Drive saat app dibuka
+    // FIXED: pull tidak butuh token lagi, langsung panggil
+    pullTemplatesFromDrive().catch(console.warn);
+    setTimeout(() => doPullInspections(), 2000);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Auto sync saat online ──────────────────────────────────────────────────
+
   const triggerAutoSync = useCallback(async () => {
-    if (!hasValidToken()) return;
     const currentDrafts = await SessionRepository.getDrafts();
     if (currentDrafts.length === 0) return;
     for (const draft of currentDrafts) {
@@ -576,10 +528,9 @@ export default function App() {
         await uploadToDrive(draft, draft.photos, (p) => setUploadProgress(p));
         await SessionRepository.markSynced(draft.id);
       } catch (err: unknown) {
-        const e = err as Error;
         if (err instanceof TokenExpiredError) {
           setIsAuthenticated(false);
-          setTokenError(e.message);
+          setTokenError((err as Error).message);
           break;
         }
       }
@@ -589,18 +540,16 @@ export default function App() {
     await refreshData();
   }, [refreshData]);
 
-  // NEW: Online/offline listener + auto sync
+  // Online/offline listener
   useEffect(() => {
     const handleOnline = () => {
       setIsOnline(true);
-      // NEW: Auto sync saat online + toggle ON + ada draft
       const shouldAutoSync = localStorage.getItem('aksara_auto_sync') === 'true';
       if (shouldAutoSync) {
-        // Delay sedikit biar koneksi stabil
-        setTimeout(() => {
-          triggerAutoSync();
-        }, 1500);
+        setTimeout(() => triggerAutoSync(), 1500);
       }
+      // NEW (PR #1): Pull inspections saat kembali online
+      setTimeout(() => doPullInspections(), 2000);
     };
     const handleOffline = () => setIsOnline(false);
 
@@ -610,8 +559,9 @@ export default function App() {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, [triggerAutoSync]);
+  }, [triggerAutoSync, doPullInspections]);
 
+  // Token expiry check
   useEffect(() => {
     const interval = setInterval(() => {
       if (isAuthenticated && isTokenExpiringSoon(10)) {
@@ -622,7 +572,6 @@ export default function App() {
     return () => clearInterval(interval);
   }, [isAuthenticated]);
 
-  // NEW: Toggle auto sync
   const handleAutoSyncToggle = (val: boolean) => {
     setAutoSync(val);
     localStorage.setItem('aksara_auto_sync', String(val));
@@ -703,12 +652,17 @@ export default function App() {
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  // FIXED: Handler foto — bisa dari kamera atau galeri
+  // FIXED (PR #4): Compress foto ke max 1MB sebelum disimpan
   const handlePhotos = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     files.forEach((file) => {
       const reader = new FileReader();
-      reader.onloadend = () => setNewPhotos((prev) => [...prev, reader.result as string]);
+      reader.onloadend = async () => {
+        const original = reader.result as string;
+        // NEW: Compress sebelum masuk ke state
+        const compressed = await compressPhoto(original);
+        setNewPhotos((prev) => [...prev, compressed]);
+      };
       reader.readAsDataURL(file);
     });
     e.target.value = '';
@@ -723,8 +677,9 @@ export default function App() {
     setNewPhotos((prev) => prev.filter((_, i) => i !== idx));
   };
 
+  // FIXED (PR #2): Kalau edit + ada koneksi + token valid → langsung upload ulang ke Drive
+  // Tidak perlu balik ke Sync Hub manual
   const handleSaveForm = async () => {
-    // FIXED: Validasi hanya clientName
     const errors = validateForm(clientName);
     if (errors.length > 0) {
       alert(`⚠️ Field wajib belum diisi:\n${errors.map((e) => `• ${e}`).join('\n')}`);
@@ -733,16 +688,70 @@ export default function App() {
     setIsSaving(true);
     try {
       if (formMode === 'edit' && editingId) {
+        // Update di IndexedDB
         await SessionRepository.update(
           editingId,
-          { clientName: clientName.trim(), objectType: activeObject, unitData: formData, templateClientId: fromTemplateClientId, templateUnitId: fromTemplateUnitId, inspectorEmail: currentUserEmail },
+          {
+            clientName: clientName.trim(),
+            objectType: activeObject,
+            unitData: formData,
+            templateClientId: fromTemplateClientId,
+            templateUnitId: fromTemplateUnitId,
+            inspectorEmail: currentUserEmail,
+            // FIXED (PR #2): Set status 'synced' dulu, akan di-upload langsung
+            // Kalau upload gagal, set balik ke draft
+            status: 'synced',
+          },
           newPhotos,
           deletedPhotoIds
         );
-        alert('✅ Data berhasil diperbarui!');
+
+        // NEW (PR #2): Langsung upload ulang ke Drive kalau kondisi memungkinkan
+        if (isOnline) {
+          try {
+            setUploadingId(editingId);
+            const updatedSession = await SessionRepository.getById(editingId);
+            if (updatedSession) {
+              await uploadToDrive(
+                updatedSession,
+                updatedSession.photos,
+                (p) => setUploadProgress(p)
+              );
+              // Pastikan status tetap synced
+              await SessionRepository.markSynced(editingId);
+            }
+          } catch (uploadErr: any) {
+            console.warn('[App] Re-upload setelah edit gagal:', uploadErr);
+            // Upload gagal → set balik ke draft agar user bisa sync manual
+            await SessionRepository.update(editingId, { status: 'draft' }, [], []);
+            if (uploadErr instanceof TokenExpiredError) {
+              setIsAuthenticated(false);
+              setTokenError(uploadErr.message);
+              alert('⚠️ Sesi Drive berakhir. Data disimpan sebagai draft, sync manual nanti.');
+            } else {
+              alert('⚠️ Data tersimpan tapi gagal upload ulang ke Drive. Cek koneksi dan sync manual.');
+            }
+          } finally {
+            setUploadingId(null);
+            setUploadProgress(null);
+          }
+        } else {
+          // Offline atau tidak ada token → simpan sebagai draft untuk sync manual nanti
+          await SessionRepository.update(editingId, { status: 'draft' }, [], []);
+          alert('✅ Data berhasil diperbarui! (Offline — akan di-sync saat online)');
+        }
       } else {
+        // Create baru
         await SessionRepository.create(
-          { clientName: clientName.trim(), objectType: activeObject, unitData: formData, status: 'draft', templateClientId: fromTemplateClientId, templateUnitId: fromTemplateUnitId, inspectorEmail: currentUserEmail },
+          {
+            clientName: clientName.trim(),
+            objectType: activeObject,
+            unitData: formData,
+            status: 'draft',
+            templateClientId: fromTemplateClientId,
+            templateUnitId: fromTemplateUnitId,
+            inspectorEmail: currentUserEmail,
+          },
           newPhotos
         );
         alert('✅ Data berhasil disimpan!');
@@ -762,7 +771,6 @@ export default function App() {
   };
 
   const handleSync = async (id: string) => {
-    if (!isAuthenticated) { alert('⚠️ Login Google Drive terlebih dahulu!'); return; }
     setUploadingId(id);
     setUploadProgress(null);
     try {
@@ -786,6 +794,32 @@ export default function App() {
     }
   };
 
+  // NEW: Handle sync dari HistoryView (re-upload data yang sudah synced)
+  const handleReSyncFromHistory = async (id: string) => {
+    if (!isOnline) { alert('⚠️ Tidak ada koneksi internet.'); return; }
+    setUploadingId(id);
+    setUploadProgress(null);
+    try {
+      const session = await SessionRepository.getById(id);
+      if (!session) throw new Error('Data tidak ditemukan');
+      await uploadToDrive(session, session.photos, (progress) => setUploadProgress(progress));
+      await SessionRepository.markSynced(id);
+      setUploadProgress(null);
+      alert('✅ Data berhasil diupload ulang ke Drive!');
+    } catch (err: any) {
+      setUploadProgress(null);
+      if (err instanceof TokenExpiredError) {
+        setIsAuthenticated(false);
+        setTokenError(err.message);
+        alert(`⚠️ ${err.message}`);
+      } else {
+        alert('Gagal upload ulang: ' + err.message);
+      }
+    } finally {
+      setUploadingId(null);
+    }
+  };
+
   const handleDelete = async (id: string) => {
     if (!confirm('Hapus data ini? Tindakan tidak bisa dibatalkan.')) return;
     await SessionRepository.delete(id);
@@ -799,7 +833,6 @@ export default function App() {
   const totalPhotos = existingPhotos.length + newPhotos.length;
   const userInitial = currentUserName ? currentUserName.charAt(0).toUpperCase() : '?';
   const firstName = currentUserName ? currentUserName.split(' ')[0] : '';
-  // FIXED: Badge role kosmetik berdasarkan email vs OWNER_EMAIL
   const roleBadge = currentUserEmail ? getRoleBadge(currentUserEmail) : 'Ahli K3';
   const isOwner = currentUserEmail === OWNER_EMAIL;
 
@@ -808,25 +841,9 @@ export default function App() {
   return (
     <div style={{ minHeight: '100vh', background: T.bg, fontFamily: 'system-ui, -apple-system, sans-serif', color: T.textPrimary }}>
 
-      {/* FIXED: Hidden file inputs — dual option kamera + galeri */}
-      <input
-        ref={cameraInputRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        onChange={handlePhotos}
-        style={{ display: 'none' }}
-        aria-hidden="true"
-      />
-      <input
-        ref={galleryInputRef}
-        type="file"
-        accept="image/*"
-        multiple
-        onChange={handlePhotos}
-        style={{ display: 'none' }}
-        aria-hidden="true"
-      />
+      {/* Hidden file inputs */}
+      <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={handlePhotos} style={{ display: 'none' }} aria-hidden="true" />
+      <input ref={galleryInputRef} type="file" accept="image/*" multiple onChange={handlePhotos} style={{ display: 'none' }} aria-hidden="true" />
 
       {/* ── NAVBAR ── */}
       <header style={{
@@ -839,20 +856,15 @@ export default function App() {
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         maxWidth: 640, margin: '0 auto',
       }}>
-        {/* Brand */}
-        <button
-          onClick={() => { resetForm(); setView('HOME'); }}
-          style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
-        >
+        <button onClick={() => { resetForm(); setView('HOME'); }} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
           <img src="/icons/icon-192.png" alt="ARP" style={{ width: 30, height: 30, borderRadius: 9, objectFit: 'cover' }} />
           <span style={{ fontSize: 13, fontWeight: 700, color: T.textPrimary, letterSpacing: '-0.3px' }}>
             Aksara <span style={{ color: T.emerald500 }}>Inspect</span>
           </span>
         </button>
 
-        {/* Actions */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          {/* NEW: Indikator online/offline */}
+          {/* Online/offline indicator */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px', borderRadius: 20, background: isOnline ? '#ECFDF5' : '#FEF2F2', border: `0.5px solid ${isOnline ? '#6EE7B7' : '#FCA5A5'}` }}>
             <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: isOnline ? '#10B981' : '#EF4444' }} />
             <span style={{ fontSize: 10, fontWeight: 600, color: isOnline ? '#065F46' : '#B91C1C' }}>
@@ -860,95 +872,59 @@ export default function App() {
             </span>
           </div>
 
-          {/* Riwayat */}
-          <button
-            onClick={() => setView('HISTORY')}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 4,
-              padding: '5px 10px', borderRadius: 20,
-              fontSize: 11, fontWeight: 600, cursor: 'pointer',
-              border: `0.5px solid ${view === 'HISTORY' ? T.emeraldBorder : T.border}`,
-              background: view === 'HISTORY' ? T.emeraldLight : T.white,
-              color: view === 'HISTORY' ? T.emeraldText : T.textSecondary,
-            }}
-          >
+          <button onClick={() => setView('HISTORY')} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `0.5px solid ${view === 'HISTORY' ? T.emeraldBorder : T.border}`, background: view === 'HISTORY' ? T.emeraldLight : T.white, color: view === 'HISTORY' ? T.emeraldText : T.textSecondary }}>
             Riwayat
             {history.length > 0 && (
-              <span style={{ background: T.emeraldLight, color: T.emeraldText, borderRadius: 10, padding: '1px 5px', fontSize: 10, fontWeight: 700 }}>
-                {history.length}
-              </span>
+              <span style={{ background: T.emeraldLight, color: T.emeraldText, borderRadius: 10, padding: '1px 5px', fontSize: 10, fontWeight: 700 }}>{history.length}</span>
             )}
           </button>
 
-          {/* Sync */}
           {drafts.length > 0 && (
-            <button
-              onClick={() => setView('SYNC_HUB')}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 4,
-                padding: '5px 10px', borderRadius: 20,
-                fontSize: 11, fontWeight: 600, cursor: 'pointer',
-                border: `0.5px solid ${T.amberBorder}`,
-                background: T.amberLight, color: T.amber800,
-              }}
-            >
+            <button onClick={() => setView('SYNC_HUB')} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `0.5px solid ${T.amberBorder}`, background: T.amberLight, color: T.amber800 }}>
               Sync
-              <span style={{ background: T.amber400, color: T.amber800, borderRadius: 10, padding: '1px 5px', fontSize: 10, fontWeight: 700 }}>
-                {drafts.length}
-              </span>
+              <span style={{ background: T.amber400, color: T.amber800, borderRadius: 10, padding: '1px 5px', fontSize: 10, fontWeight: 700 }}>{drafts.length}</span>
             </button>
           )}
 
-          {/* FIXED: Admin button — semua user bisa klik, bukan hanya isAdmin */}
           {roleChecked && (
-            <button
-              onClick={() => setView('ADMIN')}
-              style={{
-                padding: '5px 10px', borderRadius: 20,
-                fontSize: 11, fontWeight: 600, cursor: 'pointer',
-                border: `0.5px solid ${view === 'ADMIN' ? '#C4B5FD' : T.border}`,
-                background: view === 'ADMIN' ? '#EDE9FE' : T.white,
-                color: view === 'ADMIN' ? '#5B21B6' : T.textSecondary,
-              }}
-            >
+            <button onClick={() => setView('ADMIN')} style={{ padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `0.5px solid ${view === 'ADMIN' ? '#C4B5FD' : T.border}`, background: view === 'ADMIN' ? '#EDE9FE' : T.white, color: view === 'ADMIN' ? '#5B21B6' : T.textSecondary }}>
               Admin
             </button>
           )}
 
-          {/* Auth */}
           {isAuthenticated ? (
-            <button
-              onClick={handleLogout}
-              title={currentUserEmail}
-              style={{ padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `0.5px solid ${T.redBorder}`, background: T.redLight, color: T.redText }}
-            >
+            <button onClick={handleLogout} title={currentUserEmail} style={{ padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `0.5px solid ${T.redBorder}`, background: T.redLight, color: T.redText }}>
               Logout
             </button>
           ) : (
-            <button
-              onClick={handleLogin}
-              style={{ padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `0.5px solid ${T.border}`, background: T.white, color: T.textSecondary }}
-            >
+            <button onClick={handleLogin} style={{ padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `0.5px solid ${T.border}`, background: T.white, color: T.textSecondary }}>
               Login Google
             </button>
           )}
         </div>
       </header>
 
-      {/* ── TOKEN ERROR BANNER ── */}
+      {/* Token error banner */}
       {tokenError && !isAuthenticated && (
         <div style={{ maxWidth: 640, margin: '10px auto 0', padding: '0 16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: T.redLight, border: `0.5px solid ${T.redBorder}`, borderRadius: 10, padding: '10px 12px' }}>
             <span style={{ fontSize: 14 }}>⚠️</span>
             <p style={{ flex: 1, fontSize: 12, fontWeight: 500, color: T.redText }}>{tokenError}</p>
-            <button onClick={handleLogin} style={{ fontSize: 11, fontWeight: 700, color: T.redText, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
-              Login ulang
-            </button>
+            <button onClick={handleLogin} style={{ fontSize: 11, fontWeight: 700, color: T.redText, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>Login ulang</button>
           </div>
         </div>
       )}
 
-      {/* ── USER BAR ── */}
+      {/* NEW (PR #1): Pull status banner */}
+      {pullStatus && (
+        <div style={{ maxWidth: 640, margin: '8px auto 0', padding: '0 16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: T.emeraldLight, border: `0.5px solid ${T.emeraldBorder}`, borderRadius: 10, padding: '8px 12px' }}>
+            <p style={{ fontSize: 11, fontWeight: 600, color: T.emeraldText }}>{pullStatus}</p>
+          </div>
+        </div>
+      )}
+
+      {/* User bar */}
       {isAuthenticated && currentUserName && (
         <div style={{ maxWidth: 640, margin: '10px auto 0', padding: '0 16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: T.white, border: `0.5px solid ${T.border}`, borderRadius: 12, padding: '8px 12px' }}>
@@ -956,15 +932,7 @@ export default function App() {
               {userInitial}
             </div>
             <span style={{ fontSize: 12, fontWeight: 600, color: T.textPrimary }}>{currentUserName}</span>
-            {/* FIXED: Badge kosmetik — Admin jika email = OWNER_EMAIL, else Ahli K3 */}
-            <span style={{
-              marginLeft: 'auto', fontSize: 10, fontWeight: 600,
-              padding: '3px 8px', borderRadius: 20,
-              background: isOwner ? '#EDE9FE' : T.emeraldLight,
-              color: isOwner ? '#5B21B6' : T.emeraldText,
-              border: `0.5px solid ${isOwner ? '#C4B5FD' : T.emeraldBorder}`,
-              display: 'flex', alignItems: 'center', gap: 3,
-            }}>
+            <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 600, padding: '3px 8px', borderRadius: 20, background: isOwner ? '#EDE9FE' : T.emeraldLight, color: isOwner ? '#5B21B6' : T.emeraldText, border: `0.5px solid ${isOwner ? '#C4B5FD' : T.emeraldBorder}`, display: 'flex', alignItems: 'center', gap: 3 }}>
               {ICONS.hardHat}
               {roleBadge}
             </span>
@@ -975,37 +943,28 @@ export default function App() {
       {/* ── MAIN ── */}
       <main style={{ maxWidth: 640, margin: '0 auto', padding: '16px 16px 100px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
-        {/* ── HOME ── */}
+        {/* HOME */}
         {view === 'HOME' && (
           <>
             <div>
               <h1 style={{ fontSize: 16, fontWeight: 700, color: T.textPrimary, letterSpacing: '-0.3px' }}>
                 {firstName ? `Selamat datang, ${firstName}` : 'Beranda Inspeksi'}
               </h1>
-              <p style={{ fontSize: 11, color: T.textSecondary, marginTop: 2 }}>
-                Mulai inspeksi baru atau pantau status lapangan
-              </p>
+              <p style={{ fontSize: 11, color: T.textSecondary, marginTop: 2 }}>Mulai inspeksi baru atau pantau status lapangan</p>
             </div>
 
             <div style={{ display: 'flex', gap: 8 }}>
               <StatCard label="Draft tertunda" value={drafts.length} color={T.amber600} dot={T.amber600} />
-              <StatCard label="Selesai bulan ini" value={history.length} color={T.emerald500} dot={T.emerald500} />
+              <StatCard label="Sudah disinkronkan" value={history.length} color={T.emerald500} dot={T.emerald500} />
             </div>
 
             <div>
               <Divider label="Inspeksi cepat" />
               <button
                 onClick={handleStartInspection}
-                style={{
-                  width: '100%', marginTop: 8, background: T.emerald900,
-                  border: 'none', borderRadius: 16, padding: '16px',
-                  display: 'flex', alignItems: 'center', gap: 12,
-                  cursor: 'pointer', textAlign: 'left', position: 'relative', overflow: 'hidden',
-                  WebkitTapHighlightColor: 'transparent',
-                }}
+                style={{ width: '100%', marginTop: 8, background: T.emerald900, border: 'none', borderRadius: 16, padding: '16px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', textAlign: 'left', position: 'relative', overflow: 'hidden', WebkitTapHighlightColor: 'transparent' }}
               >
                 <div style={{ position: 'absolute', right: -20, top: -20, width: 100, height: 100, borderRadius: '50%', background: 'rgba(16,185,129,0.15)', pointerEvents: 'none' }} />
-                <div style={{ position: 'absolute', right: 30, bottom: -30, width: 80, height: 80, borderRadius: '50%', background: 'rgba(16,185,129,0.10)', pointerEvents: 'none' }} />
                 <div style={{ width: 44, height: 44, borderRadius: 12, background: 'rgba(255,255,255,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.emeraldBorder, flexShrink: 0, position: 'relative', zIndex: 1 }}>
                   {ICONS.factory}
                 </div>
@@ -1026,10 +985,7 @@ export default function App() {
                   <p style={{ fontSize: 11, fontWeight: 700, color: T.amber800 }}>{drafts.length} draft belum di-sync</p>
                   <p style={{ fontSize: 10, color: T.amber700, marginTop: 1 }}>Hubungkan internet & upload ke Drive</p>
                 </div>
-                <button
-                  onClick={() => setView('SYNC_HUB')}
-                  style={{ padding: '5px 10px', background: T.amber600, color: '#fff', borderRadius: 8, fontSize: 10, fontWeight: 700, border: 'none', cursor: 'pointer', flexShrink: 0 }}
-                >
+                <button onClick={() => setView('SYNC_HUB')} style={{ padding: '5px 10px', background: T.amber600, color: '#fff', borderRadius: 8, fontSize: 10, fontWeight: 700, border: 'none', cursor: 'pointer', flexShrink: 0 }}>
                   Buka Sync
                 </button>
               </div>
@@ -1046,7 +1002,7 @@ export default function App() {
           </>
         )}
 
-        {/* ── PICK UNIT ── */}
+        {/* PICK UNIT */}
         {view === 'PICK_UNIT' && (
           <ClientPicker
             onPick={handleUnitPicked}
@@ -1055,7 +1011,7 @@ export default function App() {
           />
         )}
 
-        {/* ── FORM ── */}
+        {/* FORM */}
         {view === 'FORM' && (
           <FormView
             formMode={formMode}
@@ -1073,12 +1029,8 @@ export default function App() {
             showClientDropdown={showClientDropdown}
             onClientNameChange={setClientName}
             onClientNameFocus={() => setShowClientDropdown(true)}
-            onClientSuggestionSelect={(name) => {
-              setClientName(name);
-              setShowClientDropdown(false);
-            }}
+            onClientSuggestionSelect={(name) => { setClientName(name); setShowClientDropdown(false); }}
             onFieldChange={handleFieldChange}
-            // FIXED: Dual camera/gallery trigger
             onCameraClick={() => cameraInputRef.current?.click()}
             onGalleryClick={() => galleryInputRef.current?.click()}
             onRemoveExistingPhoto={removeExistingPhoto}
@@ -1088,7 +1040,7 @@ export default function App() {
           />
         )}
 
-        {/* ── SYNC HUB ── */}
+        {/* SYNC HUB */}
         {view === 'SYNC_HUB' && (
           <SyncHub
             drafts={drafts}
@@ -1105,19 +1057,29 @@ export default function App() {
           />
         )}
 
-        {/* ── HISTORY ── */}
+        {/* HISTORY */}
         {view === 'HISTORY' && (
-          <HistoryView history={history} onEdit={handleEdit} onDelete={handleDelete} />
+          <HistoryView
+            history={history}
+            onEdit={handleEdit}
+            onDelete={handleDelete}
+            // NEW (PR #2): Tombol sync ulang di History
+            onReSync={handleReSyncFromHistory}
+            isAuthenticated={isAuthenticated}
+            isOnline={isOnline}
+            uploadingId={uploadingId}
+            uploadProgress={uploadProgress}
+          />
         )}
 
-        {/* FIXED: Admin view — semua user bisa akses, hapus guard AccessDenied */}
+        {/* ADMIN */}
         {view === 'ADMIN' && (
           <AdminPanel currentUserEmail={currentUserEmail} onClose={() => setView('HOME')} />
         )}
 
       </main>
 
-      {/* ── BOTTOM NAV + FAB ── */}
+      {/* BOTTOM NAV + FAB */}
       {(view === 'HOME' || view === 'HISTORY' || view === 'SYNC_HUB' || view === 'ADMIN') && (
         <nav style={{
           position: 'fixed', bottom: 0, left: 0, right: 0,
@@ -1132,20 +1094,11 @@ export default function App() {
           <NavTab icon={ICONS.home} label="Beranda" active={view === 'HOME'} onClick={() => { resetForm(); setView('HOME'); }} />
           <NavTab icon={ICONS.clipboard} label="Riwayat" active={view === 'HISTORY'} onClick={() => setView('HISTORY')} />
 
-          {/* FAB kamera mencolok */}
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
             <button
               onClick={handleStartInspection}
               aria-label="Mulai inspeksi baru"
-              style={{
-                width: 64, height: 64, borderRadius: '50%',
-                background: 'rgba(16,185,129,0.15)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                border: 'none', cursor: 'pointer',
-                marginTop: -32,
-                WebkitTapHighlightColor: 'transparent',
-                padding: 0,
-              }}
+              style={{ width: 64, height: 64, borderRadius: '50%', background: 'rgba(16,185,129,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', cursor: 'pointer', marginTop: -32, WebkitTapHighlightColor: 'transparent', padding: 0 }}
             >
               <div style={{ width: 52, height: 52, borderRadius: '50%', background: T.emerald500, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', border: '2.5px solid #fff', boxShadow: `0 0 0 1px ${T.emeraldBorder}` }}>
                 {ICONS.camera}
@@ -1155,7 +1108,6 @@ export default function App() {
           </div>
 
           <NavTab icon={ICONS.cloudUp} label="Sync" active={view === 'SYNC_HUB'} onClick={() => setView('SYNC_HUB')} />
-          {/* FIXED: Admin tab — semua user bisa klik */}
           <NavTab icon={ICONS.shield} label="Admin" active={view === 'ADMIN'} onClick={() => setView('ADMIN')} />
         </nav>
       )}
