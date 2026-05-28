@@ -24,6 +24,7 @@ import {
   isTokenExpiringSoon,
   type UploadProgress,
 } from './services/driveService';
+import { pullTemplatesFromDrive } from './services/syncService';
 import { GOOGLE_CONFIG, getGoogleRedirectUri } from './config';
 import { FormView } from './components/FormView';
 import { SyncHub } from './components/SyncHub';
@@ -558,6 +559,10 @@ export default function App() {
       }
     }
     refreshData();
+    // Pull templates dari Drive saat app dibuka
+    if (hasValidToken()) {
+      pullTemplatesFromDrive().catch(console.warn);
+    }
   }, [refreshData, setupRole]);
 
   // NEW: Auto sync semua draft saat online

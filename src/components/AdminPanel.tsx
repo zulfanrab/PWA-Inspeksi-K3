@@ -11,6 +11,8 @@ import {
   type UserRole,
 } from '../db/db';
 
+import { pushTemplatesToDrive } from '../services/syncService';
+
 // ==========================================
 // FIELD DEFINITIONS (copy dari App.tsx agar AdminPanel mandiri)
 // ==========================================
@@ -316,6 +318,7 @@ function ClientManager({ currentUserEmail }: { currentUserEmail: string }) {
       }
       await loadClients();
       setSubView('list');
+      pushTemplatesToDrive().catch(console.warn);
     } catch (err: any) {
       alert('Gagal menyimpan: ' + err.message);
     } finally {
@@ -331,6 +334,7 @@ function ClientManager({ currentUserEmail }: { currentUserEmail: string }) {
     if (!confirm(msg)) return;
     await ClientRepository.delete(c.id);
     await loadClients();
+      pushTemplatesToDrive().catch(console.warn);
   };
 
   // ---- Unit management ----
@@ -381,6 +385,7 @@ function ClientManager({ currentUserEmail }: { currentUserEmail: string }) {
       }
       await loadUnits();
       setSubView('units');
+      pushTemplatesToDrive().catch(console.warn);
     } catch (err: any) {
       alert('Gagal menyimpan unit: ' + err.message);
     } finally {
@@ -392,6 +397,7 @@ function ClientManager({ currentUserEmail }: { currentUserEmail: string }) {
     if (!confirm(`Hapus unit "${u.label}"?`)) return;
     await UnitRepository.delete(u.id);
     await loadUnits();
+    pushTemplatesToDrive().catch(console.warn);
   };
 
   const specificFields = SPECIFIC_FIELDS[unitObjectType] || [];
