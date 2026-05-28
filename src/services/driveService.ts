@@ -1,8 +1,9 @@
 // src/services/driveService.ts
-// FIXED: Upload tidak lagi langsung ke Google Drive API
-// FIXED: Semua upload lewat serverless api/upload.ts pakai Service Account
-// FIXED: Token logic disederhanakan — token hanya untuk identitas user, bukan Drive access
-// FIXED: Progress indicator tetap ada, dihitung dari jumlah foto
+// FIXED: Upload lewat serverless api/upload.ts pakai OAuth Refresh Token
+// FIXED (PR fix): uploadToDrive sekarang punya parameter onlyNewPhotos
+//   - saat create: kirim semua session.photos
+//   - saat edit: kirim hanya foto baru (newPhotos) agar tidak duplikat di Drive
+//   - api/upload.ts sudah handle lanjut penomoran dari countExistingPhotos
 
 import type { InspectionSession, InspectionPhoto } from '../db/db';
 import { getApiBaseUrl } from '../config';
@@ -18,8 +19,6 @@ type ProgressCallback = (progress: UploadProgress) => void;
 
 // ==========================================
 // TOKEN HELPERS
-// FIXED: Token sekarang hanya untuk identitas (nama + email)
-// Tidak ada Drive scope — tidak perlu validasi expiry untuk Drive
 // ==========================================
 
 export class TokenExpiredError extends Error {
@@ -43,14 +42,10 @@ export function clearToken() {
   localStorage.removeItem('google_token_saved_at');
 }
 
-// FIXED: hasValidToken sekarang hanya cek apakah user sudah login (ada token)
-// Tidak lagi dipakai untuk Drive access
 export function hasValidToken(): boolean {
   return !!localStorage.getItem('google_token');
 }
 
-// FIXED: getValidToken — masih ada untuk kompatibilitas komponen lain
-// Tapi tidak lagi wajib untuk upload (upload pakai Service Account)
 export function getValidToken(): string {
   const token = localStorage.getItem('google_token');
   if (!token) throw new TokenExpiredError('Belum login Google.');
@@ -66,19 +61,27 @@ export function isTokenExpiringSoon(_withinMinutes = 10): boolean {
 
 // ==========================================
 // MAIN UPLOAD FUNCTION
-// FIXED: Kirim ke api/upload.ts, bukan langsung ke Google Drive
+// FIXED: Tambah parameter onlyNewPhotos (opsional)
+//   - Kalau undefined/null → upload semua session.photos (create baru)
+//   - Kalau diisi array dataUrl → upload hanya foto itu (edit, cegah duplikat)
+// api/upload.ts sudah handle countExistingPhotos untuk lanjut penomoran
 // ==========================================
 
 export const uploadToDrive = async (
   session: InspectionSession & { photos: InspectionPhoto[] },
   _photos: InspectionPhoto[],
-  onProgress?: ProgressCallback
+  onProgress?: ProgressCallback,
+  // FIXED: Parameter baru — foto yang mau diupload ke Drive
+  // Kalau null/undefined → semua session.photos (behavior lama untuk create)
+  // Kalau diisi → hanya foto ini yang dikirim (untuk edit, cegah duplikat)
+  onlyNewPhotos?: InspectionPhoto[] | null
 ): Promise<{ success: true; folderId: string }> => {
 
-  const totalPhotos = session.photos.length;
-  const totalSteps = totalPhotos + 2; // folder setup + data json + setiap foto
+  // FIXED: Tentukan foto mana yang mau dikirim ke server
+  const photosToUpload = onlyNewPhotos ?? session.photos;
+  const totalPhotos = photosToUpload.length;
+  const totalSteps = totalPhotos + 2;
 
-  // Step 1: Persiapan
   onProgress?.({
     current: 0,
     total: totalSteps,
@@ -86,9 +89,10 @@ export const uploadToDrive = async (
     phase: 'folder',
   });
 
-  // Step 2: Konversi foto ke format yang bisa dikirim ke server
-  const photosPayload = session.photos.map((photo, i) => ({
-    name: `foto-${String(i + 1).padStart(3, '0')}.jpg`,
+  // Konversi ke format payload
+  // Nama file sementara — api/upload.ts akan re-nomori dari countExistingPhotos
+  const photosPayload = photosToUpload.map((photo, i) => ({
+    name: `foto-temp-${String(i + 1).padStart(3, '0')}.jpg`,
     dataUrl: photo.dataUrl,
   }));
 
@@ -99,7 +103,6 @@ export const uploadToDrive = async (
     phase: 'data',
   });
 
-  // Step 3: Kirim ke serverless api/upload.ts
   const apiBase = getApiBaseUrl();
   const response = await fetch(`${apiBase}/api/upload`, {
     method: 'POST',
@@ -127,7 +130,6 @@ export const uploadToDrive = async (
 
   const result = await response.json();
 
-  // Update progress ke selesai
   onProgress?.({
     current: totalSteps,
     total: totalSteps,
@@ -138,8 +140,7 @@ export const uploadToDrive = async (
   return { success: true, folderId: result.folderId ?? '' };
 };
 
-// FIXED: uploadTextFile tidak lagi dipakai langsung dari frontend
-// Dipertahankan untuk backward compat kalau ada import lain
+// Dipertahankan untuk backward compat
 export async function uploadTextFile(
   _token: string,
   _name: string,

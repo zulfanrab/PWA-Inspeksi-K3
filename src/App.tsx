@@ -5,10 +5,11 @@
 // NEW: Indikator online/offline di navbar
 // FIXED: Semua field form optional (hanya clientName wajib)
 // FIXED (PR #1): pullInspectionsFromDrive saat app dibuka + saat online event
-// FIXED (PR #2): Edit langsung re-upload ke Drive kalau ada koneksi + token valid
-//                Tidak perlu manual sync dari Sync Hub
+// FIXED (PR #2 — double upload): status diset 'draft' dulu, markSynced dipanggil
+//   SETELAH uploadToDrive sukses. Cegah double write dan status inconsistency.
+// FIXED (PR #2 — duplikasi foto): saat edit, kirim onlyNewPhotos ke uploadToDrive
+//   bukan session.photos semua. Foto lama sudah ada di Drive, tidak perlu re-upload.
 // FIXED (PR #4): Compress foto ke max 1MB sebelum disimpan ke IndexedDB
-//                Aspect ratio dipertahankan, kualitas JPEG 0.8
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
@@ -150,7 +151,7 @@ const SPECIFIC_FIELDS: Record<string, FieldDef[]> = {
   ],
 };
 
-// Icon SVG inline (tidak diubah dari original)
+// Icon SVG inline
 const ICONS = {
   angkur: (<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" width="18" height="18"><polygon points="10,2 13.5,5.5 13.5,9 10,12.5 6.5,9 6.5,5.5" /><line x1="10" y1="12.5" x2="10" y2="18" /><line x1="7.5" y1="15.5" x2="12.5" y2="15.5" /></svg>),
   paa: (<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" width="18" height="18"><line x1="10" y1="2" x2="10" y2="8" /><path d="M4 8 h12 v2 l-4 6 H8 l-4-6 V8z" /><line x1="10" y1="16" x2="10" y2="18" /></svg>),
@@ -233,18 +234,14 @@ function getRoleBadge(email: string): 'Admin' | 'Ahli K3' {
   return email === OWNER_EMAIL ? 'Admin' : 'Ahli K3';
 }
 
-// NEW (PR #4): Compress foto ke max 1MB menggunakan canvas
-// Pertahankan aspect ratio, kualitas JPEG 0.8
+// PR #4: Compress foto ke max 1MB menggunakan canvas
 async function compressPhoto(dataUrl: string): Promise<string> {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
-      const MAX_SIZE_BYTES = 1 * 1024 * 1024; // 1MB
-      const MAX_DIMENSION = 1920; // max width/height
-
+      const MAX_SIZE_BYTES = 1 * 1024 * 1024;
+      const MAX_DIMENSION = 1920;
       let { width, height } = img;
-
-      // Scale down kalau terlalu besar
       if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
         if (width > height) {
           height = Math.round((height * MAX_DIMENSION) / width);
@@ -254,27 +251,21 @@ async function compressPhoto(dataUrl: string): Promise<string> {
           height = MAX_DIMENSION;
         }
       }
-
       const canvas = document.createElement('canvas');
       canvas.width = width;
       canvas.height = height;
       const ctx = canvas.getContext('2d');
       if (!ctx) { resolve(dataUrl); return; }
       ctx.drawImage(img, 0, 0, width, height);
-
-      // Coba quality 0.8 dulu
       let quality = 0.8;
       let result = canvas.toDataURL('image/jpeg', quality);
-
-      // Kalau masih > 1MB, turunkan quality secara bertahap
       while (result.length * 0.75 > MAX_SIZE_BYTES && quality > 0.3) {
         quality -= 0.1;
         result = canvas.toDataURL('image/jpeg', quality);
       }
-
       resolve(result);
     };
-    img.onerror = () => resolve(dataUrl); // fallback: pakai original
+    img.onerror = () => resolve(dataUrl);
     img.src = dataUrl;
   });
 }
@@ -381,24 +372,20 @@ function NavTab({ icon, label, active, onClick }: { icon: React.ReactNode; label
 export default function App() {
   const [view, setView] = useState<View>('HOME');
 
-  // Auth
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentUserEmail, setCurrentUserEmail] = useState('');
   const [currentUserName, setCurrentUserName] = useState('');
   const [roleChecked, setRoleChecked] = useState(false);
 
-  // Online/offline
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [autoSync, setAutoSync] = useState(() => {
     return localStorage.getItem('aksara_auto_sync') === 'true';
   });
 
-  // Data
   const [drafts, setDrafts] = useState<SessionWithPhotos[]>([]);
   const [history, setHistory] = useState<SessionWithPhotos[]>([]);
   const [clientSuggestions, setClientSuggestions] = useState<string[]>([]);
 
-  // Form
   const [formMode, setFormMode] = useState<FormMode>('create');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [activeObject, setActiveObject] = useState('');
@@ -411,13 +398,10 @@ export default function App() {
   const [fromTemplateClientId, setFromTemplateClientId] = useState<string | undefined>();
   const [fromTemplateUnitId, setFromTemplateUnitId] = useState<string | undefined>();
 
-  // UI
   const [isSaving, setIsSaving] = useState(false);
   const [uploadingId, setUploadingId] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   const [tokenError, setTokenError] = useState<string | null>(null);
-
-  // NEW (PR #1): State untuk menampilkan hasil pull
   const [pullStatus, setPullStatus] = useState<string | null>(null);
 
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -449,7 +433,6 @@ export default function App() {
     setRoleChecked(true);
   }, []);
 
-  // NEW (PR #1): Fungsi pull inspections dari Drive
   const doPullInspections = useCallback(async () => {
     try {
       const result = await pullInspectionsFromDrive();
@@ -510,14 +493,11 @@ export default function App() {
       }
     }
     refreshData();
-
-    // Pull templates + inspections dari Drive saat app dibuka
-    // FIXED: pull tidak butuh token lagi, langsung panggil
     pullTemplatesFromDrive().catch(console.warn);
     setTimeout(() => doPullInspections(), 2000);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Auto sync saat online ──────────────────────────────────────────────────
+  // ── Auto sync ──────────────────────────────────────────────────────────────
 
   const triggerAutoSync = useCallback(async () => {
     const currentDrafts = await SessionRepository.getDrafts();
@@ -525,7 +505,8 @@ export default function App() {
     for (const draft of currentDrafts) {
       try {
         setUploadingId(draft.id);
-        await uploadToDrive(draft, draft.photos, (p) => setUploadProgress(p));
+        // Auto sync = create baru, kirim semua foto (onlyNewPhotos = null)
+        await uploadToDrive(draft, draft.photos, (p) => setUploadProgress(p), null);
         await SessionRepository.markSynced(draft.id);
       } catch (err: unknown) {
         if (err instanceof TokenExpiredError) {
@@ -540,7 +521,6 @@ export default function App() {
     await refreshData();
   }, [refreshData]);
 
-  // Online/offline listener
   useEffect(() => {
     const handleOnline = () => {
       setIsOnline(true);
@@ -548,11 +528,9 @@ export default function App() {
       if (shouldAutoSync) {
         setTimeout(() => triggerAutoSync(), 1500);
       }
-      // NEW (PR #1): Pull inspections saat kembali online
       setTimeout(() => doPullInspections(), 2000);
     };
     const handleOffline = () => setIsOnline(false);
-
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
     return () => {
@@ -561,7 +539,6 @@ export default function App() {
     };
   }, [triggerAutoSync, doPullInspections]);
 
-  // Token expiry check
   useEffect(() => {
     const interval = setInterval(() => {
       if (isAuthenticated && isTokenExpiringSoon(10)) {
@@ -652,14 +629,12 @@ export default function App() {
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  // FIXED (PR #4): Compress foto ke max 1MB sebelum disimpan
   const handlePhotos = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     files.forEach((file) => {
       const reader = new FileReader();
       reader.onloadend = async () => {
         const original = reader.result as string;
-        // NEW: Compress sebelum masuk ke state
         const compressed = await compressPhoto(original);
         setNewPhotos((prev) => [...prev, compressed]);
       };
@@ -677,8 +652,12 @@ export default function App() {
     setNewPhotos((prev) => prev.filter((_, i) => i !== idx));
   };
 
-  // FIXED (PR #2): Kalau edit + ada koneksi + token valid → langsung upload ulang ke Drive
-  // Tidak perlu balik ke Sync Hub manual
+  // ── handleSaveForm ─────────────────────────────────────────────────────────
+  // FIXED (double upload): status diset 'draft' dulu, markSynced hanya dipanggil
+  //   setelah uploadToDrive benar-benar sukses
+  // FIXED (duplikasi foto): saat edit, kirim onlyNewPhotos ke uploadToDrive
+  //   bukan semua session.photos. Foto lama sudah ada di Drive.
+
   const handleSaveForm = async () => {
     const errors = validateForm(clientName);
     if (errors.length > 0) {
@@ -688,7 +667,8 @@ export default function App() {
     setIsSaving(true);
     try {
       if (formMode === 'edit' && editingId) {
-        // Update di IndexedDB
+        // FIXED: Simpan selalu sebagai 'draft' dulu
+        // Status baru akan diupdate ke 'synced' setelah upload sukses
         await SessionRepository.update(
           editingId,
           {
@@ -698,50 +678,61 @@ export default function App() {
             templateClientId: fromTemplateClientId,
             templateUnitId: fromTemplateUnitId,
             inspectorEmail: currentUserEmail,
-            // FIXED (PR #2): Set status 'synced' dulu, akan di-upload langsung
-            // Kalau upload gagal, set balik ke draft
-            status: 'synced',
+            status: 'draft', // FIXED: draft dulu, bukan synced
           },
           newPhotos,
           deletedPhotoIds
         );
 
-        // NEW (PR #2): Langsung upload ulang ke Drive kalau kondisi memungkinkan
         if (isOnline) {
           try {
             setUploadingId(editingId);
+
+            // Ambil session yang sudah diupdate dari IndexedDB
             const updatedSession = await SessionRepository.getById(editingId);
             if (updatedSession) {
+              // FIXED: Konversi newPhotos (string dataUrl) ke InspectionPhoto
+              // agar bisa dipakai sebagai onlyNewPhotos parameter
+              // Kita filter session.photos yang baru (createdAt mendekati sekarang)
+              // Cara paling akurat: pakai foto dari updatedSession yang tidak ada di existingPhotos
+              const existingPhotoIds = new Set(existingPhotos.map(p => p.id));
+              const onlyNewPhotoObjects = updatedSession.photos.filter(
+                p => !existingPhotoIds.has(p.id)
+              );
+
+              // FIXED: Kirim onlyNewPhotoObjects (bukan null/undefined)
+              // api/upload.ts akan countExistingPhotos dan lanjut penomoran
               await uploadToDrive(
                 updatedSession,
                 updatedSession.photos,
-                (p) => setUploadProgress(p)
+                (p) => setUploadProgress(p),
+                onlyNewPhotoObjects  // FIXED: hanya foto baru
               );
-              // Pastikan status tetap synced
+
+              // FIXED: markSynced dipanggil SETELAH uploadToDrive sukses
               await SessionRepository.markSynced(editingId);
             }
           } catch (uploadErr: any) {
             console.warn('[App] Re-upload setelah edit gagal:', uploadErr);
-            // Upload gagal → set balik ke draft agar user bisa sync manual
-            await SessionRepository.update(editingId, { status: 'draft' }, [], []);
+            // Upload gagal → status tetap 'draft', user bisa sync manual
             if (uploadErr instanceof TokenExpiredError) {
               setIsAuthenticated(false);
               setTokenError(uploadErr.message);
               alert('⚠️ Sesi Drive berakhir. Data disimpan sebagai draft, sync manual nanti.');
             } else {
-              alert('⚠️ Data tersimpan tapi gagal upload ulang ke Drive. Cek koneksi dan sync manual.');
+              alert('⚠️ Data tersimpan tapi gagal upload ke Drive. Sync manual dari Sync Hub.');
             }
           } finally {
             setUploadingId(null);
             setUploadProgress(null);
           }
         } else {
-          // Offline atau tidak ada token → simpan sebagai draft untuk sync manual nanti
-          await SessionRepository.update(editingId, { status: 'draft' }, [], []);
+          // Offline → tetap draft, user sync manual nanti
           alert('✅ Data berhasil diperbarui! (Offline — akan di-sync saat online)');
         }
+
       } else {
-        // Create baru
+        // Create baru — status draft, tunggu manual sync atau auto sync
         await SessionRepository.create(
           {
             clientName: clientName.trim(),
@@ -756,6 +747,7 @@ export default function App() {
         );
         alert('✅ Data berhasil disimpan!');
       }
+
       await refreshData();
       resetForm();
       setView('HOME');
@@ -770,13 +762,15 @@ export default function App() {
     }
   };
 
+  // handleSync dari SyncHub — create baru, kirim semua foto
   const handleSync = async (id: string) => {
     setUploadingId(id);
     setUploadProgress(null);
     try {
       const session = await SessionRepository.getById(id);
       if (!session) throw new Error('Sesi tidak ditemukan');
-      await uploadToDrive(session, session.photos, (progress) => setUploadProgress(progress));
+      // Sync dari SyncHub = draft baru, kirim semua foto (onlyNewPhotos = null)
+      await uploadToDrive(session, session.photos, (progress) => setUploadProgress(progress), null);
       await SessionRepository.markSynced(id);
       await refreshData();
       setUploadProgress(null);
@@ -794,7 +788,7 @@ export default function App() {
     }
   };
 
-  // NEW: Handle sync dari HistoryView (re-upload data yang sudah synced)
+  // handleReSyncFromHistory — upload ulang dari History, kirim semua foto
   const handleReSyncFromHistory = async (id: string) => {
     if (!isOnline) { alert('⚠️ Tidak ada koneksi internet.'); return; }
     setUploadingId(id);
@@ -802,7 +796,9 @@ export default function App() {
     try {
       const session = await SessionRepository.getById(id);
       if (!session) throw new Error('Data tidak ditemukan');
-      await uploadToDrive(session, session.photos, (progress) => setUploadProgress(progress));
+      // Re-sync dari History = kirim semua foto (onlyNewPhotos = null)
+      // api/upload.ts akan countExistingPhotos dan skip yang sudah ada
+      await uploadToDrive(session, session.photos, (progress) => setUploadProgress(progress), null);
       await SessionRepository.markSynced(id);
       setUploadProgress(null);
       alert('✅ Data berhasil diupload ulang ke Drive!');
@@ -841,70 +837,45 @@ export default function App() {
   return (
     <div style={{ minHeight: '100vh', background: T.bg, fontFamily: 'system-ui, -apple-system, sans-serif', color: T.textPrimary }}>
 
-      {/* Hidden file inputs */}
       <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={handlePhotos} style={{ display: 'none' }} aria-hidden="true" />
       <input ref={galleryInputRef} type="file" accept="image/*" multiple onChange={handlePhotos} style={{ display: 'none' }} aria-hidden="true" />
 
-      {/* ── NAVBAR ── */}
-      <header style={{
-        position: 'sticky', top: 0, zIndex: 50,
-        background: 'rgba(255,255,255,0.97)',
-        backdropFilter: 'blur(8px)',
-        borderBottom: `0.5px solid ${T.border}`,
-        padding: '0 16px',
-        height: 52,
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        maxWidth: 640, margin: '0 auto',
-      }}>
+      {/* NAVBAR */}
+      <header style={{ position: 'sticky', top: 0, zIndex: 50, background: 'rgba(255,255,255,0.97)', backdropFilter: 'blur(8px)', borderBottom: `0.5px solid ${T.border}`, padding: '0 16px', height: 52, display: 'flex', alignItems: 'center', justifyContent: 'space-between', maxWidth: 640, margin: '0 auto' }}>
         <button onClick={() => { resetForm(); setView('HOME'); }} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
           <img src="/icons/icon-192.png" alt="ARP" style={{ width: 30, height: 30, borderRadius: 9, objectFit: 'cover' }} />
           <span style={{ fontSize: 13, fontWeight: 700, color: T.textPrimary, letterSpacing: '-0.3px' }}>
             Aksara <span style={{ color: T.emerald500 }}>Inspect</span>
           </span>
         </button>
-
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          {/* Online/offline indicator */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px', borderRadius: 20, background: isOnline ? '#ECFDF5' : '#FEF2F2', border: `0.5px solid ${isOnline ? '#6EE7B7' : '#FCA5A5'}` }}>
             <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: isOnline ? '#10B981' : '#EF4444' }} />
-            <span style={{ fontSize: 10, fontWeight: 600, color: isOnline ? '#065F46' : '#B91C1C' }}>
-              {isOnline ? 'Online' : 'Offline'}
-            </span>
+            <span style={{ fontSize: 10, fontWeight: 600, color: isOnline ? '#065F46' : '#B91C1C' }}>{isOnline ? 'Online' : 'Offline'}</span>
           </div>
-
           <button onClick={() => setView('HISTORY')} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `0.5px solid ${view === 'HISTORY' ? T.emeraldBorder : T.border}`, background: view === 'HISTORY' ? T.emeraldLight : T.white, color: view === 'HISTORY' ? T.emeraldText : T.textSecondary }}>
             Riwayat
-            {history.length > 0 && (
-              <span style={{ background: T.emeraldLight, color: T.emeraldText, borderRadius: 10, padding: '1px 5px', fontSize: 10, fontWeight: 700 }}>{history.length}</span>
-            )}
+            {history.length > 0 && <span style={{ background: T.emeraldLight, color: T.emeraldText, borderRadius: 10, padding: '1px 5px', fontSize: 10, fontWeight: 700 }}>{history.length}</span>}
           </button>
-
           {drafts.length > 0 && (
             <button onClick={() => setView('SYNC_HUB')} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `0.5px solid ${T.amberBorder}`, background: T.amberLight, color: T.amber800 }}>
               Sync
               <span style={{ background: T.amber400, color: T.amber800, borderRadius: 10, padding: '1px 5px', fontSize: 10, fontWeight: 700 }}>{drafts.length}</span>
             </button>
           )}
-
           {roleChecked && (
             <button onClick={() => setView('ADMIN')} style={{ padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `0.5px solid ${view === 'ADMIN' ? '#C4B5FD' : T.border}`, background: view === 'ADMIN' ? '#EDE9FE' : T.white, color: view === 'ADMIN' ? '#5B21B6' : T.textSecondary }}>
               Admin
             </button>
           )}
-
           {isAuthenticated ? (
-            <button onClick={handleLogout} title={currentUserEmail} style={{ padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `0.5px solid ${T.redBorder}`, background: T.redLight, color: T.redText }}>
-              Logout
-            </button>
+            <button onClick={handleLogout} title={currentUserEmail} style={{ padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `0.5px solid ${T.redBorder}`, background: T.redLight, color: T.redText }}>Logout</button>
           ) : (
-            <button onClick={handleLogin} style={{ padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `0.5px solid ${T.border}`, background: T.white, color: T.textSecondary }}>
-              Login Google
-            </button>
+            <button onClick={handleLogin} style={{ padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `0.5px solid ${T.border}`, background: T.white, color: T.textSecondary }}>Login Google</button>
           )}
         </div>
       </header>
 
-      {/* Token error banner */}
       {tokenError && !isAuthenticated && (
         <div style={{ maxWidth: 640, margin: '10px auto 0', padding: '0 16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: T.redLight, border: `0.5px solid ${T.redBorder}`, borderRadius: 10, padding: '10px 12px' }}>
@@ -915,7 +886,6 @@ export default function App() {
         </div>
       )}
 
-      {/* NEW (PR #1): Pull status banner */}
       {pullStatus && (
         <div style={{ maxWidth: 640, margin: '8px auto 0', padding: '0 16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: T.emeraldLight, border: `0.5px solid ${T.emeraldBorder}`, borderRadius: 10, padding: '8px 12px' }}>
@@ -924,26 +894,21 @@ export default function App() {
         </div>
       )}
 
-      {/* User bar */}
       {isAuthenticated && currentUserName && (
         <div style={{ maxWidth: 640, margin: '10px auto 0', padding: '0 16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: T.white, border: `0.5px solid ${T.border}`, borderRadius: 12, padding: '8px 12px' }}>
-            <div style={{ width: 28, height: 28, borderRadius: '50%', background: T.emeraldLight, border: `1px solid ${T.emeraldBorder}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 800, color: T.emeraldText }}>
-              {userInitial}
-            </div>
+            <div style={{ width: 28, height: 28, borderRadius: '50%', background: T.emeraldLight, border: `1px solid ${T.emeraldBorder}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 800, color: T.emeraldText }}>{userInitial}</div>
             <span style={{ fontSize: 12, fontWeight: 600, color: T.textPrimary }}>{currentUserName}</span>
             <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 600, padding: '3px 8px', borderRadius: 20, background: isOwner ? '#EDE9FE' : T.emeraldLight, color: isOwner ? '#5B21B6' : T.emeraldText, border: `0.5px solid ${isOwner ? '#C4B5FD' : T.emeraldBorder}`, display: 'flex', alignItems: 'center', gap: 3 }}>
-              {ICONS.hardHat}
-              {roleBadge}
+              {ICONS.hardHat}{roleBadge}
             </span>
           </div>
         </div>
       )}
 
-      {/* ── MAIN ── */}
+      {/* MAIN */}
       <main style={{ maxWidth: 640, margin: '0 auto', padding: '16px 16px 100px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
-        {/* HOME */}
         {view === 'HOME' && (
           <>
             <div>
@@ -952,22 +917,15 @@ export default function App() {
               </h1>
               <p style={{ fontSize: 11, color: T.textSecondary, marginTop: 2 }}>Mulai inspeksi baru atau pantau status lapangan</p>
             </div>
-
             <div style={{ display: 'flex', gap: 8 }}>
               <StatCard label="Draft tertunda" value={drafts.length} color={T.amber600} dot={T.amber600} />
               <StatCard label="Sudah disinkronkan" value={history.length} color={T.emerald500} dot={T.emerald500} />
             </div>
-
             <div>
               <Divider label="Inspeksi cepat" />
-              <button
-                onClick={handleStartInspection}
-                style={{ width: '100%', marginTop: 8, background: T.emerald900, border: 'none', borderRadius: 16, padding: '16px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', textAlign: 'left', position: 'relative', overflow: 'hidden', WebkitTapHighlightColor: 'transparent' }}
-              >
+              <button onClick={handleStartInspection} style={{ width: '100%', marginTop: 8, background: T.emerald900, border: 'none', borderRadius: 16, padding: '16px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', textAlign: 'left', position: 'relative', overflow: 'hidden', WebkitTapHighlightColor: 'transparent' }}>
                 <div style={{ position: 'absolute', right: -20, top: -20, width: 100, height: 100, borderRadius: '50%', background: 'rgba(16,185,129,0.15)', pointerEvents: 'none' }} />
-                <div style={{ width: 44, height: 44, borderRadius: 12, background: 'rgba(255,255,255,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.emeraldBorder, flexShrink: 0, position: 'relative', zIndex: 1 }}>
-                  {ICONS.factory}
-                </div>
+                <div style={{ width: 44, height: 44, borderRadius: 12, background: 'rgba(255,255,255,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.emeraldBorder, flexShrink: 0, position: 'relative', zIndex: 1 }}>{ICONS.factory}</div>
                 <div style={{ flex: 1, position: 'relative', zIndex: 1 }}>
                   <p style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>Dari Template Unit</p>
                   <p style={{ fontSize: 11, color: T.emeraldBorder, marginTop: 2 }}>Pilih klien → unit → form otomatis terisi</p>
@@ -975,57 +933,35 @@ export default function App() {
                 <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 18, position: 'relative', zIndex: 1 }}>›</span>
               </button>
             </div>
-
             {drafts.length > 0 && (
               <div style={{ background: T.amberLight, border: `0.5px solid ${T.amberBorder}`, borderRadius: 12, padding: '12px', display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ width: 32, height: 32, borderRadius: 8, background: T.amberMid, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: T.amber600 }}>
-                  {ICONS.package}
-                </div>
+                <div style={{ width: 32, height: 32, borderRadius: 8, background: T.amberMid, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: T.amber600 }}>{ICONS.package}</div>
                 <div style={{ flex: 1 }}>
                   <p style={{ fontSize: 11, fontWeight: 700, color: T.amber800 }}>{drafts.length} draft belum di-sync</p>
                   <p style={{ fontSize: 10, color: T.amber700, marginTop: 1 }}>Hubungkan internet & upload ke Drive</p>
                 </div>
-                <button onClick={() => setView('SYNC_HUB')} style={{ padding: '5px 10px', background: T.amber600, color: '#fff', borderRadius: 8, fontSize: 10, fontWeight: 700, border: 'none', cursor: 'pointer', flexShrink: 0 }}>
-                  Buka Sync
-                </button>
+                <button onClick={() => setView('SYNC_HUB')} style={{ padding: '5px 10px', background: T.amber600, color: '#fff', borderRadius: 8, fontSize: 10, fontWeight: 700, border: 'none', cursor: 'pointer', flexShrink: 0 }}>Buka Sync</button>
               </div>
             )}
-
             <div>
               <Divider label="Atau pilih jenis manual" />
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 8, marginTop: 8 }}>
-                {OBJECT_TYPES.map((obj) => (
-                  <ObjCard key={obj.key} obj={obj} onClick={() => handleSelectObject(obj.key)} />
-                ))}
+                {OBJECT_TYPES.map((obj) => (<ObjCard key={obj.key} obj={obj} onClick={() => handleSelectObject(obj.key)} />))}
               </div>
             </div>
           </>
         )}
 
-        {/* PICK UNIT */}
         {view === 'PICK_UNIT' && (
-          <ClientPicker
-            onPick={handleUnitPicked}
-            onManual={handleManualPick}
-            onCancel={() => setView('HOME')}
-          />
+          <ClientPicker onPick={handleUnitPicked} onManual={handleManualPick} onCancel={() => setView('HOME')} />
         )}
 
-        {/* FORM */}
         {view === 'FORM' && (
           <FormView
-            formMode={formMode}
-            activeObject={activeObject}
-            clientName={clientName}
-            clientSuggestions={clientSuggestions}
-            formData={formData}
-            commonFields={COMMON_FIELDS}
-            specificFields={specificFields}
-            existingPhotos={existingPhotos}
-            newPhotos={newPhotos}
-            totalPhotos={totalPhotos}
-            isSaving={isSaving}
-            objMeta={objMeta}
+            formMode={formMode} activeObject={activeObject} clientName={clientName}
+            clientSuggestions={clientSuggestions} formData={formData} commonFields={COMMON_FIELDS}
+            specificFields={specificFields} existingPhotos={existingPhotos} newPhotos={newPhotos}
+            totalPhotos={totalPhotos} isSaving={isSaving} objMeta={objMeta}
             showClientDropdown={showClientDropdown}
             onClientNameChange={setClientName}
             onClientNameFocus={() => setShowClientDropdown(true)}
@@ -1040,39 +976,23 @@ export default function App() {
           />
         )}
 
-        {/* SYNC HUB */}
         {view === 'SYNC_HUB' && (
           <SyncHub
-            drafts={drafts}
-            isAuthenticated={isAuthenticated}
-            uploadingId={uploadingId}
-            uploadProgress={uploadProgress}
-            isOnline={isOnline}
-            autoSync={autoSync}
-            onAutoSyncToggle={handleAutoSyncToggle}
-            onLogin={handleLogin}
-            onEdit={handleEdit}
-            onDelete={handleDelete}
-            onSync={handleSync}
+            drafts={drafts} isAuthenticated={isAuthenticated} uploadingId={uploadingId}
+            uploadProgress={uploadProgress} isOnline={isOnline} autoSync={autoSync}
+            onAutoSyncToggle={handleAutoSyncToggle} onLogin={handleLogin}
+            onEdit={handleEdit} onDelete={handleDelete} onSync={handleSync}
           />
         )}
 
-        {/* HISTORY */}
         {view === 'HISTORY' && (
           <HistoryView
-            history={history}
-            onEdit={handleEdit}
-            onDelete={handleDelete}
-            // NEW (PR #2): Tombol sync ulang di History
-            onReSync={handleReSyncFromHistory}
-            isAuthenticated={isAuthenticated}
-            isOnline={isOnline}
-            uploadingId={uploadingId}
-            uploadProgress={uploadProgress}
+            history={history} onEdit={handleEdit} onDelete={handleDelete}
+            onReSync={handleReSyncFromHistory} isAuthenticated={isAuthenticated}
+            isOnline={isOnline} uploadingId={uploadingId} uploadProgress={uploadProgress}
           />
         )}
 
-        {/* ADMIN */}
         {view === 'ADMIN' && (
           <AdminPanel currentUserEmail={currentUserEmail} onClose={() => setView('HOME')} />
         )}
@@ -1081,32 +1001,15 @@ export default function App() {
 
       {/* BOTTOM NAV + FAB */}
       {(view === 'HOME' || view === 'HISTORY' || view === 'SYNC_HUB' || view === 'ADMIN') && (
-        <nav style={{
-          position: 'fixed', bottom: 0, left: 0, right: 0,
-          background: 'rgba(255,255,255,0.97)',
-          backdropFilter: 'blur(8px)',
-          borderTop: `0.5px solid ${T.border}`,
-          padding: '8px 16px 20px',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-around',
-          maxWidth: 640, margin: '0 auto',
-          zIndex: 40,
-        }}>
+        <nav style={{ position: 'fixed', bottom: 0, left: 0, right: 0, background: 'rgba(255,255,255,0.97)', backdropFilter: 'blur(8px)', borderTop: `0.5px solid ${T.border}`, padding: '8px 16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-around', maxWidth: 640, margin: '0 auto', zIndex: 40 }}>
           <NavTab icon={ICONS.home} label="Beranda" active={view === 'HOME'} onClick={() => { resetForm(); setView('HOME'); }} />
           <NavTab icon={ICONS.clipboard} label="Riwayat" active={view === 'HISTORY'} onClick={() => setView('HISTORY')} />
-
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
-            <button
-              onClick={handleStartInspection}
-              aria-label="Mulai inspeksi baru"
-              style={{ width: 64, height: 64, borderRadius: '50%', background: 'rgba(16,185,129,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', cursor: 'pointer', marginTop: -32, WebkitTapHighlightColor: 'transparent', padding: 0 }}
-            >
-              <div style={{ width: 52, height: 52, borderRadius: '50%', background: T.emerald500, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', border: '2.5px solid #fff', boxShadow: `0 0 0 1px ${T.emeraldBorder}` }}>
-                {ICONS.camera}
-              </div>
+            <button onClick={handleStartInspection} aria-label="Mulai inspeksi baru" style={{ width: 64, height: 64, borderRadius: '50%', background: 'rgba(16,185,129,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', cursor: 'pointer', marginTop: -32, WebkitTapHighlightColor: 'transparent', padding: 0 }}>
+              <div style={{ width: 52, height: 52, borderRadius: '50%', background: T.emerald500, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', border: '2.5px solid #fff', boxShadow: `0 0 0 1px ${T.emeraldBorder}` }}>{ICONS.camera}</div>
             </button>
             <span style={{ fontSize: 9, fontWeight: 700, color: T.emerald500, letterSpacing: '0.02em' }}>Inspeksi</span>
           </div>
-
           <NavTab icon={ICONS.cloudUp} label="Sync" active={view === 'SYNC_HUB'} onClick={() => setView('SYNC_HUB')} />
           <NavTab icon={ICONS.shield} label="Admin" active={view === 'ADMIN'} onClick={() => setView('ADMIN')} />
         </nav>
