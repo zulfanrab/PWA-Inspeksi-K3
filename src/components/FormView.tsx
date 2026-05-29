@@ -1,6 +1,7 @@
 // src/components/FormView.tsx
 // FIXED: onAddPhotoClick diganti onCameraClick + onGalleryClick (dual foto option)
 
+import { useState } from 'react';
 import type { ReactNode } from 'react';
 import type { InspectionPhoto } from '../db/db';
 
@@ -79,6 +80,11 @@ export function FormView({
   onCancel,
 }: FormViewProps) {
   const isEdit = formMode === 'edit';
+  const [showOptional, setShowOptional] = useState(false);
+
+  const REQUIRED_COMMON = ['namaUnit', 'nomorSeri'];
+  const requiredFields = commonFields.filter(f => REQUIRED_COMMON.includes(f.name));
+  const optionalFields = commonFields.filter(f => !REQUIRED_COMMON.includes(f.name));
 
   return (
     <div className="space-y-5 pb-10">
@@ -128,13 +134,28 @@ export function FormView({
       {/* Common Fields */}
       <div className="space-y-4">
         <SectionDivider label="Identitas Unit" />
-        {commonFields.map((field) => (
+        {requiredFields.map((field) => (
           <FormField
             key={field.name}
             field={field}
             value={formData[field.name] || ''}
             onChange={(v) => onFieldChange(field.name, v)}
-            accent={field.name === 'namaUnit' || field.name === 'nomorSeri'}
+            accent={true}
+          />
+        ))}
+        <button
+          type="button"
+          onClick={() => setShowOptional(v => !v)}
+          className="w-full py-2.5 border border-dashed border-emerald-200 rounded-xl text-emerald-600 text-xs font-bold hover:bg-emerald-50 transition-all flex items-center justify-center gap-2"
+        >
+          {showOptional ? '▲ Sembunyikan detail opsional' : '▼ Tambah detail opsional (merek, lokasi, catatan...)'}
+        </button>
+        {showOptional && optionalFields.map((field) => (
+          <FormField
+            key={field.name}
+            field={field}
+            value={formData[field.name] || ''}
+            onChange={(v) => onFieldChange(field.name, v)}
           />
         ))}
       </div>

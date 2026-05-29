@@ -190,15 +190,24 @@ export const exportToPDF = async (
   let y = margin;
 
   // ---- HEADER PERUSAHAAN ----
-  doc.setFillColor(...COLOR.headerBg);
-  doc.rect(0, 0, pageW, 38, 'F');
-
+ try {
+  const logoRes = await fetch('/icons/icon-192.png');
+  const blob = await logoRes.blob();
+  const logoDataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+  doc.addImage(logoDataUrl, 'PNG', margin, 6, 12, 12);
+} catch {
   doc.setFillColor(...COLOR.emerald);
   doc.roundedRect(margin, 8, 10, 10, 2, 2, 'F');
   doc.setTextColor(...COLOR.white);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(7);
   doc.text('A', margin + 3.5, 15);
+}
 
   doc.setFontSize(13);
   doc.setFont('helvetica', 'bold');

@@ -1,6 +1,5 @@
 // src/components/HistoryView.tsx
-// FIXED: Tambah props onReSync, isAuthenticated, isOnline, uploadingId, uploadProgress
-// FIXED: Tombol "Upload Ulang ke Drive" pakai onReSync
+// FIXED: Ganti tombol Upload Ulang → Edit & Update (langsung ke form edit)
 // FIXED: Tombol Download PDF tetap ada
 
 import { useState } from 'react';
@@ -28,25 +27,21 @@ function formatDate(ts: number) {
   });
 }
 
-// FIXED: Interface lengkap dengan props baru
 interface HistoryViewProps {
   history: SessionWithPhotos[];
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
-  onReSync: (id: string) => void;         // NEW: upload ulang ke Drive
-  isAuthenticated: boolean;               // NEW: untuk enable/disable tombol
-  isOnline: boolean;                      // NEW: cek koneksi
-  uploadingId: string | null;             // NEW: id yang sedang diupload
-  uploadProgress: UploadProgress | null;  // NEW: progress upload
+  onReSync: (id: string) => void;        // tetap ada agar App.tsx tidak error
+  isAuthenticated: boolean;
+  isOnline: boolean;
+  uploadingId: string | null;
+  uploadProgress: UploadProgress | null;
 }
 
 export function HistoryView({
   history,
   onEdit,
   onDelete,
-  onReSync,
-  isAuthenticated,
-  isOnline,
   uploadingId,
   uploadProgress,
 }: HistoryViewProps) {
@@ -73,9 +68,6 @@ export function HistoryView({
               item={item}
               onEdit={onEdit}
               onDelete={onDelete}
-              onReSync={onReSync}
-              isAuthenticated={isAuthenticated}
-              isOnline={isOnline}
               isUploading={uploadingId === item.id}
               progress={uploadingId === item.id ? uploadProgress : null}
             />
@@ -90,26 +82,18 @@ function HistoryCard({
   item,
   onEdit,
   onDelete,
-  onReSync,
-  isAuthenticated,
-  isOnline,
   isUploading,
   progress,
 }: {
   item: SessionWithPhotos;
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
-  onReSync: (id: string) => void;
-  isAuthenticated: boolean;
-  isOnline: boolean;
   isUploading: boolean;
   progress: UploadProgress | null;
 }) {
   const meta = OBJECT_TYPES.find((o) => o.key === item.objectType);
   const dateStr = formatDate(item.updatedAt || item.createdAt);
   const [pdfLoading, setPdfLoading] = useState(false);
-
-  const canReSync = isAuthenticated && isOnline && !isUploading;
 
   const handleDownloadPDF = async () => {
     setPdfLoading(true);
@@ -140,12 +124,6 @@ function HistoryCard({
           </div>
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0">
-          <button
-            onClick={() => onEdit(item.id)}
-            disabled={isUploading}
-            className="w-7 h-7 rounded-lg bg-blue-50 text-blue-500 hover:bg-blue-100 flex items-center justify-center border border-blue-100 transition-all text-sm disabled:opacity-40"
-            title="Edit"
-          >✏️</button>
           <button
             onClick={() => onDelete(item.id)}
             disabled={isUploading}
@@ -193,7 +171,7 @@ function HistoryCard({
         )}
       </div>
 
-      {/* Progress bar kalau sedang upload ulang */}
+      {/* Progress bar kalau sedang upload */}
       {isUploading && progress && (
         <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 space-y-2">
           <div className="flex items-center justify-between">
@@ -215,34 +193,24 @@ function HistoryCard({
         </div>
       )}
 
-      {/* Tombol bawah: Upload Ulang + Download PDF */}
+      {/* Tombol bawah: Edit & Update + Download PDF */}
       <div className="grid grid-cols-2 gap-2">
-        {/* FIXED: Tombol Upload Ulang ke Drive */}
         <button
-          onClick={() => onReSync(item.id)}
-          disabled={!canReSync}
-          className="py-2.5 flex items-center justify-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-lg transition-all"
-          title={!isOnline ? 'Tidak ada koneksi' : !isAuthenticated ? 'Login dulu' : 'Upload ulang ke Drive'}
+          onClick={() => onEdit(item.id)}
+          disabled={isUploading}
+          className="py-2.5 flex items-center justify-center gap-1.5 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-lg transition-all"
+          title="Edit data & foto — otomatis terupload setelah simpan"
         >
-          {isUploading ? (
-            <><Spinner />Uploading...</>
-          ) : (
-            <>☁️ Upload Ulang</>
-          )}
+          {isUploading ? <><Spinner />Uploading...</> : <>✏️ Edit & Update</>}
         </button>
 
-        {/* Tombol Download PDF */}
         <button
           onClick={handleDownloadPDF}
           disabled={pdfLoading}
           className="py-2.5 flex items-center justify-center gap-1.5 bg-slate-700 hover:bg-slate-800 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-lg transition-all"
           title="Download laporan sebagai PDF"
         >
-          {pdfLoading ? (
-            <><Spinner />PDF...</>
-          ) : (
-            <>📄 Download PDF</>
-          )}
+          {pdfLoading ? <><Spinner />PDF...</> : <>📄 Download PDF</>}
         </button>
       </div>
     </div>
