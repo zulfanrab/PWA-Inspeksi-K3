@@ -853,19 +853,10 @@ export default function App() {
             <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: isOnline ? '#10B981' : '#EF4444' }} />
             <span style={{ fontSize: 10, fontWeight: 600, color: isOnline ? '#065F46' : '#B91C1C' }}>{isOnline ? 'Online' : 'Offline'}</span>
           </div>
-          <button onClick={() => setView('HISTORY')} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `0.5px solid ${view === 'HISTORY' ? T.emeraldBorder : T.border}`, background: view === 'HISTORY' ? T.emeraldLight : T.white, color: view === 'HISTORY' ? T.emeraldText : T.textSecondary }}>
-            Riwayat
-            {history.length > 0 && <span style={{ background: T.emeraldLight, color: T.emeraldText, borderRadius: 10, padding: '1px 5px', fontSize: 10, fontWeight: 700 }}>{history.length}</span>}
-          </button>
           {drafts.length > 0 && (
             <button onClick={() => setView('SYNC_HUB')} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `0.5px solid ${T.amberBorder}`, background: T.amberLight, color: T.amber800 }}>
               Sync
               <span style={{ background: T.amber400, color: T.amber800, borderRadius: 10, padding: '1px 5px', fontSize: 10, fontWeight: 700 }}>{drafts.length}</span>
-            </button>
-          )}
-          {roleChecked && (
-            <button onClick={() => setView('ADMIN')} style={{ padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `0.5px solid ${view === 'ADMIN' ? '#C4B5FD' : T.border}`, background: view === 'ADMIN' ? '#EDE9FE' : T.white, color: view === 'ADMIN' ? '#5B21B6' : T.textSecondary }}>
-              Admin
             </button>
           )}
           {isAuthenticated ? (

@@ -189,69 +189,80 @@ export const exportToPDF = async (
 
   let y = margin;
 
-  // ---- HEADER PERUSAHAAN ----
- try {
-  const logoRes = await fetch('/icons/icon-192.png');
-  const blob = await logoRes.blob();
-  const logoDataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
-  doc.addImage(logoDataUrl, 'PNG', margin, 6, 12, 12);
-} catch {
-  doc.setFillColor(...COLOR.emerald);
-  doc.roundedRect(margin, 8, 10, 10, 2, 2, 'F');
-  doc.setTextColor(...COLOR.white);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7);
-  doc.text('A', margin + 3.5, 15);
-}
+// ---- HEADER PERUSAHAAN ----
+  doc.setFillColor(...COLOR.headerBg);
+  doc.rect(0, 0, pageW, 38, 'F');
 
-  doc.setFontSize(13);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(...COLOR.white);
-  doc.text('PT AKSARA RIKSA PERDANA', margin + 14, 13);
+  // Logo
+  try {
+    const logoRes = await fetch('/icons/icon-192.png');
+    const blob = await logoRes.blob();
+    const logoDataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+    doc.addImage(logoDataUrl, 'PNG', margin, 7, 14, 14);
+  } catch {
+    doc.setFillColor(...COLOR.emerald);
+    doc.roundedRect(margin, 7, 14, 14, 2, 2, 'F');
+    doc.setTextColor(...COLOR.white);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.text('A', margin + 5, 16);
+  }
 
-  doc.setFontSize(7);
+  // Nama perusahaan
+  const textX = margin + 18;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(...COLOR.white);
+  doc.text('PT AKSARA RIKSA PERDANA', textX, 13);
+
+  // Subtitle
   doc.setFont('helvetica', 'normal');
+  doc.setFontSize(6.5);
   doc.setTextColor(163, 230, 188);
-  doc.text(
-    'Perusahaan Jasa Keselamatan dan Kesehatan Kerja (PJK3) | aksarariksa.co.id',
-    margin + 14,
-    18
-  );
+  doc.text('Perusahaan Jasa K3 (PJK3) — Terakreditasi Kemnaker RI', textX, 18);
 
-  doc.setFontSize(9);
+  // Info kontak — 2 kolom kecil
+  doc.setFontSize(6);
+  doc.setTextColor(203, 213, 225);
+  doc.text('Jl. Cibodas Raya No. 02, Antapani Kidul,', textX, 23);
+  doc.text('Kec. Antapani, Kota Bandung, Jawa Barat 40291', textX, 27);
+  doc.text('+62 821-2984-9515  |  aksara.riksa.perdana@gmail.com  |  aksarariksapjk3.com', textX, 31);
+
+  // Label laporan di kanan atas
   doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
   doc.setTextColor(...COLOR.emerald);
   doc.text('LAPORAN INSPEKSI K3', pageW - margin, 13, { align: 'right' });
 
-  doc.setFontSize(7);
   doc.setFont('helvetica', 'normal');
+  doc.setFontSize(6.5);
   doc.setTextColor(163, 230, 188);
   const nowStr = new Date().toLocaleDateString('id-ID', {
-    day: '2-digit',
-    month: 'long',
-    year: 'numeric',
+    day: '2-digit', month: 'long', year: 'numeric',
   });
   doc.text(`Dicetak: ${nowStr}`, pageW - margin, 18, { align: 'right' });
 
+  // Garis bawah header
   doc.setDrawColor(...COLOR.emerald);
-  doc.setLineWidth(0.5);
-  doc.line(margin, 26, pageW - margin, 26);
+  doc.setLineWidth(0.4);
+  doc.line(0, 38, pageW, 38);
 
-  doc.setFontSize(8);
+  // Strip jenis inspeksi
+  doc.setFillColor(15, 23, 42);
+  doc.rect(0, 38, pageW, 10, 'F');
   doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.5);
   doc.setTextColor(...COLOR.white);
   const objType = item.objectType || '-';
-  doc.text(`Jenis Inspeksi: ${objType}`, margin, 33);
-  doc.text(`Status: Selesai & Tersinkronisasi`, pageW - margin, 33, {
-    align: 'right',
-  });
+  doc.text(`Jenis Inspeksi: ${objType}`, margin, 45);
+  doc.text('Status: Selesai & Tersinkronisasi ✓', pageW - margin, 45, { align: 'right' });
 
-  y = 46;
+  y = 56;
 
   // ---- INFO KLIEN ----
   doc.setFillColor(...COLOR.emeraldLight);

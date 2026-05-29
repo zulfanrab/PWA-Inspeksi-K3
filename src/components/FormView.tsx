@@ -150,30 +150,32 @@ export function FormView({
         >
           {showOptional ? '▲ Sembunyikan detail opsional' : '▼ Tambah detail opsional (merek, lokasi, catatan...)'}
         </button>
-        {showOptional && optionalFields.map((field) => (
-          <FormField
-            key={field.name}
-            field={field}
-            value={formData[field.name] || ''}
-            onChange={(v) => onFieldChange(field.name, v)}
-          />
-        ))}
+        {showOptional && (
+          <>
+            {optionalFields.map((field) => (
+              <FormField
+                key={field.name}
+                field={field}
+                value={formData[field.name] || ''}
+                onChange={(v) => onFieldChange(field.name, v)}
+              />
+            ))}
+            {specificFields.length > 0 && (
+              <>
+                <SectionDivider label={`Data Teknis — ${objMeta?.label || activeObject}`} />
+                {specificFields.map((field) => (
+                  <FormField
+                    key={field.name}
+                    field={field}
+                    value={formData[field.name] || ''}
+                    onChange={(v) => onFieldChange(field.name, v)}
+                  />
+                ))}
+              </>
+            )}
+          </>
+        )}
       </div>
-
-      {/* Specific Fields */}
-      {specificFields.length > 0 && (
-        <div className="space-y-4">
-          <SectionDivider label={`Data Teknis — ${objMeta?.label || activeObject}`} />
-          {specificFields.map((field) => (
-            <FormField
-              key={field.name}
-              field={field}
-              value={formData[field.name] || ''}
-              onChange={(v) => onFieldChange(field.name, v)}
-            />
-          ))}
-        </div>
-      )}
 
       {/* Foto Dokumentasi */}
       <div className="space-y-3">
