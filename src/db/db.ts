@@ -20,6 +20,7 @@ export interface InspectionSession {
   templateClientId?: string;
   templateUnitId?: string;
   inspectorEmail?: string;
+    driveFolderId?: string; // NEW: untuk delete dari Drive
 }
 
 export interface InspectionPhoto {
@@ -89,6 +90,14 @@ export class MyDatabase extends Dexie {
       user_roles: 'id, role, createdAt',
     }).upgrade(async (_trans) => {
       console.log('[DB] Migrating to v5: adding client_templates, unit_templates, user_roles');
+    });
+
+    this.version(6).stores({
+      inspection_sessions: 'id, clientName, status, createdAt, templateClientId, inspectorEmail, driveFolderId',
+      inspection_photos: 'id, sessionId, createdAt',
+      client_templates: 'id, name, createdAt, createdBy',
+      unit_templates: 'id, clientId, objectType, createdAt, createdBy',
+      user_roles: 'id, role, createdAt',
     });
   }
 }
@@ -174,10 +183,11 @@ export const SessionRepository = {
     }
   },
 
-  markSynced: async (id: string) => {
+  markSynced: async (id: string, driveFolderId?: string) => {
     await db.inspection_sessions.update(id, {
       status: 'synced',
       updatedAt: Date.now(),
+      ...(driveFolderId ? { driveFolderId } : {}),
     });
   },
 

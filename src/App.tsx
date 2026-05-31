@@ -24,7 +24,6 @@ import {
   saveToken,
   clearToken,
   TokenExpiredError,
-  hasValidToken,
   isTokenExpiringSoon,
   type UploadProgress,
 } from './services/driveService';
@@ -32,7 +31,7 @@ import {
   pullTemplatesFromDrive,
   pullInspectionsFromDrive,
 } from './services/syncService';
-import { GOOGLE_CONFIG, getGoogleRedirectUri } from './config';
+import { GOOGLE_CONFIG, getGoogleRedirectUri, getApiBaseUrl } from './config';
 import { FormView } from './components/FormView';
 import { SyncHub } from './components/SyncHub';
 import { HistoryView } from './components/HistoryView';
@@ -702,15 +701,15 @@ export default function App() {
 
               // FIXED: Kirim onlyNewPhotoObjects (bukan null/undefined)
               // api/upload.ts akan countExistingPhotos dan lanjut penomoran
-              await uploadToDrive(
+              const { folderId } = await uploadToDrive(
                 updatedSession,
                 updatedSession.photos,
                 (p) => setUploadProgress(p),
-                onlyNewPhotoObjects  // FIXED: hanya foto baru
+                onlyNewPhotoObjects
               );
 
               // FIXED: markSynced dipanggil SETELAH uploadToDrive sukses
-              await SessionRepository.markSynced(editingId);
+              await SessionRepository.markSynced(editingId, folderId);
             }
           } catch (uploadErr: any) {
             console.warn('[App] Re-upload setelah edit gagal:', uploadErr);
@@ -770,8 +769,8 @@ export default function App() {
       const session = await SessionRepository.getById(id);
       if (!session) throw new Error('Sesi tidak ditemukan');
       // Sync dari SyncHub = draft baru, kirim semua foto (onlyNewPhotos = null)
-      await uploadToDrive(session, session.photos, (progress) => setUploadProgress(progress), null);
-      await SessionRepository.markSynced(id);
+      const { folderId } = await uploadToDrive(session, session.photos, (progress) => setUploadProgress(progress), null);
+      await SessionRepository.markSynced(id, folderId);
       await refreshData();
       setUploadProgress(null);
     } catch (err: any) {
@@ -798,8 +797,8 @@ export default function App() {
       if (!session) throw new Error('Data tidak ditemukan');
       // Re-sync dari History = kirim semua foto (onlyNewPhotos = null)
       // api/upload.ts akan countExistingPhotos dan skip yang sudah ada
-      await uploadToDrive(session, session.photos, (progress) => setUploadProgress(progress), null);
-      await SessionRepository.markSynced(id);
+      const { folderId } = await uploadToDrive(session, session.photos, (progress) => setUploadProgress(progress), null);
+      await SessionRepository.markSynced(id, folderId);
       setUploadProgress(null);
       alert('✅ Data berhasil diupload ulang ke Drive!');
     } catch (err: any) {
@@ -816,8 +815,30 @@ export default function App() {
     }
   };
 
-  const handleDelete = async (id: string) => {
+const handleDelete = async (id: string) => {
     if (!confirm('Hapus data ini? Tindakan tidak bisa dibatalkan.')) return;
+
+    const session = await SessionRepository.getById(id);
+    if (!session) return;
+
+    if (session.status === 'synced' && session.driveFolderId) {
+      try {
+        const apiBase = getApiBaseUrl();
+        const res = await fetch(`${apiBase}/api/delete-inspection`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folderId: session.driveFolderId }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err?.error || `HTTP ${res.status}`);
+        }
+      } catch (err: any) {
+        alert(`⚠️ Gagal hapus dari Drive: ${err.message}\nData lokal tidak dihapus.`);
+        return;
+      }
+    }
+
     await SessionRepository.delete(id);
     await refreshData();
   };
