@@ -815,29 +815,34 @@ export default function App() {
     }
   };
 
-const handleDelete = async (id: string) => {
-    if (!confirm('Hapus data ini? Tindakan tidak bisa dibatalkan.')) return;
+  const handleDelete = async (id: string) => {
+      if (!confirm('Hapus data ini? Tindakan tidak bisa dibatalkan.')) return;
 
-    const session = await SessionRepository.getById(id);
-    if (!session) return;
+      const session = await SessionRepository.getById(id);
+      if (!session) return;
 
-    if (session.status === 'synced' && session.driveFolderId) {
-      try {
-        const apiBase = getApiBaseUrl();
-        const res = await fetch(`${apiBase}/api/delete-inspection`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ folderId: session.driveFolderId }),
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err?.error || `HTTP ${res.status}`);
+      // Hapus syarat && session.driveFolderId
+      if (session.status === 'synced') {
+        try {
+          const apiBase = getApiBaseUrl();
+          const res = await fetch(`${apiBase}/api/delete-inspection`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            // Kirim folderId (buat data baru) dan sessionId (buat data lama)
+            body: JSON.stringify({ 
+              folderId: session.driveFolderId,
+              sessionId: session.id 
+            }),
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err?.error || `HTTP ${res.status}`);
+          }
+        } catch (err: any) {
+          alert(`⚠️ Gagal hapus dari Drive: ${err.message}\nData lokal tidak dihapus.`);
+          return;
         }
-      } catch (err: any) {
-        alert(`⚠️ Gagal hapus dari Drive: ${err.message}\nData lokal tidak dihapus.`);
-        return;
       }
-    }
 
     await SessionRepository.delete(id);
     await refreshData();
