@@ -36,6 +36,7 @@ interface HistoryViewProps {
   isOnline: boolean;
   uploadingId: string | null;
   uploadProgress: UploadProgress | null;
+  currentUserEmail: string;
 }
 
 export function HistoryView({
@@ -44,6 +45,7 @@ export function HistoryView({
   onDelete,
   uploadingId,
   uploadProgress,
+  currentUserEmail,
 }: HistoryViewProps) {
   return (
     <div className="space-y-4">
@@ -70,6 +72,7 @@ export function HistoryView({
               onDelete={onDelete}
               isUploading={uploadingId === item.id}
               progress={uploadingId === item.id ? uploadProgress : null}
+              currentUserEmail={currentUserEmail} // TAMBAHKAN INI
             />
           ))}
         </div>
@@ -84,12 +87,14 @@ function HistoryCard({
   onDelete,
   isUploading,
   progress,
+  currentUserEmail,
 }: {
   item: SessionWithPhotos;
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
   isUploading: boolean;
   progress: UploadProgress | null;
+  currentUserEmail: string;
 }) {
   const meta = OBJECT_TYPES.find((o) => o.key === item.objectType);
   const dateStr = formatDate(item.updatedAt || item.createdAt);
@@ -124,12 +129,14 @@ function HistoryCard({
           </div>
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0">
-          <button
-            onClick={() => onDelete(item.id)}
-            disabled={isUploading}
-            className="w-7 h-7 rounded-lg bg-red-50 text-red-500 hover:bg-red-100 flex items-center justify-center border border-red-100 transition-all text-sm disabled:opacity-40"
-            title="Hapus"
-          >🗑️</button>
+          {currentUserEmail === 'zulfanrafly03@gmail.com' && (
+            <button
+              onClick={() => onDelete(item.id)}
+              disabled={isUploading}
+              className="w-7 h-7 rounded-lg bg-red-50 text-red-500 hover:bg-red-100 flex items-center justify-center border border-red-100 transition-all text-sm disabled:opacity-40"
+              title="Hapus"
+            >🗑️</button>
+          )}
         </div>
       </div>
 

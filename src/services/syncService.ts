@@ -5,7 +5,7 @@
 // FIXED: pullInspectionsFromDrive → GET dari api/pull-inspections
 // Tidak ada lagi fetch langsung ke googleapis.com dari frontend
 
-import { db, ClientRepository, UnitRepository } from '../db/db';
+import { db, ClientRepository, UnitRepository, SessionRepository } from '../db/db';
 import { getApiBaseUrl } from '../config';
 
 // ==========================================
@@ -140,6 +140,27 @@ export async function pullInspectionsFromDrive(): Promise<{
     const inspections: any[] = data.inspections ?? [];
 
     console.info(`[syncService] Diterima ${inspections.length} inspeksi dari server`);
+    // ========================================================
+    // 🧹 SELF-CLEANING TRIGGER (GARBAGE COLLECTION)
+    // ========================================================
+    try {
+      // 1. Catat semua ID yang valid dan masih hidup di Google Drive
+      const driveSessionIds = inspections.map((r: any) => r.id);
+      
+      // 2. Ambil riwayat lokal di HP (yang statusnya udah 'synced')
+      const localHistory = await SessionRepository.getHistory();
+
+      // 3. Bandingkan. Kalau ada di HP tapi udah musnah di Drive, hapus!
+      for (const localSession of localHistory) {
+        if (!driveSessionIds.includes(localSession.id)) {
+          console.info(`[Pembersihan Otomatis] Menghapus zombie lokal: ${localSession.id}`);
+          await SessionRepository.delete(localSession.id);
+        }
+      }
+    } catch (cleanErr) {
+      console.warn('[syncService] Gagal menjalankan pembersihan otomatis:', cleanErr);
+    }
+    // ========================================================
 
     for (const driveData of inspections) {
       try {

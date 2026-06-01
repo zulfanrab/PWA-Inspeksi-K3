@@ -828,10 +828,10 @@ export default function App() {
           const res = await fetch(`${apiBase}/api/delete-inspection`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            // Kirim folderId (buat data baru) dan sessionId (buat data lama)
             body: JSON.stringify({ 
               folderId: session.driveFolderId,
-              sessionId: session.id 
+              sessionId: session.id,
+              userEmail: currentUserEmail // KASIH TAU BACKEND SIAPA KITA
             }),
           });
           if (!res.ok) {
@@ -1007,6 +1007,7 @@ export default function App() {
             history={history} onEdit={handleEdit} onDelete={handleDelete}
             onReSync={handleReSyncFromHistory} isAuthenticated={isAuthenticated}
             isOnline={isOnline} uploadingId={uploadingId} uploadProgress={uploadProgress}
+            currentUserEmail={currentUserEmail} // TAMBAHKAN BARIS INI
           />
         )}
 
