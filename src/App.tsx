@@ -552,6 +552,23 @@ export default function App() {
     setAutoSync(val);
     localStorage.setItem('aksara_auto_sync', String(val));
   };
+  
+  // 🔄 AUTO-REFRESH & SELF CLEANING SAAT MASUK TAB RIWAYAT
+  useEffect(() => {
+    if (view === 'HISTORY' && isOnline) {
+      console.log('[Auto-Sync] User masuk tab Riwayat, menjalankan pembersihan di background...');
+      
+      pullInspectionsFromDrive()
+        .then(() => {
+          // Setelah laci lokal dibersihkan oleh syncService, 
+          // paksa layar buat nge-refresh datanya biar instan berubah
+          refreshData(); 
+        })
+        .catch((err) => {
+          console.warn('[Auto-Sync] Gagal melakukan background cleanup:', err);
+        });
+    }
+  }, [view, isOnline]); // Akan memicu setiap kali tab berubah atau internet kembali online
 
   // ── Form helpers ───────────────────────────────────────────────────────────
 
@@ -816,34 +833,40 @@ export default function App() {
   };
 
   const handleDelete = async (id: string) => {
-      if (!confirm('Hapus data ini? Tindakan tidak bisa dibatalkan.')) return;
+    if (!confirm('Hapus data ini? Tindakan tidak bisa dibatalkan.')) return;
 
-      const session = await SessionRepository.getById(id);
-      if (!session) return;
+    const session = await SessionRepository.getById(id);
+    if (!session) return;
 
-      // Hapus syarat && session.driveFolderId
-      if (session.status === 'synced') {
-        try {
-          const apiBase = getApiBaseUrl();
-          const res = await fetch(`${apiBase}/api/delete-inspection`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-              folderId: session.driveFolderId,
-              sessionId: session.id,
-              userEmail: currentUserEmail // KASIH TAU BACKEND SIAPA KITA
-            }),
-          });
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err?.error || `HTTP ${res.status}`);
-          }
-        } catch (err: any) {
-          alert(`⚠️ Gagal hapus dari Drive: ${err.message}\nData lokal tidak dihapus.`);
-          return;
+    // 🔥 LANGSUNG HILANGIN DARI LAYAR (Optimistic UI)
+    // Biar user ngerasa hapusnya instan tanpa nunggu internet selesai
+    setHistory(prev => prev.filter(item => item.id !== id));
+
+    if (session.status === 'synced') {
+      try {
+        const apiBase = getApiBaseUrl();
+        const res = await fetch(`${apiBase}/api/delete-inspection`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            folderId: session.driveFolderId,
+            sessionId: session.id,
+            userEmail: currentUserEmail 
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err?.error || `HTTP ${res.status}`);
         }
+      } catch (err: any) {
+        alert(`⚠️ Gagal hapus dari Drive: ${err.message}\nData dikembalikan ke menu.`);
+        // 🔄 ROLLBACK: Kalau gagal hapus di cloud, tampilin lagi datanya di HP
+        await refreshData(); 
+        return;
       }
+    }
 
+    // Kalau cloud sukses (atau data emang masih draft), baru hapus permanen di DB HP
     await SessionRepository.delete(id);
     await refreshData();
   };
