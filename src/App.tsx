@@ -238,9 +238,10 @@ async function compressPhoto(dataUrl: string): Promise<string> {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
-      const MAX_SIZE_BYTES = 1 * 1024 * 1024;
-      const MAX_DIMENSION = 1920;
+      // 1. Turunin batas maksimal ke 1080px (Resolusi ideal & tajam buat laporan PDF)
+      const MAX_DIMENSION = 1080;
       let { width, height } = img;
+      
       if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
         if (width > height) {
           height = Math.round((height * MAX_DIMENSION) / width);
@@ -250,20 +251,21 @@ async function compressPhoto(dataUrl: string): Promise<string> {
           height = MAX_DIMENSION;
         }
       }
+      
       const canvas = document.createElement('canvas');
       canvas.width = width;
       canvas.height = height;
       const ctx = canvas.getContext('2d');
+      
       if (!ctx) { resolve(dataUrl); return; }
       ctx.drawImage(img, 0, 0, width, height);
-      let quality = 0.8;
-      let result = canvas.toDataURL('image/jpeg', quality);
-      while (result.length * 0.75 > MAX_SIZE_BYTES && quality > 0.3) {
-        quality -= 0.1;
-        result = canvas.toDataURL('image/jpeg', quality);
-      }
+      
+      // 2. Hapus looping (while) yang bikin HP kerja paksa.
+      // Langsung tembak quality 0.6. Ini sweet spot: file super kecil, visual tetap jelas!
+      const result = canvas.toDataURL('image/jpeg', 0.6);
       resolve(result);
     };
+    
     img.onerror = () => resolve(dataUrl);
     img.src = dataUrl;
   });

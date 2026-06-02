@@ -27,7 +27,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
-    const { folderId, sessionId } = req.body;
+    // 1. Tangkap userEmail dari frontend
+    const { folderId, sessionId, userEmail } = req.body;
+    
+    // ==========================================
+    // 2. GEMBOK ADMIN
+    // ==========================================
+    const ADMIN_EMAIL = 'zulfanrafly03@gmail.com';
+    if (userEmail !== ADMIN_EMAIL) {
+      return res.status(403).json({ error: 'Akses Ditolak: Hanya Admin yang bisa menghapus data server.' });
+    }
+    // ==========================================
+
     const drive = getDriveClient();
 
     // SKENARIO 1: Jalur Cepat (Punya folderId dari kodingan baru Claude)
