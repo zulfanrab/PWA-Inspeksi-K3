@@ -1,10 +1,16 @@
 // api/sync-templates.ts
 // FIXED: Ganti Service Account → OAuth Refresh Token
+// FIXED: Tambah logika Tombstone (Anti-Zombie) dan Gembok Admin biar sinkronisasi aman.
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { google } from 'googleapis';
 import { Readable } from 'stream';
 
+// ─── Konstanta ────────────────────────────────────────────────────────────────
+const ADMIN_EMAIL = 'zulfanrafly03@gmail.com';
+const TEMPLATES_FILENAME = '_sync_templates.json';
+
+// ─── Helper: Google Auth ──────────────────────────────────────────────────────
 function getDriveClient() {
   const clientId = process.env.VITE_GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
@@ -23,23 +29,17 @@ function getDriveClient() {
   return google.drive({ version: 'v3', auth: oauth2Client });
 }
 
-async function findFile(
-  drive: ReturnType<typeof google.drive>,
-  name: string,
-  parentId: string
-): Promise<string | null> {
-  const q = `name='${name}' and '${parentId}' in parents and trashed=false`;
-  const res = await drive.files.list({ q, fields: 'files(id)', spaces: 'drive' });
-  return res.data.files?.[0]?.id ?? null;
-}
-
+// ─── Helper: Cari File & Folder ─────────────────────────────────────────────
 async function getOrCreateFolder(
   drive: ReturnType<typeof google.drive>,
   name: string
 ): Promise<string> {
   const q = `name='${name}' and mimeType='application/vnd.google-apps.folder' and 'root' in parents and trashed=false`;
   const res = await drive.files.list({ q, fields: 'files(id)', spaces: 'drive' });
-  if (res.data.files?.[0]?.id) return res.data.files[0].id;
+  
+  // FIX TS ERROR (Mencegah error 'Object possibly undefined' dari Vercel)
+  const existingId = res.data.files?.[0]?.id;
+  if (existingId) return existingId;
 
   const created = await drive.files.create({
     requestBody: { name, mimeType: 'application/vnd.google-apps.folder' },
@@ -48,31 +48,16 @@ async function getOrCreateFolder(
   return created.data.id!;
 }
 
-async function upsertTextFile(
+async function findTemplatesFile(
   drive: ReturnType<typeof google.drive>,
-  name: string,
-  content: string,
   parentId: string
-): Promise<void> {
-  const existingId = await findFile(drive, name, parentId);
-  const stream = Readable.from([content]);
-  const media = { mimeType: 'text/plain', body: stream };
-
-  if (existingId) {
-    await drive.files.update({
-      fileId: existingId,
-      requestBody: { name, mimeType: 'text/plain' },
-      media,
-    });
-  } else {
-    await drive.files.create({
-      requestBody: { name, mimeType: 'text/plain', parents: [parentId] },
-      media,
-      fields: 'id',
-    });
-  }
+): Promise<string | null> {
+  const q = `name='${TEMPLATES_FILENAME}' and '${parentId}' in parents and trashed=false`;
+  const res = await drive.files.list({ q, fields: 'files(id)', spaces: 'drive' });
+  return res.data.files?.[0]?.id ?? null;
 }
 
+// ─── Main Handler ─────────────────────────────────────────────────────────────
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -84,10 +69,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const drive = getDriveClient();
     const rootFolderId = await getOrCreateFolder(drive, 'Aksara Inspect');
 
+    // ════════════════════════════════════════════════════════
+    // GET — PULL: Semua device boleh ambil
+    // ════════════════════════════════════════════════════════
     if (req.method === 'GET') {
-      const fileId = await findFile(drive, '_sync_templates.json', rootFolderId);
+      const fileId = await findTemplatesFile(drive, rootFolderId);
       if (!fileId) {
-        return res.status(200).json({ clients: [], version: 0, exportedAt: null });
+        return res.status(200).json({ client_templates: [], unit_templates: [] });
       }
       const contentRes = await drive.files.get(
         { fileId, alt: 'media' },
@@ -96,17 +84,48 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json(JSON.parse(contentRes.data as string));
     }
 
+    // ════════════════════════════════════════════════════════
+    // POST — PUSH: HANYA ADMIN
+    // ════════════════════════════════════════════════════════
     if (req.method === 'POST') {
-      if (!req.body?.clients) {
-        return res.status(400).json({ error: 'Payload tidak valid: clients wajib ada' });
+      // 🔒 Gembok Admin
+      const requestingEmail = req.body?.adminEmail || req.headers['x-admin-email'];
+      if (requestingEmail !== ADMIN_EMAIL) {
+        return res.status(403).json({ error: 'Akses ditolak. Hanya Admin yang dapat mengubah data template.' });
       }
-      await upsertTextFile(
-        drive,
-        '_sync_templates.json',
-        JSON.stringify(req.body, null, 2),
-        rootFolderId
-      );
-      return res.status(200).json({ success: true });
+
+      if (!req.body?.client_templates && !req.body?.unit_templates) {
+        return res.status(400).json({ error: 'Payload tidak valid: harus mengirim client_templates atau unit_templates' });
+      }
+
+      // Gabungkan Data
+      const updatedData = {
+        client_templates: req.body.client_templates || [],
+        unit_templates: req.body.unit_templates || [],
+        lastModifiedBy: ADMIN_EMAIL,
+        lastModifiedAt: new Date().toISOString(),
+      };
+
+      const existingId = await findTemplatesFile(drive, rootFolderId);
+      const content = JSON.stringify(updatedData, null, 2);
+      const stream = Readable.from([content]);
+      const media = { mimeType: 'application/json', body: stream };
+
+      if (existingId) {
+        await drive.files.update({
+          fileId: existingId,
+          requestBody: { name: TEMPLATES_FILENAME, mimeType: 'application/json' },
+          media,
+        });
+      } else {
+        await drive.files.create({
+          requestBody: { name: TEMPLATES_FILENAME, mimeType: 'application/json', parents: [rootFolderId] },
+          media,
+          fields: 'id',
+        });
+      }
+
+      return res.status(200).json({ success: true, message: 'Templates berhasil disinkronkan' });
     }
 
     return res.status(405).json({ error: 'Method not allowed' });

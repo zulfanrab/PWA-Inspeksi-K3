@@ -5,7 +5,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { google } from 'googleapis';
 import { Readable } from 'stream';
 
-// ─── AUTHENTICATION (Sama seperti upload.ts) ──────────────────────────────────
+// ─── AUTHENTICATION ──────────────────────────────────
 function getDriveClient() {
   const clientId = process.env.VITE_GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
@@ -26,7 +26,8 @@ function getDriveClient() {
 }
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
-function base64ToStream(base64: string, mimeType: string): Readable {
+// FIX TS ERROR: Menghapus variabel `mimeType` yang nganggur biar Vercel nggak ngamuk.
+function base64ToStream(base64: string): Readable {
   const base64Data = base64.includes(',') ? base64.split(',')[1] : base64;
   const buffer = Buffer.from(base64Data, 'base64');
   return Readable.from(buffer);
@@ -38,14 +39,12 @@ async function countExistingPhotos(
   parentId: string
 ): Promise<number> {
   const q = `'${parentId}' in parents and mimeType != 'application/vnd.google-apps.folder' and name != 'data-inspeksi.json' and trashed=false`;
-  // pageSize besar biar kehitung semua
   const res = await drive.files.list({ q, fields: 'files(id)', spaces: 'drive', pageSize: 1000 });
   return res.data.files?.length ?? 0;
 }
 
 // ─── MAIN HANDLER ─────────────────────────────────────────────────────────────
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // CORS Headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -93,7 +92,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       },
       media: {
         mimeType,
-        body: base64ToStream(photoBase64, mimeType),
+        body: base64ToStream(photoBase64), // FIX TS: Cukup panggil 1 parameter
       },
       fields: 'id, name',
     });
