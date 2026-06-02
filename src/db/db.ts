@@ -1,13 +1,19 @@
 // src/db/db.ts
-// Schema v5: inspection_sessions, inspection_photos, client_templates, unit_templates, user_roles
-// RoleRepository dipertahankan — dipakai App.tsx untuk seedIfEmpty (kosmetik badge saja)
-// TIDAK ada permission/guard check berbasis role — role hanya untuk display badge
+// Schema v7: inspection_sessions, inspection_photos, client_templates, unit_templates, user_roles
+// Penambahan: uploadStatus & photosUploaded (untuk Smart Append), deleted & deletedAt (untuk Tombstone)
 
 import Dexie, { Table } from 'dexie';
 
 // ==========================================
-// INTERFACES
+// INTERFACES & TYPES
 // ==========================================
+
+export type UploadStatus =
+  | 'pending_upload'    // Belum pernah dikirim
+  | 'uploading_meta'    // Sedang upload JSON ke Drive
+  | 'uploading_photos'  // Sedang upload foto satu per satu
+  | 'fully_synced'      // Semua berhasil
+  | 'partial_failed';   // Gagal di tengah jalan, bisa di-retry
 
 export interface InspectionSession {
   id: string;
@@ -20,7 +26,10 @@ export interface InspectionSession {
   templateClientId?: string;
   templateUnitId?: string;
   inspectorEmail?: string;
-    driveFolderId?: string; // NEW: untuk delete dari Drive
+  driveFolderId?: string;
+  // NEW: untuk Smart Append & Antrean (Masalah 1)
+  uploadStatus?: UploadStatus;
+  photosUploaded?: number;
 }
 
 export interface InspectionPhoto {
@@ -39,6 +48,9 @@ export interface ClientTemplate {
   createdAt: number;
   updatedAt?: number;
   createdBy: string;
+  // NEW: untuk Tombstone / Hapus tanpa jejak (Masalah 2)
+  deleted?: boolean;
+  deletedAt?: string;
 }
 
 export interface UnitTemplate {
@@ -51,6 +63,9 @@ export interface UnitTemplate {
   createdAt: number;
   updatedAt?: number;
   createdBy: string;
+  // NEW: untuk Tombstone / Hapus tanpa jejak (Masalah 2)
+  deleted?: boolean;
+  deletedAt?: string;
 }
 
 export interface UserRole {
@@ -75,29 +90,39 @@ export class MyDatabase extends Dexie {
   constructor() {
     super('AksaraDB');
 
-    // v4 = schema lama, tetap ada agar upgrade dari versi lama aman
+    // v4 = schema lama
     this.version(4).stores({
       inspection_sessions: 'id, clientName, status, createdAt',
       inspection_photos: 'id, sessionId, createdAt',
     });
 
-    // v5 = tambah tabel client_templates, unit_templates, user_roles
+    // v5 = tambah tabel template
     this.version(5).stores({
       inspection_sessions: 'id, clientName, status, createdAt, templateClientId, inspectorEmail',
       inspection_photos: 'id, sessionId, createdAt',
       client_templates: 'id, name, createdAt, createdBy',
       unit_templates: 'id, clientId, objectType, createdAt, createdBy',
       user_roles: 'id, role, createdAt',
-    }).upgrade(async (_trans) => {
-      console.log('[DB] Migrating to v5: adding client_templates, unit_templates, user_roles');
     });
 
+    // v6 = tambah driveFolderId
     this.version(6).stores({
       inspection_sessions: 'id, clientName, status, createdAt, templateClientId, inspectorEmail, driveFolderId',
       inspection_photos: 'id, sessionId, createdAt',
       client_templates: 'id, name, createdAt, createdBy',
       unit_templates: 'id, clientId, objectType, createdAt, createdBy',
       user_roles: 'id, role, createdAt',
+    });
+
+    // v7 = NEW: tambah index uploadStatus & deleted (Tombstone)
+    this.version(7).stores({
+      inspection_sessions: 'id, clientName, status, createdAt, templateClientId, inspectorEmail, driveFolderId, uploadStatus',
+      inspection_photos: 'id, sessionId, createdAt',
+      client_templates: 'id, name, createdAt, createdBy, deleted',
+      unit_templates: 'id, clientId, objectType, createdAt, createdBy, deleted',
+      user_roles: 'id, role, createdAt',
+    }).upgrade(async (_trans) => {
+      console.log('[DB] Migrating to v7: adding Smart Append & Tombstone support');
     });
   }
 }
@@ -151,7 +176,14 @@ export const SessionRepository = {
     photos: string[]
   ) => {
     const id = crypto.randomUUID();
-    await db.inspection_sessions.add({ ...data, id, createdAt: Date.now() });
+    // Default uploadStatus saat baru dibuat adalah 'pending_upload'
+    await db.inspection_sessions.add({ 
+      ...data, 
+      id, 
+      createdAt: Date.now(),
+      uploadStatus: 'pending_upload',
+      photosUploaded: 0 
+    });
     for (const dataUrl of photos) {
       await db.inspection_photos.add({
         id: crypto.randomUUID(),
@@ -169,7 +201,13 @@ export const SessionRepository = {
     newPhotos: string[],
     deletedPhotoIds: string[]
   ) => {
-    await db.inspection_sessions.update(id, { ...data, updatedAt: Date.now() });
+    // Kalau ada editan, status upload kita reset biar di-sync ulang dengan benar
+    await db.inspection_sessions.update(id, { 
+      ...data, 
+      updatedAt: Date.now(),
+      uploadStatus: 'pending_upload',
+      photosUploaded: 0 
+    });
     for (const photoId of deletedPhotoIds) {
       await db.inspection_photos.delete(photoId);
     }
@@ -186,6 +224,7 @@ export const SessionRepository = {
   markSynced: async (id: string, driveFolderId?: string) => {
     await db.inspection_sessions.update(id, {
       status: 'synced',
+      uploadStatus: 'fully_synced',
       updatedAt: Date.now(),
       ...(driveFolderId ? { driveFolderId } : {}),
     });
@@ -203,23 +242,30 @@ export const SessionRepository = {
 
 export const ClientRepository = {
   getAll: async (): Promise<ClientTemplate[]> => {
-    return db.client_templates.orderBy('name').toArray();
+    // Jangan tampilkan yang sudah di-soft-delete (tombstone)
+    return db.client_templates
+      .where('deleted').notEqual('true') // Dexie workaround untuk boolean
+      .and(c => !c.deleted)
+      .toArray()
+      .then(res => res.sort((a, b) => a.name.localeCompare(b.name)));
   },
 
   search: async (query: string): Promise<ClientTemplate[]> => {
     const q = query.toLowerCase().trim();
     if (!q) return ClientRepository.getAll();
-    const all = await db.client_templates.orderBy('name').toArray();
+    const all = await ClientRepository.getAll();
     return all.filter((c) => c.name.toLowerCase().includes(q));
   },
 
   getById: async (id: string): Promise<ClientTemplate | undefined> => {
-    return db.client_templates.get(id);
+    const client = await db.client_templates.get(id);
+    if (client && client.deleted) return undefined;
+    return client;
   },
 
   create: async (data: Omit<ClientTemplate, 'id' | 'createdAt'>) => {
     const id = crypto.randomUUID();
-    await db.client_templates.add({ ...data, id, createdAt: Date.now() });
+    await db.client_templates.add({ ...data, id, createdAt: Date.now(), deleted: false });
     return id;
   },
 
@@ -228,18 +274,30 @@ export const ClientRepository = {
   },
 
   delete: async (id: string) => {
-    // Cascade: hapus semua unit template milik klien ini
-    const units = await db.unit_templates
-      .where('clientId').equals(id).toArray();
-    await Promise.all(units.map((u) => db.unit_templates.delete(u.id)));
-    await db.client_templates.delete(id);
+    // Sekarang cuma soft-delete, bukan delete permanen
+    await db.client_templates.update(id, { 
+      deleted: true, 
+      deletedAt: new Date().toISOString(),
+      updatedAt: Date.now()
+    });
+    // Cascade soft-delete unit
+    const units = await db.unit_templates.where('clientId').equals(id).toArray();
+    await Promise.all(units.map(u => 
+      db.unit_templates.update(u.id, { 
+        deleted: true, 
+        deletedAt: new Date().toISOString(),
+        updatedAt: Date.now()
+      })
+    ));
   },
 
   getWithUnits: async (id: string) => {
-    const client = await db.client_templates.get(id);
+    const client = await ClientRepository.getById(id);
     if (!client) return null;
     const units = await db.unit_templates
-      .where('clientId').equals(id).toArray();
+      .where('clientId').equals(id)
+      .and(u => !u.deleted)
+      .toArray();
     return { ...client, units };
   },
 };
@@ -252,6 +310,7 @@ export const UnitRepository = {
   getByClient: async (clientId: string): Promise<UnitTemplate[]> => {
     return db.unit_templates
       .where('clientId').equals(clientId)
+      .and(u => !u.deleted)
       .toArray()
       .then((units) => units.sort((a, b) => a.label.localeCompare(b.label)));
   },
@@ -272,12 +331,14 @@ export const UnitRepository = {
   },
 
   getById: async (id: string): Promise<UnitTemplate | undefined> => {
-    return db.unit_templates.get(id);
+    const unit = await db.unit_templates.get(id);
+    if (unit && unit.deleted) return undefined;
+    return unit;
   },
 
   create: async (data: Omit<UnitTemplate, 'id' | 'createdAt'>) => {
     const id = crypto.randomUUID();
-    await db.unit_templates.add({ ...data, id, createdAt: Date.now() });
+    await db.unit_templates.add({ ...data, id, createdAt: Date.now(), deleted: false });
     return id;
   },
 
@@ -286,15 +347,17 @@ export const UnitRepository = {
   },
 
   delete: async (id: string) => {
-    await db.unit_templates.delete(id);
+    // Soft-delete
+    await db.unit_templates.update(id, { 
+      deleted: true, 
+      deletedAt: new Date().toISOString(),
+      updatedAt: Date.now()
+    });
   },
 };
 
 // ==========================================
 // REPOSITORY — USER ROLES
-// Dipakai untuk: seedIfEmpty (insert admin pertama kali) + AdminPanel Roles tab
-// TIDAK dipakai untuk permission/guard check — semua user akses semua fitur
-// Badge "Admin"/"Ahli K3" ditentukan di App.tsx via OWNER_EMAIL env, bukan dari sini
 // ==========================================
 
 export const RoleRepository = {
@@ -306,7 +369,6 @@ export const RoleRepository = {
     return db.user_roles.get(email);
   },
 
-  // Tidak dipakai untuk guard — hanya referensi jika AdminPanel butuh cek
   isAdmin: async (email: string): Promise<boolean> => {
     const role = await db.user_roles.get(email);
     return role?.role === 'admin';
@@ -336,8 +398,6 @@ export const RoleRepository = {
     await db.user_roles.delete(email);
   },
 
-  // Seed record admin awal kalau tabel masih kosong
-  // Dipanggil di App.tsx saat user pertama kali login
   seedIfEmpty: async (ownerEmail: string, ownerName: string) => {
     const count = await db.user_roles.count();
     if (count === 0 && ownerEmail) {

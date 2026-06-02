@@ -1,11 +1,10 @@
 // src/services/driveService.ts
-// FIXED: Upload lewat serverless api/upload.ts pakai OAuth Refresh Token
-// FIXED (PR fix): uploadToDrive sekarang punya parameter onlyNewPhotos
-//   - saat create: kirim semua session.photos
-//   - saat edit: kirim hanya foto baru (newPhotos) agar tidak duplikat di Drive
-//   - api/upload.ts sudah handle lanjut penomoran dari countExistingPhotos
+// VERSI BARU: Smart Append Orchestrator (Antrean Upload & Anti-413)
+// - Upload JSON ke api/upload (buat folder)
+// - Upload foto SATU PER SATU ke api/upload-photo (cegah limit Vercel)
+// - Bisa melanjutkan upload yang terputus (resume)
 
-import type { InspectionSession, InspectionPhoto } from '../db/db';
+import { db, type InspectionSession, type InspectionPhoto } from '../db/db';
 import { getApiBaseUrl } from '../config';
 
 export interface UploadProgress {
@@ -18,7 +17,7 @@ export interface UploadProgress {
 type ProgressCallback = (progress: UploadProgress) => void;
 
 // ==========================================
-// TOKEN HELPERS
+// TOKEN HELPERS (Dipertahankan)
 // ==========================================
 
 export class TokenExpiredError extends Error {
@@ -60,84 +59,130 @@ export function isTokenExpiringSoon(_withinMinutes = 10): boolean {
 }
 
 // ==========================================
-// MAIN UPLOAD FUNCTION
-// FIXED: Tambah parameter onlyNewPhotos (opsional)
-//   - Kalau undefined/null → upload semua session.photos (create baru)
-//   - Kalau diisi array dataUrl → upload hanya foto itu (edit, cegah duplikat)
-// api/upload.ts sudah handle countExistingPhotos untuk lanjut penomoran
+// MAIN UPLOAD FUNCTION (SEQUENTIAL QUEUE)
 // ==========================================
 
 export const uploadToDrive = async (
   session: InspectionSession & { photos: InspectionPhoto[] },
   _photos: InspectionPhoto[],
   onProgress?: ProgressCallback,
-  // FIXED: Parameter baru — foto yang mau diupload ke Drive
-  // Kalau null/undefined → semua session.photos (behavior lama untuk create)
-  // Kalau diisi → hanya foto ini yang dikirim (untuk edit, cegah duplikat)
   onlyNewPhotos?: InspectionPhoto[] | null
 ): Promise<{ success: true; folderId: string }> => {
 
-  // FIXED: Tentukan foto mana yang mau dikirim ke server
+  // Tentukan foto yang akan di-upload (Semua atau cuma yang baru)
   const photosToUpload = onlyNewPhotos ?? session.photos;
   const totalPhotos = photosToUpload.length;
-  const totalSteps = totalPhotos + 2;
+  const totalSteps = totalPhotos + 1; // 1 step buat JSON/Folder, sisanya foto
 
-  onProgress?.({
-    current: 0,
-    total: totalSteps,
-    fileName: 'Menyiapkan upload...',
-    phase: 'folder',
-  });
+  let folderId = session.driveFolderId;
 
-  // Konversi ke format payload
-  // Nama file sementara — api/upload.ts akan re-nomori dari countExistingPhotos
-  const photosPayload = photosToUpload.map((photo, i) => ({
-    name: `foto-temp-${String(i + 1).padStart(3, '0')}.jpg`,
-    dataUrl: photo.dataUrl,
-  }));
+  try {
+    // ── PHASE 1: Upload JSON & Bikin Folder ──
+    // (Jalanin ini kalau belum punya folderId, atau statusnya bukan lagi ngelanjutin upload foto)
+    if (!folderId || session.uploadStatus !== 'partial_failed') {
+      onProgress?.({
+        current: 0,
+        total: totalSteps,
+        fileName: 'Menyiapkan folder...',
+        phase: 'folder',
+      });
 
-  onProgress?.({
-    current: 1,
-    total: totalSteps,
-    fileName: 'data-inspeksi.json',
-    phase: 'data',
-  });
+      await db.inspection_sessions.update(session.id, {
+        uploadStatus: 'uploading_meta',
+        photosUploaded: 0
+      });
 
-  const apiBase = getApiBaseUrl();
-  const response = await fetch(`${apiBase}/api/upload`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      session: {
-        id: session.id,
-        clientName: session.clientName,
-        objectType: session.objectType,
-        createdAt: new Date(session.createdAt).toISOString(),
-        updatedAt: session.updatedAt
-          ? new Date(session.updatedAt).toISOString()
-          : null,
-        unitData: session.unitData,
-        inspectorEmail: session.inspectorEmail ?? null,
-      },
-      photos: photosPayload,
-    }),
-  });
+      const apiBase = getApiBaseUrl();
+      const metaRes = await fetch(`${apiBase}/api/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          inspectionData: {
+            id: session.id,
+            clientName: session.clientName,
+            objectType: session.objectType,
+            createdAt: session.createdAt,
+            updatedAt: session.updatedAt,
+            unitData: session.unitData,
+            totalPhotos: totalPhotos,
+            inspectorEmail: session.inspectorEmail ?? null,
+          }
+        }),
+      });
 
-  if (!response.ok) {
-    const errData = await response.json().catch(() => ({}));
-    throw new Error(errData?.error || `Upload gagal: HTTP ${response.status}`);
+      if (!metaRes.ok) {
+        const errData = await metaRes.json().catch(() => ({}));
+        throw new Error(errData?.error || `HTTP ${metaRes.status} saat bikin folder`);
+      }
+
+      const metaData = await metaRes.json();
+      folderId = metaData.folderId;
+
+      await db.inspection_sessions.update(session.id, {
+        driveFolderId: folderId,
+        uploadStatus: 'uploading_photos'
+      });
+    }
+
+    // ── PHASE 2: Upload Foto (Antrean Satu per Satu) ──
+    // Kalau sebelumnya gagal di tengah jalan (partial_failed), kita lanjutin dari index terakhir
+    const startIdx = session.uploadStatus === 'partial_failed' ? (session.photosUploaded || 0) : 0;
+
+    for (let i = startIdx; i < totalPhotos; i++) {
+      const photo = photosToUpload[i];
+      
+      onProgress?.({
+        current: i + 1,
+        total: totalSteps,
+        fileName: `Foto ${i + 1} dari ${totalPhotos}...`,
+        phase: 'photo',
+      });
+
+      const apiBase = getApiBaseUrl();
+      const photoRes = await fetch(`${apiBase}/api/upload-photo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          folderId: folderId,
+          photoBase64: photo.dataUrl,
+          photoIndex: i
+        }),
+      });
+
+      if (!photoRes.ok) {
+        const errData = await photoRes.json().catch(() => ({}));
+        throw new Error(errData?.error || `Gagal upload foto ke-${i + 1}`);
+      }
+
+      // Catat progress di DB lokal biar aman kalau internet mendadak putus
+      await db.inspection_sessions.update(session.id, {
+        photosUploaded: i + 1
+      });
+    }
+
+    // ── PHASE 3: Selesai Semua ──
+    onProgress?.({
+      current: totalSteps,
+      total: totalSteps,
+      fileName: 'Selesai!',
+      phase: 'photo',
+    });
+
+    await db.inspection_sessions.update(session.id, {
+      uploadStatus: 'fully_synced',
+      status: 'synced' // ubah status jadi synced
+    });
+
+    return { success: true, folderId: folderId! };
+
+  } catch (err: any) {
+    // Kalau gagal di tengah jalan, ubah status jadi partial_failed biar bisa di-resume nanti
+    console.error('[driveService] Error:', err);
+    await db.inspection_sessions.update(session.id, {
+      uploadStatus: 'partial_failed'
+    });
+    throw err;
   }
-
-  const result = await response.json();
-
-  onProgress?.({
-    current: totalSteps,
-    total: totalSteps,
-    fileName: 'Selesai',
-    phase: 'photo',
-  });
-
-  return { success: true, folderId: result.folderId ?? '' };
 };
 
 // Dipertahankan untuk backward compat

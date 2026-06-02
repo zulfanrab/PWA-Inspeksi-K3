@@ -1,0 +1,117 @@
+// api/upload-photo.ts
+// TUGAS: Menerima 1 foto, memberi nomor urut otomatis (Smart Append), dan menyimpannya ke Drive.
+
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { google } from 'googleapis';
+import { Readable } from 'stream';
+
+// ─── AUTHENTICATION (Sama seperti upload.ts) ──────────────────────────────────
+function getDriveClient() {
+  const clientId = process.env.VITE_GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
+
+  if (!clientId || !clientSecret || !refreshToken) {
+    throw new Error('ENV tidak lengkap');
+  }
+
+  const oauth2Client = new google.auth.OAuth2(
+    clientId,
+    clientSecret,
+    'https://developers.google.com/oauthplayground'
+  );
+  oauth2Client.setCredentials({ refresh_token: refreshToken });
+
+  return google.drive({ version: 'v3', auth: oauth2Client });
+}
+
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+function base64ToStream(base64: string, mimeType: string): Readable {
+  const base64Data = base64.includes(',') ? base64.split(',')[1] : base64;
+  const buffer = Buffer.from(base64Data, 'base64');
+  return Readable.from(buffer);
+}
+
+// Hitung foto yang udah ada biar nomor urutnya pinter (Smart Append)
+async function countExistingPhotos(
+  drive: ReturnType<typeof google.drive>,
+  parentId: string
+): Promise<number> {
+  const q = `'${parentId}' in parents and mimeType != 'application/vnd.google-apps.folder' and name != 'data-inspeksi.json' and trashed=false`;
+  // pageSize besar biar kehitung semua
+  const res = await drive.files.list({ q, fields: 'files(id)', spaces: 'drive', pageSize: 1000 });
+  return res.data.files?.length ?? 0;
+}
+
+// ─── MAIN HANDLER ─────────────────────────────────────────────────────────────
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // CORS Headers
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  try {
+    const { folderId, photoBase64, photoIndex } = req.body;
+
+    if (!folderId || !photoBase64) {
+      return res.status(400).json({ error: 'folderId dan photoBase64 wajib diisi' });
+    }
+
+    // PENGAMAN 413: Pastikan ukuran base64 nggak lebih dari 4MB (Batas aman Vercel)
+    const estimatedSizeBytes = (photoBase64.length * 3) / 4;
+    const maxSizeBytes = 4 * 1024 * 1024; // 4MB
+    if (estimatedSizeBytes > maxSizeBytes) {
+      return res.status(413).json({
+        error: `Ukuran foto terlalu besar. Maksimal 4MB per foto.`,
+        photoIndex,
+      });
+    }
+
+    const drive = getDriveClient();
+
+    // Deteksi tipe file
+    const matches = photoBase64.match(/^data:(.+);base64,/);
+    const mimeType = matches ? matches[1] : 'image/jpeg';
+    const extension = mimeType.split('/')[1] === 'png' ? 'png' : 'jpg';
+
+    // SMART APPEND: Cek isi Drive sekarang
+    const existingCount = await countExistingPhotos(drive, folderId);
+    
+    // Bikin nomor urut (Contoh: foto-004.jpg, foto-005.jpg)
+    const photoNumber = existingCount + 1;
+    const paddedNum = String(photoNumber).padStart(3, '0');
+    const photoName = `foto-${paddedNum}.${extension}`;
+
+    // Eksekusi Upload
+    const uploadedFile = await drive.files.create({
+      requestBody: {
+        name: photoName,
+        parents: [folderId],
+      },
+      media: {
+        mimeType,
+        body: base64ToStream(photoBase64, mimeType),
+      },
+      fields: 'id, name',
+    });
+
+    return res.status(200).json({
+      success: true,
+      photoIndex,
+      fileId: uploadedFile.data.id,
+      fileName: uploadedFile.data.name,
+      message: `Berhasil upload ${photoName}`
+    });
+
+  } catch (error: any) {
+    console.error(`[upload-photo] Error foto index ${req.body?.photoIndex}:`, error.message);
+    return res.status(500).json({
+      error: 'Gagal upload foto',
+      detail: error.message,
+      photoIndex: req.body?.photoIndex,
+    });
+  }
+}
