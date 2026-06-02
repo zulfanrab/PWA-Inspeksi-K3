@@ -140,8 +140,9 @@ export async function pullInspectionsFromDrive(): Promise<{
     const inspections: any[] = data.inspections ?? [];
 
     console.info(`[syncService] Diterima ${inspections.length} inspeksi dari server`);
+    
     // ========================================================
-    // 🧹 SELF-CLEANING TRIGGER (GARBAGE COLLECTION)
+    // 🧹 SELF-CLEANING TRIGGER (DENGAN SHIELD 5 MENIT)
     // ========================================================
     try {
       // 1. Catat semua ID yang valid dan masih hidup di Google Drive
@@ -150,11 +151,23 @@ export async function pullInspectionsFromDrive(): Promise<{
       // 2. Ambil riwayat lokal di HP (yang statusnya udah 'synced')
       const localHistory = await SessionRepository.getHistory();
 
-      // 3. Bandingkan. Kalau ada di HP tapi udah musnah di Drive, hapus!
+      // 3. Bandingkan. Kalau ada di HP tapi udah musnah di Drive, cek umurnya dulu!
       for (const localSession of localHistory) {
         if (!driveSessionIds.includes(localSession.id)) {
-          console.info(`[Pembersihan Otomatis] Menghapus zombie lokal: ${localSession.id}`);
-          await SessionRepository.delete(localSession.id);
+          
+          // 🔥 SHIELD ANTI-HAPUS UNTUK DATA BARU 🔥
+          const lastUpdated = localSession.updatedAt || localSession.createdAt;
+          const ageInMinutes = (Date.now() - lastUpdated) / (1000 * 60);
+
+          if (ageInMinutes > 5) { 
+            // Udah lebih 5 menit dan ga ada di Drive -> FIX DIHAPUS ADMIN
+            console.info(`[Pembersihan Otomatis] Menghapus zombie lokal: ${localSession.id}`);
+            await SessionRepository.delete(localSession.id);
+          } else {
+            // Belum 5 menit -> Drive API lagi lemot nge-index, JANGAN DIHAPUS
+            console.info(`[Pembersihan Otomatis] Data ${localSession.id} aman (delay index Drive, dilindungi shield).`);
+          }
+
         }
       }
     } catch (cleanErr) {
