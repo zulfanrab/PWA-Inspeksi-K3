@@ -1,5 +1,5 @@
 // api/pull-inspections.ts
-// FIXED: Ganti Service Account → OAuth Refresh Token
+// FIXED: Menghapus filter mimeType yang kaku, dan bikin sistem baca JSON jadi kebal error.
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { google } from 'googleapis';
@@ -33,8 +33,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const drive = getDriveClient();
 
-    // Cari semua data-inspeksi.json di Drive owner
-    const q = `name='data-inspeksi.json' and mimeType='text/plain' and trashed=false`;
+    // 🔥 FIX UTAMA: mimeType dihapus dari pencarian biar data versi lama & baru kebaca semua
+    const q = `name='data-inspeksi.json' and trashed=false`;
+    
     const listRes = await drive.files.list({
       q,
       fields: 'files(id, name, modifiedTime)',
@@ -49,19 +50,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       try {
         const contentRes = await drive.files.get(
           { fileId: file.id!, alt: 'media' },
-          { responseType: 'text' }
+          { responseType: 'json' } // Biarkan googleapis yang nentuin ini teks atau objek
         );
-        const parsed = JSON.parse(contentRes.data as string);
+        
+        // 🔥 FIX PARSER: Kebal dari error JSON.parse
+        let parsed;
+        if (typeof contentRes.data === 'string') {
+          parsed = JSON.parse(contentRes.data);
+        } else {
+          parsed = contentRes.data; // Kalau dari sananya udah jadi objek, langsung pakai
+        }
+        
         results.push(parsed);
       } catch (fileErr) {
-        console.warn(`[pull-inspections] Skip file ${file.id}:`, fileErr);
+        console.warn(`[pull-inspections] Gagal baca file ${file.id}:`, fileErr);
       }
     }
 
     return res.status(200).json({ inspections: results });
-
+    
   } catch (err: any) {
     console.error('[api/pull-inspections] Error:', err);
-    return res.status(500).json({ error: err.message || 'Gagal pull inspections' });
+    return res.status(500).json({ error: err.message || 'Gagal mengambil data inspeksi' });
   }
 }
