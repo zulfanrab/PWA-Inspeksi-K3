@@ -43,7 +43,7 @@ export async function pushTemplatesToDrive(): Promise<void> {
 }
 
 // ==========================================
-// TEMPLATES — PULL (PEMBERSIHAN ZOMBIE TEMPLATE KLIEN)
+// TEMPLATES — PULL 
 // ==========================================
 export async function pullTemplatesFromDrive(): Promise<void> {
   try {
@@ -51,12 +51,9 @@ export async function pullTemplatesFromDrive(): Promise<void> {
     if (!res.ok) return;
 
     const payload = await res.json();
-    
-    // Pastikan baca data sesuai format Claude!
     const clientTemplates = payload.client_templates || [];
     const unitTemplates = payload.unit_templates || [];
 
-    // Proses Klien
     for (const template of clientTemplates) {
       if (template.deleted === true) {
         await db.client_templates.where('id').equals(template.id).delete();
@@ -72,7 +69,6 @@ export async function pullTemplatesFromDrive(): Promise<void> {
       }
     }
 
-    // Proses Unit
     for (const template of unitTemplates) {
       if (template.deleted === true) {
         await db.unit_templates.where('id').equals(template.id).delete();
@@ -90,14 +86,13 @@ export async function pullTemplatesFromDrive(): Promise<void> {
         });
       }
     }
-
   } catch (err) {
     console.error('[syncService] pullTemplatesFromDrive error:', err);
   }
 }
 
 // ==========================================
-// INSPECTIONS — PULL (TANPA PENGHAPUSAN OTOMATIS)
+// INSPECTIONS — PULL (DENGAN TUKANG SAPU CERDAS)
 // ==========================================
 export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skipped: number; }> {
   let pulled = 0;
@@ -109,10 +104,32 @@ export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skip
 
     const data = await res.json();
     const inspections: any[] = data.inspections ?? [];
+    
+    // Ambil semua ID yang masih hidup di Google Drive
+    const driveSessionIds = inspections.map((r: any) => r.id);
 
-    // 🔥 FITUR GARBAGE COLLECTION/PEMBERSIH OTOMATIS DIHAPUS TOTAL 🔥
-    // Kita nggak akan biarin sistem hapus data lo secara otomatis lagi!
+    // ========================================================
+    // 🧹 PEMBERSIH ZOMBIE (SHIELD 15 MENIT)
+    // ========================================================
+    const localHistory = await db.inspection_sessions.where('status').equals('synced').toArray();
 
+    for (const localSession of localHistory) {
+      if (!driveSessionIds.includes(localSession.id)) {
+        // Data ada di HP, tapi ga ada di server (Kemungkinan dihapus Admin)
+        const lastUpdated = localSession.updatedAt || localSession.createdAt;
+        const ageInMinutes = (Date.now() - lastUpdated) / (1000 * 60);
+
+        if (ageInMinutes > 15) {
+          // Usia udah di atas 15 menit, fix udah dihapus beneran sama Admin. Hapus dari HP!
+          console.info(`[Sync] Menghapus data lokal yg dihapus di server: ${localSession.id}`);
+          await db.inspection_sessions.delete(localSession.id);
+          await db.inspection_photos.where('sessionId').equals(localSession.id).delete();
+        }
+      }
+    }
+    // ========================================================
+
+    // Update / Tambah data baru dari server ke lokal
     for (const driveData of inspections) {
       try {
         const driveCreatedAt = new Date(driveData.createdAt).getTime();
