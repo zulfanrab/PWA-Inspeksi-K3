@@ -152,6 +152,7 @@ export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skip
             updatedAt: driveUpdatedAt,
             inspectorEmail: driveData.inspectorEmail,
             status: 'synced',
+            drivePhotoIds: driveData.drivePhotoIds ?? [],
           });
           pulled++;
         } else {
@@ -164,6 +165,7 @@ export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skip
             createdAt: driveCreatedAt,
             updatedAt: driveUpdatedAt,
             inspectorEmail: driveData.inspectorEmail,
+            drivePhotoIds: driveData.drivePhotoIds ?? [],
           });
           pulled++;
         }

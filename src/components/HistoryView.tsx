@@ -2,7 +2,7 @@
 // FIXED: Ganti tombol Upload Ulang → Edit & Update (langsung ke form edit)
 // FIXED: Tombol Download PDF tetap ada
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import type { InspectionSession, InspectionPhoto } from '../db/db';
 import { exportToPDF } from '../utils/pdfExport';
 import type { UploadProgress } from '../services/driveService';
@@ -47,8 +47,56 @@ export function HistoryView({
   uploadProgress,
   currentUserEmail,
 }: HistoryViewProps) {
+  const [openClients, setOpenClients] = useState<Set<string>>(new Set());
+
+  const recent = useMemo(
+    () => [...history].sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt)).slice(0, 5),
+    [history]
+  );
+
+  const byClient = useMemo(() => {
+    const map = new Map<string, SessionWithPhotos[]>();
+    for (const item of history) {
+      const list = map.get(item.clientName) ?? [];
+      list.push(item);
+      map.set(item.clientName, list);
+    }
+    // Sort tiap grup by terbaru
+    for (const [key, list] of map) {
+      map.set(key, list.sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt)));
+    }
+    return map;
+  }, [history]);
+
+  const toggleClient = (name: string) => {
+    setOpenClients((prev) => {
+      const next = new Set(prev);
+      next.has(name) ? next.delete(name) : next.add(name);
+      return next;
+    });
+  };
+
+  const cardProps = (item: SessionWithPhotos) => ({
+    item,
+    onEdit,
+    onDelete,
+    isUploading: uploadingId === item.id,
+    progress: uploadingId === item.id ? uploadProgress : null,
+    currentUserEmail,
+  });
+
+  if (history.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 text-center">
+        <div className="text-5xl mb-3 opacity-60">📋</div>
+        <p className="text-sm font-bold text-gray-500">Belum ada riwayat</p>
+        <p className="text-xs text-gray-400 mt-1">Data yang sudah di-sync ke Drive akan muncul di sini</p>
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div>
         <h2 className="text-base font-black text-gray-900">📋 Riwayat Inspeksi</h2>
         <p className="text-xs text-gray-400 font-medium mt-0.5">
@@ -56,27 +104,44 @@ export function HistoryView({
         </p>
       </div>
 
-      {history.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-16 text-center">
-          <div className="text-5xl mb-3 opacity-60">📋</div>
-          <p className="text-sm font-bold text-gray-500">Belum ada riwayat</p>
-          <p className="text-xs text-gray-400 mt-1">Data yang sudah di-sync ke Drive akan muncul di sini</p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {history.map((item) => (
-            <HistoryCard
-              key={item.id}
-              item={item}
-              onEdit={onEdit}
-              onDelete={onDelete}
-              isUploading={uploadingId === item.id}
-              progress={uploadingId === item.id ? uploadProgress : null}
-              currentUserEmail={currentUserEmail} // TAMBAHKAN INI
-            />
-          ))}
-        </div>
-      )}
+      {/* SECTION: Recent */}
+      <div className="space-y-3">
+        <h3 className="text-xs font-black text-gray-500 uppercase tracking-widest">🕐 Terbaru</h3>
+        {recent.map((item) => (
+          <HistoryCard key={item.id} {...cardProps(item)} />
+        ))}
+      </div>
+
+      {/* SECTION: Per Perusahaan */}
+      <div className="space-y-2">
+        <h3 className="text-xs font-black text-gray-500 uppercase tracking-widest">🏢 Per Perusahaan</h3>
+        {[...byClient.entries()].map(([clientName, items]) => {
+          const isOpen = openClients.has(clientName);
+          return (
+            <div key={clientName} className="border border-gray-200 rounded-xl overflow-hidden">
+              <button
+                onClick={() => toggleClient(clientName)}
+                className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-bold text-gray-800">{clientName}</span>
+                  <span className="px-2 py-0.5 bg-blue-50 text-blue-600 border border-blue-100 rounded-full text-[10px] font-bold">
+                    {items.length} inspeksi
+                  </span>
+                </div>
+                <span className="text-gray-400 text-xs">{isOpen ? '▲' : '▼'}</span>
+              </button>
+              {isOpen && (
+                <div className="p-3 space-y-3 bg-white">
+                  {items.map((item) => (
+                    <HistoryCard key={item.id} {...cardProps(item)} />
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

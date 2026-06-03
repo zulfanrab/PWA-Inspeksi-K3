@@ -4,9 +4,6 @@
 // FILE: api\delete-inspection.ts
 // ==========================================
 
-// api/delete-inspection.ts
-// Memindahkan folder inspeksi di Google Drive ke Trash
-
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { google } from 'googleapis';
 
@@ -14,9 +11,11 @@ function getDriveClient() {
   const clientId = process.env.VITE_GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
   const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
+
   if (!clientId || !clientSecret || !refreshToken) {
     throw new Error('ENV tidak lengkap');
   }
+
   const oauth2Client = new google.auth.OAuth2(
     clientId, clientSecret,
     'https://developers.google.com/oauthplayground'
@@ -34,16 +33,59 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
-    const { folderId } = req.body as { folderId?: string };
-    if (!folderId) return res.status(400).json({ error: 'folderId wajib ada' });
+    // 1. Tangkap userEmail dari frontend
+    const { folderId, sessionId, userEmail } = req.body;
+    
+    // ==========================================
+    // 2. GEMBOK ADMIN
+    // ==========================================
+    const ADMIN_EMAIL = 'zulfanrafly03@gmail.com';
+    if (userEmail !== ADMIN_EMAIL) {
+      return res.status(403).json({ error: 'Akses Ditolak: Hanya Admin yang bisa menghapus data server.' });
+    }
+    // ==========================================
 
     const drive = getDriveClient();
-    await drive.files.update({
-      fileId: folderId,
-      requestBody: { trashed: true },
-    });
 
-    return res.status(200).json({ success: true });
+    // SKENARIO 1: Jalur Cepat (Punya folderId dari kodingan baru Claude)
+    if (folderId) {
+      await drive.files.update({
+        fileId: folderId,
+        requestBody: { trashed: true },
+      });
+      return res.status(200).json({ success: true, method: 'direct_folder' });
+    }
+
+    // SKENARIO 2: Jalur Lambat (Data lama yang ga punya folderId)
+    if (sessionId) {
+      const q = `name='data-inspeksi.json' and mimeType='text/plain' and trashed=false`;
+      const listRes = await drive.files.list({ q, fields: 'files(id, parents)', spaces: 'drive' });
+
+      for (const file of listRes.data.files ?? []) {
+        try {
+          const contentRes = await drive.files.get(
+            { fileId: file.id!, alt: 'media' },
+            { responseType: 'text' }
+          );
+          const parsed = JSON.parse(contentRes.data as string);
+
+          if (parsed.id === sessionId) {
+            const parentId = file.parents?.[0];
+            if (parentId) {
+              await drive.files.update({ fileId: parentId, requestBody: { trashed: true } });
+            }
+            await drive.files.update({ fileId: file.id!, requestBody: { trashed: true } });
+            return res.status(200).json({ success: true, method: 'search_session' });
+          }
+        } catch (e) {
+          console.warn('Gagal baca file saat pencarian delete:', e);
+        }
+      }
+      return res.status(200).json({ success: true, message: 'Sudah tidak ada di Drive' });
+    }
+
+    return res.status(400).json({ error: 'Butuh folderId atau sessionId' });
+
   } catch (err: any) {
     console.error('[api/delete-inspection] Error:', err.message);
     return res.status(500).json({ error: err.message || 'Gagal hapus folder' });
@@ -128,11 +170,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
 // api/sync-templates.ts
 // FIXED: Ganti Service Account → OAuth Refresh Token
+// FIXED: Tambah logika Tombstone (Anti-Zombie) dan Gembok Admin biar sinkronisasi aman.
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { google } from 'googleapis';
 import { Readable } from 'stream';
 
+// ─── Konstanta ────────────────────────────────────────────────────────────────
+const ADMIN_EMAIL = 'zulfanrafly03@gmail.com';
+const TEMPLATES_FILENAME = '_sync_templates.json';
+
+// ─── Helper: Google Auth ──────────────────────────────────────────────────────
 function getDriveClient() {
   const clientId = process.env.VITE_GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
@@ -151,23 +199,17 @@ function getDriveClient() {
   return google.drive({ version: 'v3', auth: oauth2Client });
 }
 
-async function findFile(
-  drive: ReturnType<typeof google.drive>,
-  name: string,
-  parentId: string
-): Promise<string | null> {
-  const q = `name='${name}' and '${parentId}' in parents and trashed=false`;
-  const res = await drive.files.list({ q, fields: 'files(id)', spaces: 'drive' });
-  return res.data.files?.[0]?.id ?? null;
-}
-
+// ─── Helper: Cari File & Folder ─────────────────────────────────────────────
 async function getOrCreateFolder(
   drive: ReturnType<typeof google.drive>,
   name: string
 ): Promise<string> {
   const q = `name='${name}' and mimeType='application/vnd.google-apps.folder' and 'root' in parents and trashed=false`;
   const res = await drive.files.list({ q, fields: 'files(id)', spaces: 'drive' });
-  if (res.data.files?.[0]?.id) return res.data.files[0].id;
+  
+  // FIX TS ERROR (Mencegah error 'Object possibly undefined' dari Vercel)
+  const existingId = res.data.files?.[0]?.id;
+  if (existingId) return existingId;
 
   const created = await drive.files.create({
     requestBody: { name, mimeType: 'application/vnd.google-apps.folder' },
@@ -176,31 +218,16 @@ async function getOrCreateFolder(
   return created.data.id!;
 }
 
-async function upsertTextFile(
+async function findTemplatesFile(
   drive: ReturnType<typeof google.drive>,
-  name: string,
-  content: string,
   parentId: string
-): Promise<void> {
-  const existingId = await findFile(drive, name, parentId);
-  const stream = Readable.from([content]);
-  const media = { mimeType: 'text/plain', body: stream };
-
-  if (existingId) {
-    await drive.files.update({
-      fileId: existingId,
-      requestBody: { name, mimeType: 'text/plain' },
-      media,
-    });
-  } else {
-    await drive.files.create({
-      requestBody: { name, mimeType: 'text/plain', parents: [parentId] },
-      media,
-      fields: 'id',
-    });
-  }
+): Promise<string | null> {
+  const q = `name='${TEMPLATES_FILENAME}' and '${parentId}' in parents and trashed=false`;
+  const res = await drive.files.list({ q, fields: 'files(id)', spaces: 'drive' });
+  return res.data.files?.[0]?.id ?? null;
 }
 
+// ─── Main Handler ─────────────────────────────────────────────────────────────
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -212,10 +239,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const drive = getDriveClient();
     const rootFolderId = await getOrCreateFolder(drive, 'Aksara Inspect');
 
+    // ════════════════════════════════════════════════════════
+    // GET — PULL: Semua device boleh ambil
+    // ════════════════════════════════════════════════════════
     if (req.method === 'GET') {
-      const fileId = await findFile(drive, '_sync_templates.json', rootFolderId);
+      const fileId = await findTemplatesFile(drive, rootFolderId);
       if (!fileId) {
-        return res.status(200).json({ clients: [], version: 0, exportedAt: null });
+        return res.status(200).json({ client_templates: [], unit_templates: [] });
       }
       const contentRes = await drive.files.get(
         { fileId, alt: 'media' },
@@ -224,17 +254,48 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json(JSON.parse(contentRes.data as string));
     }
 
+    // ════════════════════════════════════════════════════════
+    // POST — PUSH: HANYA ADMIN
+    // ════════════════════════════════════════════════════════
     if (req.method === 'POST') {
-      if (!req.body?.clients) {
-        return res.status(400).json({ error: 'Payload tidak valid: clients wajib ada' });
+      // 🔒 Gembok Admin
+      const requestingEmail = req.body?.adminEmail || req.headers['x-admin-email'];
+      if (requestingEmail !== ADMIN_EMAIL) {
+        return res.status(403).json({ error: 'Akses ditolak. Hanya Admin yang dapat mengubah data template.' });
       }
-      await upsertTextFile(
-        drive,
-        '_sync_templates.json',
-        JSON.stringify(req.body, null, 2),
-        rootFolderId
-      );
-      return res.status(200).json({ success: true });
+
+      if (!req.body?.client_templates && !req.body?.unit_templates) {
+        return res.status(400).json({ error: 'Payload tidak valid: harus mengirim client_templates atau unit_templates' });
+      }
+
+      // Gabungkan Data
+      const updatedData = {
+        client_templates: req.body.client_templates || [],
+        unit_templates: req.body.unit_templates || [],
+        lastModifiedBy: ADMIN_EMAIL,
+        lastModifiedAt: new Date().toISOString(),
+      };
+
+      const existingId = await findTemplatesFile(drive, rootFolderId);
+      const content = JSON.stringify(updatedData, null, 2);
+      const stream = Readable.from([content]);
+      const media = { mimeType: 'application/json', body: stream };
+
+      if (existingId) {
+        await drive.files.update({
+          fileId: existingId,
+          requestBody: { name: TEMPLATES_FILENAME, mimeType: 'application/json' },
+          media,
+        });
+      } else {
+        await drive.files.create({
+          requestBody: { name: TEMPLATES_FILENAME, mimeType: 'application/json', parents: [rootFolderId] },
+          media,
+          fields: 'id',
+        });
+      }
+
+      return res.status(200).json({ success: true, message: 'Templates berhasil disinkronkan' });
     }
 
     return res.status(405).json({ error: 'Method not allowed' });
@@ -246,35 +307,140 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 }
 
 // ==========================================
-// FILE: api\upload.ts
+// FILE: api\upload-photo.ts
 // ==========================================
 
-// api/upload.ts
-// FIXED: Ganti Service Account → OAuth Refresh Token dari akun owner
-// Semua upload masuk ke Google Drive zulfanrafly03@gmail.com langsung
+// api/upload-photo.ts
+// TUGAS: Menerima 1 foto, memberi nomor urut otomatis (Smart Append), dan menyimpannya ke Drive.
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { google } from 'googleapis';
 import { Readable } from 'stream';
 
-interface PhotoPayload {
-  name: string;
-  dataUrl: string;
+// ─── AUTHENTICATION ──────────────────────────────────
+function getDriveClient() {
+  const clientId = process.env.VITE_GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
+
+  if (!clientId || !clientSecret || !refreshToken) {
+    throw new Error('ENV tidak lengkap');
+  }
+
+  const oauth2Client = new google.auth.OAuth2(
+    clientId,
+    clientSecret,
+    'https://developers.google.com/oauthplayground'
+  );
+  oauth2Client.setCredentials({ refresh_token: refreshToken });
+
+  return google.drive({ version: 'v3', auth: oauth2Client });
 }
 
-interface UploadPayload {
-  session: {
-    id: string;
-    clientName: string;
-    objectType: string;
-    createdAt: string;
-    updatedAt: string | null;
-    unitData: Record<string, string>;
-    inspectorEmail?: string;
-  };
-  photos: PhotoPayload[];
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+// FIX TS ERROR: Menghapus variabel `mimeType` yang nganggur biar Vercel nggak ngamuk.
+function base64ToStream(base64: string): Readable {
+  const base64Data = base64.includes(',') ? base64.split(',')[1] : base64;
+  const buffer = Buffer.from(base64Data, 'base64');
+  return Readable.from(buffer);
 }
 
+// Hitung foto yang udah ada biar nomor urutnya pinter (Smart Append)
+async function countExistingPhotos(
+  drive: ReturnType<typeof google.drive>,
+  parentId: string
+): Promise<number> {
+  const q = `'${parentId}' in parents and mimeType != 'application/vnd.google-apps.folder' and name != 'data-inspeksi.json' and trashed=false`;
+  const res = await drive.files.list({ q, fields: 'files(id)', spaces: 'drive', pageSize: 1000 });
+  return res.data.files?.length ?? 0;
+}
+
+// ─── MAIN HANDLER ─────────────────────────────────────────────────────────────
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  try {
+    const { folderId, photoBase64, photoIndex } = req.body;
+
+    if (!folderId || !photoBase64) {
+      return res.status(400).json({ error: 'folderId dan photoBase64 wajib diisi' });
+    }
+
+    // PENGAMAN 413: Pastikan ukuran base64 nggak lebih dari 4MB (Batas aman Vercel)
+    const estimatedSizeBytes = (photoBase64.length * 3) / 4;
+    const maxSizeBytes = 4 * 1024 * 1024; // 4MB
+    if (estimatedSizeBytes > maxSizeBytes) {
+      return res.status(413).json({
+        error: `Ukuran foto terlalu besar. Maksimal 4MB per foto.`,
+        photoIndex,
+      });
+    }
+
+    const drive = getDriveClient();
+
+    // Deteksi tipe file
+    const matches = photoBase64.match(/^data:(.+);base64,/);
+    const mimeType = matches ? matches[1] : 'image/jpeg';
+    const extension = mimeType.split('/')[1] === 'png' ? 'png' : 'jpg';
+
+    // SMART APPEND: Cek isi Drive sekarang
+    const existingCount = await countExistingPhotos(drive, folderId);
+    
+    // Bikin nomor urut (Contoh: foto-004.jpg, foto-005.jpg)
+    const photoNumber = existingCount + 1;
+    const paddedNum = String(photoNumber).padStart(3, '0');
+    const photoName = `foto-${paddedNum}.${extension}`;
+
+    // Eksekusi Upload
+    const uploadedFile = await drive.files.create({
+      requestBody: {
+        name: photoName,
+        parents: [folderId],
+      },
+      media: {
+        mimeType,
+        body: base64ToStream(photoBase64), // FIX TS: Cukup panggil 1 parameter
+      },
+      fields: 'id, name',
+    });
+
+    return res.status(200).json({
+      success: true,
+      photoIndex,
+      fileId: uploadedFile.data.id,
+      fileName: uploadedFile.data.name,
+      message: `Berhasil upload ${photoName}`
+    });
+
+  } catch (error: any) {
+    console.error(`[upload-photo] Error foto index ${req.body?.photoIndex}:`, error.message);
+    return res.status(500).json({
+      error: 'Gagal upload foto',
+      detail: error.message,
+      photoIndex: req.body?.photoIndex,
+    });
+  }
+}
+
+// ==========================================
+// FILE: api\upload.ts
+// ==========================================
+
+// api/upload.ts
+// VERSI BARU (SMART APPEND PHASE 1)
+// Tugas file ini HANYA membuat folder dan file JSON. 
+// Foto TIDAK lagi di-upload di sini untuk mencegah Error 413 Payload Too Large.
+
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { google } from 'googleapis';
+import { Readable } from 'stream';
+
+// ─── AUTHENTICATION (Tetap pakai OAuth lo, bukan Service Account) ────────────
 function getDriveClient() {
   const clientId = process.env.VITE_GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
@@ -297,6 +463,7 @@ function getDriveClient() {
   return google.drive({ version: 'v3', auth: oauth2Client });
 }
 
+// ─── FOLDER & FILE HELPERS ───────────────────────────────────────────────────
 async function findFolder(
   drive: ReturnType<typeof google.drive>,
   name: string,
@@ -336,51 +503,24 @@ async function upsertTextFile(
   const listRes = await drive.files.list({ q, fields: 'files(id)', spaces: 'drive' });
   const existingId = listRes.data.files?.[0]?.id;
   const stream = Readable.from([content]);
-  const media = { mimeType: 'text/plain', body: stream };
+  const media = { mimeType: 'application/json', body: stream };
 
   if (existingId) {
     await drive.files.update({
       fileId: existingId,
-      requestBody: { name, mimeType: 'text/plain' },
+      requestBody: { name, mimeType: 'application/json' },
       media,
     });
   } else {
     await drive.files.create({
-      requestBody: { name, mimeType: 'text/plain', parents: [parentId] },
+      requestBody: { name, mimeType: 'application/json', parents: [parentId] },
       media,
       fields: 'id',
     });
   }
 }
 
-// Hitung jumlah foto existing di folder Drive (exclude JSON dan folder)
-async function countExistingPhotos(
-  drive: ReturnType<typeof google.drive>,
-  parentId: string
-): Promise<number> {
-  const q = `'${parentId}' in parents and mimeType != 'application/vnd.google-apps.folder' and name != 'data-inspeksi.json' and trashed=false`;
-  const res = await drive.files.list({ q, fields: 'files(id)', spaces: 'drive', pageSize: 1000 });
-  return res.data.files?.length ?? 0;
-}
-
-async function uploadPhoto(
-  drive: ReturnType<typeof google.drive>,
-  name: string,
-  dataUrl: string,
-  parentId: string
-): Promise<void> {
-  const matches = dataUrl.match(/^data:(.+);base64,(.+)$/);
-  if (!matches) throw new Error(`DataUrl tidak valid untuk foto ${name}`);
-  const mimeType = matches[1];
-  const buffer = Buffer.from(matches[2], 'base64');
-  const stream = Readable.from(buffer);
-  await drive.files.create({
-    requestBody: { name, mimeType, parents: [parentId] },
-    media: { mimeType, body: stream },
-    fields: 'id',
-  });
-}
-
+// ─── MAIN HANDLER ─────────────────────────────────────────────────────────────
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -390,15 +530,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
-    const payload = req.body as UploadPayload;
-    if (!payload?.session?.id) {
-      return res.status(400).json({ error: 'Payload tidak valid: session.id wajib ada' });
+    // Terima data dari format baru (inspectionData) atau format lama (session)
+    const session = req.body.inspectionData || req.body.session;
+
+    if (!session?.id) {
+      return res.status(400).json({ error: 'Payload tidak valid: data inspeksi wajib ada' });
     }
 
     const drive = getDriveClient();
-    const { session, photos } = payload;
 
-    // Struktur folder: Aksara Inspect / [Klien] / [YYYY-MM-DD] / [Jenis] / [Unit-NoSeri]
+    // 1. Bikin/Cari Struktur Folder (Sama persis kayak logika lo yang udah bener)
     const rootFolderId = await getOrCreateFolder(drive, 'Aksara Inspect', null);
     const clientFolderId = await getOrCreateFolder(drive, session.clientName, rootFolderId);
     const dateStr = new Date(session.createdAt).toISOString().slice(0, 10);
@@ -407,7 +548,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const unitFolderName = `${session.unitData?.namaUnit || 'Unit'} - ${session.unitData?.nomorSeri || 'NoSeri'}`;
     const unitFolderId = await getOrCreateFolder(drive, unitFolderName, typeFolderId);
 
-    // Upload JSON
+    // 2. Upload JSON Metadata
     const dataPayload = JSON.stringify({
       id: session.id,
       clientName: session.clientName,
@@ -415,29 +556,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       createdAt: session.createdAt,
       updatedAt: session.updatedAt,
       unitData: session.unitData,
-      totalPhotos: photos.length,
+      totalPhotos: session.totalPhotos || 0, // Info dari frontend
       inspectorEmail: session.inspectorEmail ?? null,
     }, null, 2);
+    
     await upsertTextFile(drive, 'data-inspeksi.json', dataPayload, unitFolderId);
 
-    // FIXED: Lanjutkan penomoran dari foto terakhir di Drive
-    // Tidak hapus foto lama — setiap device hanya menambah foto baru
-    const existingCount = await countExistingPhotos(drive, unitFolderId);
-    for (let i = 0; i < photos.length; i++) {
-      const photoNumber = existingCount + i + 1;
-      const paddedNum = String(photoNumber).padStart(3, '0');
-      const photoName = `foto-${paddedNum}.jpg`;
-      await uploadPhoto(drive, photoName, photos[i].dataUrl, unitFolderId);
-    }
-
+    // 3. SELESAI. Cuma balikin folderId buat dipake sama fungsi upload foto
     return res.status(200).json({
       success: true,
       folderId: unitFolderId,
-      message: `Upload selesai: ${photos.length} foto`,
+      message: 'Folder dan metadata JSON berhasil dibuat',
     });
 
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Upload gagal';
+    const message = err instanceof Error ? err.message : 'Upload meta gagal';
     console.error('[api/upload] Error:', message);
     return res.status(500).json({ error: message });
   }
@@ -536,7 +669,7 @@ define(['./workbox-cc1d1889'], (function (workbox) { 'use strict';
     "revision": "3ca0b8505b4bec776b69afdba2768812"
   }, {
     "url": "/index.html",
-    "revision": "0.vsua1oklkro"
+    "revision": "0.bjl3vhfh2ug"
   }], {});
   workbox.cleanupOutdatedCaches();
   workbox.registerRoute(new workbox.NavigationRoute(workbox.createHandlerBoundToURL("/index.html"), {
@@ -5636,9 +5769,10 @@ async function compressPhoto(dataUrl: string): Promise<string> {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
-      const MAX_SIZE_BYTES = 1 * 1024 * 1024;
-      const MAX_DIMENSION = 1920;
+      // 1. Turunin batas maksimal ke 1080px (Resolusi ideal & tajam buat laporan PDF)
+      const MAX_DIMENSION = 1080;
       let { width, height } = img;
+      
       if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
         if (width > height) {
           height = Math.round((height * MAX_DIMENSION) / width);
@@ -5648,20 +5782,21 @@ async function compressPhoto(dataUrl: string): Promise<string> {
           height = MAX_DIMENSION;
         }
       }
+      
       const canvas = document.createElement('canvas');
       canvas.width = width;
       canvas.height = height;
       const ctx = canvas.getContext('2d');
+      
       if (!ctx) { resolve(dataUrl); return; }
       ctx.drawImage(img, 0, 0, width, height);
-      let quality = 0.8;
-      let result = canvas.toDataURL('image/jpeg', quality);
-      while (result.length * 0.75 > MAX_SIZE_BYTES && quality > 0.3) {
-        quality -= 0.1;
-        result = canvas.toDataURL('image/jpeg', quality);
-      }
+      
+      // 2. Hapus looping (while) yang bikin HP kerja paksa.
+      // Langsung tembak quality 0.6. Ini sweet spot: file super kecil, visual tetap jelas!
+      const result = canvas.toDataURL('image/jpeg', 0.6);
       resolve(result);
     };
+    
     img.onerror = () => resolve(dataUrl);
     img.src = dataUrl;
   });
@@ -5950,6 +6085,23 @@ export default function App() {
     setAutoSync(val);
     localStorage.setItem('aksara_auto_sync', String(val));
   };
+  
+  // 🔄 AUTO-REFRESH & SELF CLEANING SAAT MASUK TAB RIWAYAT
+  useEffect(() => {
+    if (view === 'HISTORY' && isOnline) {
+      console.log('[Auto-Sync] User masuk tab Riwayat, menjalankan pembersihan di background...');
+      
+      pullInspectionsFromDrive()
+        .then(() => {
+          // Setelah laci lokal dibersihkan oleh syncService, 
+          // paksa layar buat nge-refresh datanya biar instan berubah
+          refreshData(); 
+        })
+        .catch((err) => {
+          console.warn('[Auto-Sync] Gagal melakukan background cleanup:', err);
+        });
+    }
+  }, [view, isOnline]); // Akan memicu setiap kali tab berubah atau internet kembali online
 
   // ── Form helpers ───────────────────────────────────────────────────────────
 
@@ -6213,30 +6365,41 @@ export default function App() {
     }
   };
 
-const handleDelete = async (id: string) => {
+  const handleDelete = async (id: string) => {
     if (!confirm('Hapus data ini? Tindakan tidak bisa dibatalkan.')) return;
 
     const session = await SessionRepository.getById(id);
     if (!session) return;
 
-    if (session.status === 'synced' && session.driveFolderId) {
+    // 🔥 LANGSUNG HILANGIN DARI LAYAR (Optimistic UI)
+    // Biar user ngerasa hapusnya instan tanpa nunggu internet selesai
+    setHistory(prev => prev.filter(item => item.id !== id));
+
+    if (session.status === 'synced') {
       try {
         const apiBase = getApiBaseUrl();
         const res = await fetch(`${apiBase}/api/delete-inspection`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ folderId: session.driveFolderId }),
+          body: JSON.stringify({ 
+            folderId: session.driveFolderId,
+            sessionId: session.id,
+            userEmail: currentUserEmail 
+          }),
         });
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
           throw new Error(err?.error || `HTTP ${res.status}`);
         }
       } catch (err: any) {
-        alert(`⚠️ Gagal hapus dari Drive: ${err.message}\nData lokal tidak dihapus.`);
+        alert(`⚠️ Gagal hapus dari Drive: ${err.message}\nData dikembalikan ke menu.`);
+        // 🔄 ROLLBACK: Kalau gagal hapus di cloud, tampilin lagi datanya di HP
+        await refreshData(); 
         return;
       }
     }
 
+    // Kalau cloud sukses (atau data emang masih draft), baru hapus permanen di DB HP
     await SessionRepository.delete(id);
     await refreshData();
   };
@@ -6400,6 +6563,7 @@ const handleDelete = async (id: string) => {
             history={history} onEdit={handleEdit} onDelete={handleDelete}
             onReSync={handleReSyncFromHistory} isAuthenticated={isAuthenticated}
             isOnline={isOnline} uploadingId={uploadingId} uploadProgress={uploadProgress}
+            currentUserEmail={currentUserEmail} // TAMBAHKAN BARIS INI
           />
         )}
 
@@ -8388,6 +8552,7 @@ interface HistoryViewProps {
   isOnline: boolean;
   uploadingId: string | null;
   uploadProgress: UploadProgress | null;
+  currentUserEmail: string;
 }
 
 export function HistoryView({
@@ -8396,6 +8561,7 @@ export function HistoryView({
   onDelete,
   uploadingId,
   uploadProgress,
+  currentUserEmail,
 }: HistoryViewProps) {
   return (
     <div className="space-y-4">
@@ -8422,6 +8588,7 @@ export function HistoryView({
               onDelete={onDelete}
               isUploading={uploadingId === item.id}
               progress={uploadingId === item.id ? uploadProgress : null}
+              currentUserEmail={currentUserEmail} // TAMBAHKAN INI
             />
           ))}
         </div>
@@ -8436,12 +8603,14 @@ function HistoryCard({
   onDelete,
   isUploading,
   progress,
+  currentUserEmail,
 }: {
   item: SessionWithPhotos;
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
   isUploading: boolean;
   progress: UploadProgress | null;
+  currentUserEmail: string;
 }) {
   const meta = OBJECT_TYPES.find((o) => o.key === item.objectType);
   const dateStr = formatDate(item.updatedAt || item.createdAt);
@@ -8476,12 +8645,14 @@ function HistoryCard({
           </div>
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0">
-          <button
-            onClick={() => onDelete(item.id)}
-            disabled={isUploading}
-            className="w-7 h-7 rounded-lg bg-red-50 text-red-500 hover:bg-red-100 flex items-center justify-center border border-red-100 transition-all text-sm disabled:opacity-40"
-            title="Hapus"
-          >🗑️</button>
+          {currentUserEmail === 'zulfanrafly03@gmail.com' && (
+            <button
+              onClick={() => onDelete(item.id)}
+              disabled={isUploading}
+              className="w-7 h-7 rounded-lg bg-red-50 text-red-500 hover:bg-red-100 flex items-center justify-center border border-red-100 transition-all text-sm disabled:opacity-40"
+              title="Hapus"
+            >🗑️</button>
+          )}
         </div>
       </div>
 
@@ -8585,6 +8756,60 @@ function Spinner() {
 // src/components/InspectionForm.tsx
 import { useState, useRef } from 'react';
 
+// ==========================================
+// MESIN KOMPRESOR FOTO (1080px, Kualitas 60%)
+// Merubah foto 5MB jadi ~150KB dalam 0.5 detik
+// ==========================================
+const compressImage = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target?.result as string;
+      
+      img.onload = () => {
+        const MAX_WIDTH = 1080;
+        const MAX_HEIGHT = 1080;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > MAX_WIDTH) {
+            height *= MAX_WIDTH / width;
+            width = MAX_WIDTH;
+          }
+        } else {
+          if (height > MAX_HEIGHT) {
+            width *= MAX_HEIGHT / height;
+            height = MAX_HEIGHT;
+          }
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        
+        if (!ctx) { 
+          resolve(event.target?.result as string); // Fallback kalau gagal
+          return; 
+        }
+
+        ctx.drawImage(img, 0, 0, width, height);
+        // PRES JADI JPEG 60%
+        resolve(canvas.toDataURL('image/jpeg', 0.6));
+      };
+      img.onerror = () => reject(new Error('Gagal memproses gambar'));
+    };
+    reader.onerror = () => reject(new Error('Gagal membaca file'));
+  });
+};
+
+// ==========================================
+// KOMPONEN UTAMA
+// ==========================================
 interface FormProps {
   activeObject: string;
   activeClient: any;
@@ -8595,14 +8820,28 @@ interface FormProps {
 export default function InspectionForm({ activeObject, activeClient, onSave, templateFields }: FormProps) {
   const [formData, setFormData] = useState<Record<string, any>>({});
   const [photos, setPhotos] = useState<string[]>([]);
+  const [isCompressing, setIsCompressing] = useState(false); // State biar tombol ganti tulisan pas loading
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleCapturePhoto = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleCapturePhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onloadend = () => setPhotos(prev => [...prev, reader.result as string]);
-    reader.readAsDataURL(file);
+
+    try {
+      setIsCompressing(true); // Tampilkan tulisan "Memproses..."
+      
+      // Masukin ke mesin kompresor dulu
+      const compressedBase64 = await compressImage(file);
+      
+      // Simpan hasil kompresan yang udah kecil ke state
+      setPhotos(prev => [...prev, compressedBase64]);
+    } catch (error) {
+      console.error("Gagal kompres foto:", error);
+      alert("Gagal memproses foto, silakan coba lagi.");
+    } finally {
+      setIsCompressing(false); // Balikin tombol ke semula
+      if (fileInputRef.current) fileInputRef.current.value = ''; // Reset memori input kamera
+    }
   };
 
   return (
@@ -8638,8 +8877,14 @@ export default function InspectionForm({ activeObject, activeClient, onSave, tem
 
       {/* Kamera */}
       <input type="file" accept="image/*" capture="environment" ref={fileInputRef} onChange={handleCapturePhoto} className="hidden" />
-      <button type="button" onClick={() => fileInputRef.current?.click()} className="w-full border-2 border-dashed border-[#10B981]/50 py-4 rounded-xl font-bold text-sm text-[#064E3B] hover:bg-[#10B981]/10">
-        Tap Untuk Buka Kamera ({photos.length} Foto)
+      
+      <button 
+        type="button" 
+        onClick={() => fileInputRef.current?.click()} 
+        disabled={isCompressing}
+        className="w-full border-2 border-dashed border-[#10B981]/50 py-4 rounded-xl font-bold text-sm text-[#064E3B] hover:bg-[#10B981]/10 disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        {isCompressing ? 'Memproses Foto (Mohon Tunggu)...' : `Tap Untuk Buka Kamera (${photos.length} Foto)`}
       </button>
 
       <button type="submit" className="w-full bg-[#1F2937] text-white py-4 rounded-xl font-bold text-sm shadow-lg">Simpan Draft Offline</button>
@@ -9053,15 +9298,14 @@ export function getApiBaseUrl(): string {
 // ==========================================
 
 // src/db/db.ts
-// Schema v5: inspection_sessions, inspection_photos, client_templates, unit_templates, user_roles
-// RoleRepository dipertahankan — dipakai App.tsx untuk seedIfEmpty (kosmetik badge saja)
-// TIDAK ada permission/guard check berbasis role — role hanya untuk display badge
-
 import Dexie, { Table } from 'dexie';
 
-// ==========================================
-// INTERFACES
-// ==========================================
+export type UploadStatus =
+  | 'pending_upload'
+  | 'uploading_meta'
+  | 'uploading_photos'
+  | 'fully_synced'
+  | 'partial_failed';
 
 export interface InspectionSession {
   id: string;
@@ -9074,7 +9318,9 @@ export interface InspectionSession {
   templateClientId?: string;
   templateUnitId?: string;
   inspectorEmail?: string;
-    driveFolderId?: string; // NEW: untuk delete dari Drive
+  driveFolderId?: string;
+  uploadStatus?: UploadStatus;
+  photosUploaded?: number;
 }
 
 export interface InspectionPhoto {
@@ -9093,6 +9339,8 @@ export interface ClientTemplate {
   createdAt: number;
   updatedAt?: number;
   createdBy: string;
+  deleted?: boolean;
+  deletedAt?: string;
 }
 
 export interface UnitTemplate {
@@ -9105,19 +9353,17 @@ export interface UnitTemplate {
   createdAt: number;
   updatedAt?: number;
   createdBy: string;
+  deleted?: boolean;
+  deletedAt?: string;
 }
 
 export interface UserRole {
-  id: string;       // email user (primary key)
+  id: string;
   role: 'admin' | 'ahli';
   name: string;
   addedBy: string;
   createdAt: number;
 }
-
-// ==========================================
-// DATABASE CLASS
-// ==========================================
 
 export class MyDatabase extends Dexie {
   inspection_sessions!: Table<InspectionSession>;
@@ -9128,24 +9374,17 @@ export class MyDatabase extends Dexie {
 
   constructor() {
     super('AksaraDB');
-
-    // v4 = schema lama, tetap ada agar upgrade dari versi lama aman
     this.version(4).stores({
       inspection_sessions: 'id, clientName, status, createdAt',
       inspection_photos: 'id, sessionId, createdAt',
     });
-
-    // v5 = tambah tabel client_templates, unit_templates, user_roles
     this.version(5).stores({
       inspection_sessions: 'id, clientName, status, createdAt, templateClientId, inspectorEmail',
       inspection_photos: 'id, sessionId, createdAt',
       client_templates: 'id, name, createdAt, createdBy',
       unit_templates: 'id, clientId, objectType, createdAt, createdBy',
       user_roles: 'id, role, createdAt',
-    }).upgrade(async (_trans) => {
-      console.log('[DB] Migrating to v5: adding client_templates, unit_templates, user_roles');
     });
-
     this.version(6).stores({
       inspection_sessions: 'id, clientName, status, createdAt, templateClientId, inspectorEmail, driveFolderId',
       inspection_photos: 'id, sessionId, createdAt',
@@ -9153,256 +9392,151 @@ export class MyDatabase extends Dexie {
       unit_templates: 'id, clientId, objectType, createdAt, createdBy',
       user_roles: 'id, role, createdAt',
     });
+    this.version(7).stores({
+      inspection_sessions: 'id, clientName, status, createdAt, templateClientId, inspectorEmail, driveFolderId, uploadStatus',
+      inspection_photos: 'id, sessionId, createdAt',
+      client_templates: 'id, name, createdAt, createdBy, deleted',
+      unit_templates: 'id, clientId, objectType, createdAt, createdBy, deleted',
+      user_roles: 'id, role, createdAt',
+    });
   }
 }
 
 export const db = new MyDatabase();
 
-// ==========================================
-// REPOSITORY — SESSION
-// ==========================================
-
 export const SessionRepository = {
   getDrafts: async () => {
-    const sessions = await db.inspection_sessions
-      .where('status').equals('draft').toArray();
-    return Promise.all(
-      sessions.map(async (s) => ({
-        ...s,
-        photos: await db.inspection_photos
-          .where('sessionId').equals(s.id).toArray(),
-      }))
-    );
+    const sessions = await db.inspection_sessions.where('status').equals('draft').toArray();
+    return Promise.all(sessions.map(async (s) => ({
+      ...s,
+      photos: await db.inspection_photos.where('sessionId').equals(s.id).toArray(),
+    })));
   },
-
   getHistory: async () => {
-    const sessions = await db.inspection_sessions
-      .where('status').equals('synced').toArray();
-    return Promise.all(
-      sessions.map(async (s) => ({
-        ...s,
-        photos: await db.inspection_photos
-          .where('sessionId').equals(s.id).toArray(),
-      }))
-    );
+    const sessions = await db.inspection_sessions.where('status').equals('synced').toArray();
+    return Promise.all(sessions.map(async (s) => ({
+      ...s,
+      photos: await db.inspection_photos.where('sessionId').equals(s.id).toArray(),
+    })));
   },
-
   getClientNames: async () => {
     const sessions = await db.inspection_sessions.toArray();
     return Array.from(new Set(sessions.map((s) => s.clientName)));
   },
-
   getById: async (id: string) => {
     const session = await db.inspection_sessions.get(id);
     if (!session) return null;
-    const photos = await db.inspection_photos
-      .where('sessionId').equals(id).toArray();
+    const photos = await db.inspection_photos.where('sessionId').equals(id).toArray();
     return { ...session, photos };
   },
-
-  create: async (
-    data: Omit<InspectionSession, 'id' | 'createdAt'>,
-    photos: string[]
-  ) => {
+  create: async (data: Omit<InspectionSession, 'id' | 'createdAt'>, photos: string[]) => {
     const id = crypto.randomUUID();
-    await db.inspection_sessions.add({ ...data, id, createdAt: Date.now() });
+    await db.inspection_sessions.add({ ...data, id, createdAt: Date.now(), uploadStatus: 'pending_upload', photosUploaded: 0 });
     for (const dataUrl of photos) {
-      await db.inspection_photos.add({
-        id: crypto.randomUUID(),
-        sessionId: id,
-        dataUrl,
-        createdAt: Date.now(),
-      });
+      await db.inspection_photos.add({ id: crypto.randomUUID(), sessionId: id, dataUrl, createdAt: Date.now() });
     }
     return id;
   },
-
-  update: async (
-    id: string,
-    data: Partial<InspectionSession>,
-    newPhotos: string[],
-    deletedPhotoIds: string[]
-  ) => {
-    await db.inspection_sessions.update(id, { ...data, updatedAt: Date.now() });
-    for (const photoId of deletedPhotoIds) {
-      await db.inspection_photos.delete(photoId);
-    }
+  update: async (id: string, data: Partial<InspectionSession>, newPhotos: string[], deletedPhotoIds: string[]) => {
+    await db.inspection_sessions.update(id, { ...data, updatedAt: Date.now(), uploadStatus: 'pending_upload', photosUploaded: 0 });
+    for (const photoId of deletedPhotoIds) { await db.inspection_photos.delete(photoId); }
     for (const dataUrl of newPhotos) {
-      await db.inspection_photos.add({
-        id: crypto.randomUUID(),
-        sessionId: id,
-        dataUrl,
-        createdAt: Date.now(),
-      });
+      await db.inspection_photos.add({ id: crypto.randomUUID(), sessionId: id, dataUrl, createdAt: Date.now() });
     }
   },
-
   markSynced: async (id: string, driveFolderId?: string) => {
-    await db.inspection_sessions.update(id, {
-      status: 'synced',
-      updatedAt: Date.now(),
-      ...(driveFolderId ? { driveFolderId } : {}),
-    });
+    await db.inspection_sessions.update(id, { status: 'synced', uploadStatus: 'fully_synced', updatedAt: Date.now(), ...(driveFolderId ? { driveFolderId } : {}) });
   },
-
   delete: async (id: string) => {
     await db.inspection_sessions.delete(id);
     await db.inspection_photos.where('sessionId').equals(id).delete();
   },
 };
 
-// ==========================================
-// REPOSITORY — CLIENT TEMPLATES
-// ==========================================
-
 export const ClientRepository = {
   getAll: async (): Promise<ClientTemplate[]> => {
-    return db.client_templates.orderBy('name').toArray();
+    // FIX: Ambil semua dulu, baru filter manual. Data lama yang gak punya field 'deleted' bakal aman dan muncul!
+    const all = await db.client_templates.toArray();
+    return all.filter(c => c.deleted !== true).sort((a, b) => a.name.localeCompare(b.name));
   },
-
   search: async (query: string): Promise<ClientTemplate[]> => {
     const q = query.toLowerCase().trim();
-    if (!q) return ClientRepository.getAll();
-    const all = await db.client_templates.orderBy('name').toArray();
+    const all = await ClientRepository.getAll();
+    if (!q) return all;
     return all.filter((c) => c.name.toLowerCase().includes(q));
   },
-
   getById: async (id: string): Promise<ClientTemplate | undefined> => {
-    return db.client_templates.get(id);
+    const client = await db.client_templates.get(id);
+    if (client && client.deleted === true) return undefined;
+    return client;
   },
-
   create: async (data: Omit<ClientTemplate, 'id' | 'createdAt'>) => {
     const id = crypto.randomUUID();
-    await db.client_templates.add({ ...data, id, createdAt: Date.now() });
+    await db.client_templates.add({ ...data, id, createdAt: Date.now(), deleted: false });
     return id;
   },
-
   update: async (id: string, data: Partial<ClientTemplate>) => {
     await db.client_templates.update(id, { ...data, updatedAt: Date.now() });
   },
-
   delete: async (id: string) => {
-    // Cascade: hapus semua unit template milik klien ini
-    const units = await db.unit_templates
-      .where('clientId').equals(id).toArray();
-    await Promise.all(units.map((u) => db.unit_templates.delete(u.id)));
-    await db.client_templates.delete(id);
+    await db.client_templates.update(id, { deleted: true, deletedAt: new Date().toISOString(), updatedAt: Date.now() });
+    const units = await db.unit_templates.where('clientId').equals(id).toArray();
+    await Promise.all(units.map(u => db.unit_templates.update(u.id, { deleted: true, deletedAt: new Date().toISOString(), updatedAt: Date.now() })));
   },
-
   getWithUnits: async (id: string) => {
-    const client = await db.client_templates.get(id);
+    const client = await ClientRepository.getById(id);
     if (!client) return null;
-    const units = await db.unit_templates
-      .where('clientId').equals(id).toArray();
+    const allUnits = await db.unit_templates.where('clientId').equals(id).toArray();
+    const units = allUnits.filter(u => u.deleted !== true);
     return { ...client, units };
   },
 };
 
-// ==========================================
-// REPOSITORY — UNIT TEMPLATES
-// ==========================================
-
 export const UnitRepository = {
   getByClient: async (clientId: string): Promise<UnitTemplate[]> => {
-    return db.unit_templates
-      .where('clientId').equals(clientId)
-      .toArray()
-      .then((units) => units.sort((a, b) => a.label.localeCompare(b.label)));
+    const all = await db.unit_templates.where('clientId').equals(clientId).toArray();
+    return all.filter(u => u.deleted !== true).sort((a, b) => a.label.localeCompare(b.label));
   },
-
-  searchByClient: async (
-    clientId: string,
-    query: string
-  ): Promise<UnitTemplate[]> => {
+  searchByClient: async (clientId: string, query: string): Promise<UnitTemplate[]> => {
     const units = await UnitRepository.getByClient(clientId);
     const q = query.toLowerCase().trim();
     if (!q) return units;
-    return units.filter(
-      (u) =>
-        u.label.toLowerCase().includes(q) ||
-        u.objectType.toLowerCase().includes(q) ||
-        (u.unitData?.nomorSeri || '').toLowerCase().includes(q)
-    );
+    return units.filter((u) => u.label.toLowerCase().includes(q) || u.objectType.toLowerCase().includes(q) || (u.unitData?.nomorSeri || '').toLowerCase().includes(q));
   },
-
   getById: async (id: string): Promise<UnitTemplate | undefined> => {
-    return db.unit_templates.get(id);
+    const unit = await db.unit_templates.get(id);
+    if (unit && unit.deleted === true) return undefined;
+    return unit;
   },
-
   create: async (data: Omit<UnitTemplate, 'id' | 'createdAt'>) => {
     const id = crypto.randomUUID();
-    await db.unit_templates.add({ ...data, id, createdAt: Date.now() });
+    await db.unit_templates.add({ ...data, id, createdAt: Date.now(), deleted: false });
     return id;
   },
-
   update: async (id: string, data: Partial<UnitTemplate>) => {
     await db.unit_templates.update(id, { ...data, updatedAt: Date.now() });
   },
-
   delete: async (id: string) => {
-    await db.unit_templates.delete(id);
+    await db.unit_templates.update(id, { deleted: true, deletedAt: new Date().toISOString(), updatedAt: Date.now() });
   },
 };
 
-// ==========================================
-// REPOSITORY — USER ROLES
-// Dipakai untuk: seedIfEmpty (insert admin pertama kali) + AdminPanel Roles tab
-// TIDAK dipakai untuk permission/guard check — semua user akses semua fitur
-// Badge "Admin"/"Ahli K3" ditentukan di App.tsx via OWNER_EMAIL env, bukan dari sini
-// ==========================================
-
 export const RoleRepository = {
-  getAll: async (): Promise<UserRole[]> => {
-    return db.user_roles.toArray();
-  },
-
-  getByEmail: async (email: string): Promise<UserRole | undefined> => {
-    return db.user_roles.get(email);
-  },
-
-  // Tidak dipakai untuk guard — hanya referensi jika AdminPanel butuh cek
+  getAll: async (): Promise<UserRole[]> => db.user_roles.toArray(),
+  getByEmail: async (email: string): Promise<UserRole | undefined> => db.user_roles.get(email),
   isAdmin: async (email: string): Promise<boolean> => {
     const role = await db.user_roles.get(email);
     return role?.role === 'admin';
   },
-
-  upsert: async (
-    email: string,
-    role: 'admin' | 'ahli',
-    name: string,
-    addedBy: string
-  ) => {
+  upsert: async (email: string, role: 'admin' | 'ahli', name: string, addedBy: string) => {
     const existing = await db.user_roles.get(email);
-    if (existing) {
-      await db.user_roles.update(email, { role, name });
-    } else {
-      await db.user_roles.add({
-        id: email,
-        role,
-        name,
-        addedBy,
-        createdAt: Date.now(),
-      });
-    }
+    if (existing) await db.user_roles.update(email, { role, name });
+    else await db.user_roles.add({ id: email, role, name, addedBy, createdAt: Date.now() });
   },
-
-  delete: async (email: string) => {
-    await db.user_roles.delete(email);
-  },
-
-  // Seed record admin awal kalau tabel masih kosong
-  // Dipanggil di App.tsx saat user pertama kali login
+  delete: async (email: string) => db.user_roles.delete(email),
   seedIfEmpty: async (ownerEmail: string, ownerName: string) => {
     const count = await db.user_roles.count();
-    if (count === 0 && ownerEmail) {
-      await db.user_roles.add({
-        id: ownerEmail,
-        role: 'admin',
-        name: ownerName || 'Owner',
-        addedBy: 'system',
-        createdAt: Date.now(),
-      });
-    }
+    if (count === 0 && ownerEmail) await db.user_roles.add({ id: ownerEmail, role: 'admin', name: ownerName || 'Owner', addedBy: 'system', createdAt: Date.now() });
   },
 };
 
@@ -9480,13 +9614,12 @@ createRoot(document.getElementById('root')!).render(
 // ==========================================
 
 // src/services/driveService.ts
-// FIXED: Upload lewat serverless api/upload.ts pakai OAuth Refresh Token
-// FIXED (PR fix): uploadToDrive sekarang punya parameter onlyNewPhotos
-//   - saat create: kirim semua session.photos
-//   - saat edit: kirim hanya foto baru (newPhotos) agar tidak duplikat di Drive
-//   - api/upload.ts sudah handle lanjut penomoran dari countExistingPhotos
+// VERSI BARU: Smart Append Orchestrator (Antrean Upload & Anti-413)
+// - Upload JSON ke api/upload (buat folder)
+// - Upload foto SATU PER SATU ke api/upload-photo (cegah limit Vercel)
+// - Bisa melanjutkan upload yang terputus (resume)
 
-import type { InspectionSession, InspectionPhoto } from '../db/db';
+import { db, type InspectionSession, type InspectionPhoto } from '../db/db';
 import { getApiBaseUrl } from '../config';
 
 export interface UploadProgress {
@@ -9499,7 +9632,7 @@ export interface UploadProgress {
 type ProgressCallback = (progress: UploadProgress) => void;
 
 // ==========================================
-// TOKEN HELPERS
+// TOKEN HELPERS (Dipertahankan)
 // ==========================================
 
 export class TokenExpiredError extends Error {
@@ -9541,84 +9674,130 @@ export function isTokenExpiringSoon(_withinMinutes = 10): boolean {
 }
 
 // ==========================================
-// MAIN UPLOAD FUNCTION
-// FIXED: Tambah parameter onlyNewPhotos (opsional)
-//   - Kalau undefined/null → upload semua session.photos (create baru)
-//   - Kalau diisi array dataUrl → upload hanya foto itu (edit, cegah duplikat)
-// api/upload.ts sudah handle countExistingPhotos untuk lanjut penomoran
+// MAIN UPLOAD FUNCTION (SEQUENTIAL QUEUE)
 // ==========================================
 
 export const uploadToDrive = async (
   session: InspectionSession & { photos: InspectionPhoto[] },
   _photos: InspectionPhoto[],
   onProgress?: ProgressCallback,
-  // FIXED: Parameter baru — foto yang mau diupload ke Drive
-  // Kalau null/undefined → semua session.photos (behavior lama untuk create)
-  // Kalau diisi → hanya foto ini yang dikirim (untuk edit, cegah duplikat)
   onlyNewPhotos?: InspectionPhoto[] | null
 ): Promise<{ success: true; folderId: string }> => {
 
-  // FIXED: Tentukan foto mana yang mau dikirim ke server
+  // Tentukan foto yang akan di-upload (Semua atau cuma yang baru)
   const photosToUpload = onlyNewPhotos ?? session.photos;
   const totalPhotos = photosToUpload.length;
-  const totalSteps = totalPhotos + 2;
+  const totalSteps = totalPhotos + 1; // 1 step buat JSON/Folder, sisanya foto
 
-  onProgress?.({
-    current: 0,
-    total: totalSteps,
-    fileName: 'Menyiapkan upload...',
-    phase: 'folder',
-  });
+  let folderId = session.driveFolderId;
 
-  // Konversi ke format payload
-  // Nama file sementara — api/upload.ts akan re-nomori dari countExistingPhotos
-  const photosPayload = photosToUpload.map((photo, i) => ({
-    name: `foto-temp-${String(i + 1).padStart(3, '0')}.jpg`,
-    dataUrl: photo.dataUrl,
-  }));
+  try {
+    // ── PHASE 1: Upload JSON & Bikin Folder ──
+    // (Jalanin ini kalau belum punya folderId, atau statusnya bukan lagi ngelanjutin upload foto)
+    if (!folderId || session.uploadStatus !== 'partial_failed') {
+      onProgress?.({
+        current: 0,
+        total: totalSteps,
+        fileName: 'Menyiapkan folder...',
+        phase: 'folder',
+      });
 
-  onProgress?.({
-    current: 1,
-    total: totalSteps,
-    fileName: 'data-inspeksi.json',
-    phase: 'data',
-  });
+      await db.inspection_sessions.update(session.id, {
+        uploadStatus: 'uploading_meta',
+        photosUploaded: 0
+      });
 
-  const apiBase = getApiBaseUrl();
-  const response = await fetch(`${apiBase}/api/upload`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      session: {
-        id: session.id,
-        clientName: session.clientName,
-        objectType: session.objectType,
-        createdAt: new Date(session.createdAt).toISOString(),
-        updatedAt: session.updatedAt
-          ? new Date(session.updatedAt).toISOString()
-          : null,
-        unitData: session.unitData,
-        inspectorEmail: session.inspectorEmail ?? null,
-      },
-      photos: photosPayload,
-    }),
-  });
+      const apiBase = getApiBaseUrl();
+      const metaRes = await fetch(`${apiBase}/api/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          inspectionData: {
+            id: session.id,
+            clientName: session.clientName,
+            objectType: session.objectType,
+            createdAt: session.createdAt,
+            updatedAt: session.updatedAt,
+            unitData: session.unitData,
+            totalPhotos: totalPhotos,
+            inspectorEmail: session.inspectorEmail ?? null,
+          }
+        }),
+      });
 
-  if (!response.ok) {
-    const errData = await response.json().catch(() => ({}));
-    throw new Error(errData?.error || `Upload gagal: HTTP ${response.status}`);
+      if (!metaRes.ok) {
+        const errData = await metaRes.json().catch(() => ({}));
+        throw new Error(errData?.error || `HTTP ${metaRes.status} saat bikin folder`);
+      }
+
+      const metaData = await metaRes.json();
+      folderId = metaData.folderId;
+
+      await db.inspection_sessions.update(session.id, {
+        driveFolderId: folderId,
+        uploadStatus: 'uploading_photos'
+      });
+    }
+
+    // ── PHASE 2: Upload Foto (Antrean Satu per Satu) ──
+    // Kalau sebelumnya gagal di tengah jalan (partial_failed), kita lanjutin dari index terakhir
+    const startIdx = session.uploadStatus === 'partial_failed' ? (session.photosUploaded || 0) : 0;
+
+    for (let i = startIdx; i < totalPhotos; i++) {
+      const photo = photosToUpload[i];
+      
+      onProgress?.({
+        current: i + 1,
+        total: totalSteps,
+        fileName: `Foto ${i + 1} dari ${totalPhotos}...`,
+        phase: 'photo',
+      });
+
+      const apiBase = getApiBaseUrl();
+      const photoRes = await fetch(`${apiBase}/api/upload-photo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          folderId: folderId,
+          photoBase64: photo.dataUrl,
+          photoIndex: i
+        }),
+      });
+
+      if (!photoRes.ok) {
+        const errData = await photoRes.json().catch(() => ({}));
+        throw new Error(errData?.error || `Gagal upload foto ke-${i + 1}`);
+      }
+
+      // Catat progress di DB lokal biar aman kalau internet mendadak putus
+      await db.inspection_sessions.update(session.id, {
+        photosUploaded: i + 1
+      });
+    }
+
+    // ── PHASE 3: Selesai Semua ──
+    onProgress?.({
+      current: totalSteps,
+      total: totalSteps,
+      fileName: 'Selesai!',
+      phase: 'photo',
+    });
+
+    await db.inspection_sessions.update(session.id, {
+      uploadStatus: 'fully_synced',
+      status: 'synced' // ubah status jadi synced
+    });
+
+    return { success: true, folderId: folderId! };
+
+  } catch (err: any) {
+    // Kalau gagal di tengah jalan, ubah status jadi partial_failed biar bisa di-resume nanti
+    console.error('[driveService] Error:', err);
+    await db.inspection_sessions.update(session.id, {
+      uploadStatus: 'partial_failed'
+    });
+    throw err;
   }
-
-  const result = await response.json();
-
-  onProgress?.({
-    current: totalSteps,
-    total: totalSteps,
-    fileName: 'Selesai',
-    phase: 'photo',
-  });
-
-  return { success: true, folderId: result.folderId ?? '' };
 };
 
 // Dipertahankan untuk backward compat
@@ -9636,18 +9815,8 @@ export async function uploadTextFile(
 // ==========================================
 
 // src/services/syncService.ts
-// FIXED: Semua operasi Drive sekarang lewat serverless api/
-// FIXED: pushTemplatesToDrive → POST ke api/sync-templates
-// FIXED: pullTemplatesFromDrive → GET dari api/sync-templates
-// FIXED: pullInspectionsFromDrive → GET dari api/pull-inspections
-// Tidak ada lagi fetch langsung ke googleapis.com dari frontend
-
 import { db, ClientRepository, UnitRepository } from '../db/db';
 import { getApiBaseUrl } from '../config';
-
-// ==========================================
-// HELPERS
-// ==========================================
 
 export function isOwner(email: string | undefined | null): boolean {
   const owner = import.meta.env.VITE_OWNER_EMAIL || '';
@@ -9660,24 +9829,17 @@ function apiUrl(path: string): string {
 }
 
 // ==========================================
-// TEMPLATES — PUSH
-// FIXED: Kirim ke api/sync-templates (POST) bukan langsung ke Drive
+// TEMPLATES — PUSH (GEMBOK ADMIN)
 // ==========================================
-
 export async function pushTemplatesToDrive(): Promise<void> {
   try {
-    const clients = await ClientRepository.getAll();
-    const clientsWithUnits = await Promise.all(
-      clients.map(async (c) => {
-        const units = await UnitRepository.getByClient(c.id);
-        return { ...c, units };
-      })
-    );
+    const clientTemplates = await db.client_templates.toArray();
+    const unitTemplates = await db.unit_templates.toArray();
 
     const payload = {
-      version: Date.now(),
-      exportedAt: new Date().toISOString(),
-      clients: clientsWithUnits,
+      adminEmail: import.meta.env.VITE_OWNER_EMAIL || '',
+      client_templates: clientTemplates,
+      unit_templates: unitTemplates,
     };
 
     const res = await fetch(apiUrl('/api/sync-templates'), {
@@ -9690,8 +9852,6 @@ export async function pushTemplatesToDrive(): Promise<void> {
       const err = await res.json().catch(() => ({}));
       throw new Error(err?.error || `HTTP ${res.status}`);
     }
-
-    console.info('[syncService] pushTemplatesToDrive sukses:', clients.length, 'klien');
   } catch (err) {
     console.error('[syncService] pushTemplatesToDrive error:', err);
     throw err;
@@ -9699,84 +9859,75 @@ export async function pushTemplatesToDrive(): Promise<void> {
 }
 
 // ==========================================
-// TEMPLATES — PULL
-// FIXED: Ambil dari api/sync-templates (GET) bukan langsung dari Drive
+// TEMPLATES — PULL (PEMBERSIHAN ZOMBIE TEMPLATE KLIEN)
 // ==========================================
-
 export async function pullTemplatesFromDrive(): Promise<void> {
   try {
     const res = await fetch(apiUrl('/api/sync-templates'), { method: 'GET' });
-
-    if (!res.ok) {
-      console.warn('[syncService] pullTemplatesFromDrive: HTTP', res.status);
-      return;
-    }
+    if (!res.ok) return;
 
     const payload = await res.json();
+    
+    // Pastikan baca data sesuai format Claude!
+    const clientTemplates = payload.client_templates || [];
+    const unitTemplates = payload.unit_templates || [];
 
-    if (!payload?.clients?.length) {
-      console.info('[syncService] pullTemplatesFromDrive: tidak ada data di Drive');
-      return;
-    }
-
-    // Merge ke IndexedDB — upsert berdasarkan id
-    for (const client of payload.clients) {
-      const { units, ...clientData } = client;
-
-      const existing = await db.client_templates.get(clientData.id);
-      if (!existing) {
-        await db.client_templates.add(clientData);
-      } else if (
-        (clientData.updatedAt ?? clientData.createdAt) >
-        (existing.updatedAt ?? existing.createdAt)
-      ) {
-        await db.client_templates.put(clientData);
-      }
-
-      for (const unit of units) {
-        const existingUnit = await db.unit_templates.get(unit.id);
-        if (!existingUnit) {
-          await db.unit_templates.add(unit);
-        } else if (
-          (unit.updatedAt ?? unit.createdAt) >
-          (existingUnit.updatedAt ?? existingUnit.createdAt)
-        ) {
-          await db.unit_templates.put(unit);
-        }
+    // Proses Klien
+    for (const template of clientTemplates) {
+      if (template.deleted === true) {
+        await db.client_templates.where('id').equals(template.id).delete();
+      } else {
+        await db.client_templates.put({
+          id: template.id,
+          name: template.name,
+          updatedAt: template.updatedAt,
+          createdBy: template.createdBy || 'admin',
+          createdAt: template.createdAt || Date.now(),
+          deleted: false,
+        });
       }
     }
 
-    console.info('[syncService] pullTemplatesFromDrive sukses:', payload.clients.length, 'klien');
+    // Proses Unit
+    for (const template of unitTemplates) {
+      if (template.deleted === true) {
+        await db.unit_templates.where('id').equals(template.id).delete();
+      } else {
+        await db.unit_templates.put({
+          id: template.id,
+          clientId: template.clientId,
+          objectType: template.objectType,
+          unitData: template.unitData,
+          label: template.label,
+          updatedAt: template.updatedAt,
+          createdBy: template.createdBy || 'admin',
+          createdAt: template.createdAt || Date.now(),
+          deleted: false,
+        });
+      }
+    }
+
   } catch (err) {
     console.error('[syncService] pullTemplatesFromDrive error:', err);
-    // Tidak throw — pull gagal tidak boleh crash app
   }
 }
 
 // ==========================================
-// INSPECTIONS — PULL
-// FIXED: Ambil dari api/pull-inspections (GET) bukan langsung dari Drive
+// INSPECTIONS — PULL (TANPA PENGHAPUSAN OTOMATIS)
 // ==========================================
-
-export async function pullInspectionsFromDrive(): Promise<{
-  pulled: number;
-  skipped: number;
-}> {
+export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skipped: number; }> {
   let pulled = 0;
   let skipped = 0;
 
   try {
     const res = await fetch(apiUrl('/api/pull-inspections'), { method: 'GET' });
-
-    if (!res.ok) {
-      console.warn('[syncService] pullInspectionsFromDrive: HTTP', res.status);
-      return { pulled: 0, skipped: 0 };
-    }
+    if (!res.ok) return { pulled: 0, skipped: 0 };
 
     const data = await res.json();
     const inspections: any[] = data.inspections ?? [];
 
-    console.info(`[syncService] Diterima ${inspections.length} inspeksi dari server`);
+    // 🔥 FITUR GARBAGE COLLECTION/PEMBERSIH OTOMATIS DIHAPUS TOTAL 🔥
+    // Kita nggak akan biarin sistem hapus data lo secara otomatis lagi!
 
     for (const driveData of inspections) {
       try {
@@ -9793,7 +9944,6 @@ export async function pullInspectionsFromDrive(): Promise<{
             skipped++;
             continue;
           }
-          // Drive lebih baru — update
           await db.inspection_sessions.update(driveData.id, {
             clientName: driveData.clientName,
             objectType: driveData.objectType,
@@ -9804,7 +9954,6 @@ export async function pullInspectionsFromDrive(): Promise<{
           });
           pulled++;
         } else {
-          // Belum ada di lokal — insert
           await db.inspection_sessions.add({
             id: driveData.id,
             clientName: driveData.clientName,
@@ -9818,15 +9967,11 @@ export async function pullInspectionsFromDrive(): Promise<{
           pulled++;
         }
       } catch (itemErr) {
-        console.warn('[syncService] Skip inspection:', itemErr);
         skipped++;
       }
     }
-
-    console.info(`[syncService] pullInspectionsFromDrive selesai: pulled=${pulled}, skipped=${skipped}`);
   } catch (err) {
     console.error('[syncService] pullInspectionsFromDrive error:', err);
-    // Tidak throw — pull gagal tidak boleh crash app
   }
 
   return { pulled, skipped };
@@ -10578,7 +10723,18 @@ export default {
 // FILE: vercel.json
 // ==========================================
 
-
+{
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/$1"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
 
 // ==========================================
 // FILE: vite.config.ts

@@ -20,6 +20,7 @@ export interface InspectionSession {
   templateUnitId?: string;
   inspectorEmail?: string;
   driveFolderId?: string;
+  drivePhotoIds?: string[];
   uploadStatus?: UploadStatus;
   photosUploaded?: number;
 }
@@ -94,6 +95,13 @@ export class MyDatabase extends Dexie {
       user_roles: 'id, role, createdAt',
     });
     this.version(7).stores({
+      inspection_sessions: 'id, clientName, status, createdAt, templateClientId, inspectorEmail, driveFolderId, uploadStatus',
+      inspection_photos: 'id, sessionId, createdAt',
+      client_templates: 'id, name, createdAt, createdBy, deleted',
+      unit_templates: 'id, clientId, objectType, createdAt, createdBy, deleted',
+      user_roles: 'id, role, createdAt',
+    });
+    this.version(8).stores({
       inspection_sessions: 'id, clientName, status, createdAt, templateClientId, inspectorEmail, driveFolderId, uploadStatus',
       inspection_photos: 'id, sessionId, createdAt',
       client_templates: 'id, name, createdAt, createdBy, deleted',

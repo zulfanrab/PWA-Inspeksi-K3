@@ -38,7 +38,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     
     const listRes = await drive.files.list({
       q,
-      fields: 'files(id, name, modifiedTime)',
+      fields: 'files(id, name, modifiedTime, parents)',
       spaces: 'drive',
       pageSize: 1000,
     });
@@ -58,17 +58,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (typeof contentRes.data === 'string') {
           parsed = JSON.parse(contentRes.data);
         } else {
-          parsed = contentRes.data; // Kalau dari sananya udah jadi objek, langsung pakai
+          parsed = contentRes.data;
         }
-        
-        results.push(parsed);
-      } catch (fileErr) {
+
+        // Ambil fileId foto dari folder yang sama
+        const folderId = file.parents?.[0];
+if (folderId) {
+  const photoRes = await drive.files.list({
+    q: `'${folderId}' in parents and name != 'data-inspeksi.json' and trashed=false`,
+    fields: 'files(id)',
+    spaces: 'drive',
+    pageSize: 1000,
+  });
+  parsed.drivePhotoIds = (photoRes.data.files ?? []).map((f) => f.id!);
+} else {
+  parsed.drivePhotoIds = [];
+}
+
+results.push(parsed);
+} catch (fileErr) {
         console.warn(`[pull-inspections] Gagal baca file ${file.id}:`, fileErr);
       }
     }
 
     return res.status(200).json({ inspections: results });
-    
+
   } catch (err: any) {
     console.error('[api/pull-inspections] Error:', err);
     return res.status(500).json({ error: err.message || 'Gagal mengambil data inspeksi' });
