@@ -106,14 +106,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const drive = getDriveClient();
 
-    // 1. Bikin/Cari Struktur Folder (Sama persis kayak logika lo yang udah bener)
-    const rootFolderId = await getOrCreateFolder(drive, 'Aksara Inspect', null);
-    const clientFolderId = await getOrCreateFolder(drive, session.clientName, rootFolderId);
-    const dateStr = new Date(session.createdAt).toISOString().slice(0, 10);
-    const dateFolderId = await getOrCreateFolder(drive, dateStr, clientFolderId);
-    const typeFolderId = await getOrCreateFolder(drive, session.objectType, dateFolderId);
-    const unitFolderName = `${session.unitData?.namaUnit || 'Unit'} - ${session.unitData?.nomorSeri || 'NoSeri'}`;
-    const unitFolderId = await getOrCreateFolder(drive, unitFolderName, typeFolderId);
+    // Kalau sudah punya folderId (edit), skip buat folder baru
+    let unitFolderId: string;
+    if (req.body.existingFolderId) {
+      unitFolderId = req.body.existingFolderId;
+    } else {
+      const rootFolderId = await getOrCreateFolder(drive, 'Aksara Inspect', null);
+      const clientFolderId = await getOrCreateFolder(drive, session.clientName, rootFolderId);
+      const dateStr = new Date(session.createdAt).toISOString().slice(0, 10);
+      const dateFolderId = await getOrCreateFolder(drive, dateStr, clientFolderId);
+      const typeFolderId = await getOrCreateFolder(drive, session.objectType, dateFolderId);
+      const unitFolderName = `${session.unitData?.namaUnit || 'Unit'} - ${session.unitData?.nomorSeri || 'NoSeri'}`;
+      unitFolderId = await getOrCreateFolder(drive, unitFolderName, typeFolderId);
+    }
 
     // 2. Upload JSON Metadata
     const dataPayload = JSON.stringify({

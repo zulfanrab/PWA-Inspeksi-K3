@@ -78,8 +78,7 @@ export const uploadToDrive = async (
 
   try {
     // ── PHASE 1: Upload JSON & Bikin Folder ──
-    // (Jalanin ini kalau belum punya folderId, atau statusnya bukan lagi ngelanjutin upload foto)
-    if (!folderId || session.uploadStatus !== 'partial_failed') {
+    if (!folderId) {
       onProgress?.({
         current: 0,
         total: totalSteps,
@@ -97,6 +96,7 @@ export const uploadToDrive = async (
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          existingFolderId: session.driveFolderId ?? null,
           inspectionData: {
             id: session.id,
             clientName: session.clientName,
