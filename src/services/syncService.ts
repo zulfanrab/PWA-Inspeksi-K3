@@ -92,7 +92,7 @@ export async function pullTemplatesFromDrive(): Promise<void> {
 }
 
 // ==========================================
-// INSPECTIONS — PULL (DENGAN TOMBSTONE)
+// INSPECTIONS — PULL (MIRROR DRIVE)
 // ==========================================
 export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skipped: number }> {
   let pulled = 0;
@@ -106,13 +106,13 @@ export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skip
     const inspections: any[] = data.inspections ?? [];
     const deletedIds: string[] = data.deletedIds ?? [];
 
-    // Hapus semua yang ada di tombstone dari lokal
-    for (const sessionId of deletedIds) {
-      const exists = await db.inspection_sessions.get(sessionId);
-      if (exists) {
-        await db.inspection_sessions.delete(sessionId);
-        await db.inspection_photos.where('sessionId').equals(sessionId).delete();
-        console.info(`[Sync] Tombstone: hapus lokal ${sessionId}`);
+    // ✅ MIRROR DRIVE: hapus lokal yang tidak ada di Drive
+    const driveIds = new Set(inspections.map((r: any) => r.id));
+    const localSynced = await db.inspection_sessions.where('status').equals('synced').toArray();
+    for (const local of localSynced) {
+      if (!driveIds.has(local.id)) {
+        await db.inspection_sessions.delete(local.id);
+        await db.inspection_photos.where('sessionId').equals(local.id).delete();
       }
     }
 
