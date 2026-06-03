@@ -63,25 +63,59 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // Ambil fileId foto dari folder yang sama
         const folderId = file.parents?.[0];
-if (folderId) {
-  const photoRes = await drive.files.list({
-    q: `'${folderId}' in parents and name != 'data-inspeksi.json' and trashed=false`,
-    fields: 'files(id)',
-    spaces: 'drive',
-    pageSize: 1000,
-  });
-  parsed.drivePhotoIds = (photoRes.data.files ?? []).map((f) => f.id!);
-} else {
-  parsed.drivePhotoIds = [];
-}
+        if (folderId) {
+          const photoRes = await drive.files.list({
+            q: `'${folderId}' in parents and name != 'data-inspeksi.json' and trashed=false`,
+            fields: 'files(id)',
+            spaces: 'drive',
+            pageSize: 1000,
+          });
+          parsed.drivePhotoIds = (photoRes.data.files ?? []).map((f) => f.id!);
+        } else {
+          parsed.drivePhotoIds = [];
+        }
 
-results.push(parsed);
-} catch (fileErr) {
+        results.push(parsed);
+      } catch (fileErr) {
         console.warn(`[pull-inspections] Gagal baca file ${file.id}:`, fileErr);
       }
     }
 
-    return res.status(200).json({ inspections: results });
+    // ==========================================
+    // BACA TOMBSTONE (LOG PENGHAPUSAN)
+    // ==========================================
+    let deletedIds: string[] = [];
+    try {
+      const rootRes = await drive.files.list({
+        q: `name='Aksara Inspect' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+        fields: 'files(id)',
+        spaces: 'drive',
+        pageSize: 1,
+      });
+      const rootId = rootRes.data.files?.[0]?.id;
+      
+      if (rootId) {
+        const logRes = await drive.files.list({
+          q: `name='deleted-log.json' and '${rootId}' in parents and trashed=false`,
+          fields: 'files(id)',
+          spaces: 'drive',
+          pageSize: 1,
+        });
+        
+        if (logRes.data.files?.length) {
+          const logContent = await drive.files.get(
+            { fileId: logRes.data.files[0].id!, alt: 'media' },
+            { responseType: 'json' }
+          );
+          const log: any[] = Array.isArray(logContent.data) ? logContent.data : [];
+          deletedIds = log.map((e) => e.sessionId).filter(Boolean);
+        }
+      }
+    } catch (e) {
+      console.warn('[pull-inspections] Gagal baca deleted-log:', e);
+    }
+
+    return res.status(200).json({ inspections: results, deletedIds });
 
   } catch (err: any) {
     console.error('[api/pull-inspections] Error:', err);

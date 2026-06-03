@@ -92,9 +92,9 @@ export async function pullTemplatesFromDrive(): Promise<void> {
 }
 
 // ==========================================
-// INSPECTIONS — PULL (DENGAN TUKANG SAPU CERDAS)
+// INSPECTIONS — PULL (DENGAN TOMBSTONE)
 // ==========================================
-export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skipped: number; }> {
+export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skipped: number }> {
   let pulled = 0;
   let skipped = 0;
 
@@ -104,34 +104,26 @@ export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skip
 
     const data = await res.json();
     const inspections: any[] = data.inspections ?? [];
-    
-    // Ambil semua ID yang masih hidup di Google Drive
-    const driveSessionIds = inspections.map((r: any) => r.id);
+    const deletedIds: string[] = data.deletedIds ?? [];
 
-    // ========================================================
-    // 🧹 PEMBERSIH ZOMBIE (SHIELD 15 MENIT)
-    // ========================================================
-    const localHistory = await db.inspection_sessions.where('status').equals('synced').toArray();
-
-    for (const localSession of localHistory) {
-      if (!driveSessionIds.includes(localSession.id)) {
-        // Data ada di HP, tapi ga ada di server (Kemungkinan dihapus Admin)
-        const lastUpdated = localSession.updatedAt || localSession.createdAt;
-        const ageInMinutes = (Date.now() - lastUpdated) / (1000 * 60);
-
-        if (ageInMinutes > 15) {
-          // Usia udah di atas 15 menit, fix udah dihapus beneran sama Admin. Hapus dari HP!
-          console.info(`[Sync] Menghapus data lokal yg dihapus di server: ${localSession.id}`);
-          await db.inspection_sessions.delete(localSession.id);
-          await db.inspection_photos.where('sessionId').equals(localSession.id).delete();
-        }
+    // Hapus semua yang ada di tombstone dari lokal
+    for (const sessionId of deletedIds) {
+      const exists = await db.inspection_sessions.get(sessionId);
+      if (exists) {
+        await db.inspection_sessions.delete(sessionId);
+        await db.inspection_photos.where('sessionId').equals(sessionId).delete();
+        console.info(`[Sync] Tombstone: hapus lokal ${sessionId}`);
       }
     }
-    // ========================================================
 
-    // Update / Tambah data baru dari server ke lokal
+    // Update / Tambah data dari Drive, skip jika sudah di tombstone
     for (const driveData of inspections) {
       try {
+        if (deletedIds.includes(driveData.id)) {
+          skipped++;
+          continue;
+        }
+
         const driveCreatedAt = new Date(driveData.createdAt).getTime();
         const driveUpdatedAt = driveData.updatedAt
           ? new Date(driveData.updatedAt).getTime()
@@ -169,7 +161,7 @@ export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skip
           });
           pulled++;
         }
-      } catch (itemErr) {
+      } catch {
         skipped++;
       }
     }

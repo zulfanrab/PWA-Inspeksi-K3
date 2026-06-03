@@ -18,6 +18,58 @@ function getDriveClient() {
   return google.drive({ version: 'v3', auth: oauth2Client });
 }
 
+async function getRootFolderId(drive: any): Promise<string | null> {
+  const res = await drive.files.list({
+    q: `name='Aksara Inspect' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+    fields: 'files(id)',
+    spaces: 'drive',
+    pageSize: 1,
+  });
+  return res.data.files?.[0]?.id ?? null;
+}
+
+async function appendTombstone(drive: any, sessionId: string): Promise<void> {
+  const rootId = await getRootFolderId(drive);
+  if (!rootId) return;
+
+  const logName = 'deleted-log.json';
+  const existing = await drive.files.list({
+    q: `name='${logName}' and '${rootId}' in parents and trashed=false`,
+    fields: 'files(id)',
+    spaces: 'drive',
+    pageSize: 1,
+  });
+
+  const entry = { sessionId, deletedAt: new Date().toISOString() };
+
+  if (existing.data.files?.length) {
+    const fileId = existing.data.files[0].id!;
+    const contentRes = await drive.files.get(
+      { fileId, alt: 'media' },
+      { responseType: 'json' }
+    );
+    const current: any[] = Array.isArray(contentRes.data) ? contentRes.data : [];
+    current.push(entry);
+    const { Readable } = await import('stream');
+    const stream = Readable.from([JSON.stringify(current)]);
+    await drive.files.update({
+      fileId,
+      media: { mimeType: 'application/json', body: stream },
+    });
+  } else {
+    const { Readable } = await import('stream');
+    const stream = Readable.from([JSON.stringify([entry])]);
+    await drive.files.create({
+      requestBody: {
+        name: logName,
+        parents: [rootId],
+        mimeType: 'application/json',
+      },
+      media: { mimeType: 'application/json', body: stream },
+    });
+  }
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -41,12 +93,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const drive = getDriveClient();
 
-    // SKENARIO 1: Jalur Cepat (Punya folderId dari kodingan baru Claude)
+    // SKENARIO 1: Jalur Cepat (Punya folderId dari kodingan baru)
     if (folderId) {
       await drive.files.update({
         fileId: folderId,
         requestBody: { trashed: true },
       });
+      await appendTombstone(drive, sessionId || folderId);
       return res.status(200).json({ success: true, method: 'direct_folder' });
     }
 
@@ -69,6 +122,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               await drive.files.update({ fileId: parentId, requestBody: { trashed: true } });
             }
             await drive.files.update({ fileId: file.id!, requestBody: { trashed: true } });
+            
+            await appendTombstone(drive, sessionId);
             return res.status(200).json({ success: true, method: 'search_session' });
           }
         } catch (e) {
