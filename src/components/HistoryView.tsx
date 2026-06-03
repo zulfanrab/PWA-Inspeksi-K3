@@ -47,6 +47,7 @@ export function HistoryView({
   uploadProgress,
   currentUserEmail,
 }: HistoryViewProps) {
+  const [activeTab, setActiveTab] = useState<'recent' | 'byClient'>('recent');
   const [openClients, setOpenClients] = useState<Set<string>>(new Set());
 
   const recent = useMemo(
@@ -61,7 +62,6 @@ export function HistoryView({
       list.push(item);
       map.set(item.clientName, list);
     }
-    // Sort tiap grup by terbaru
     for (const [key, list] of map) {
       map.set(key, list.sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt)));
     }
@@ -77,9 +77,7 @@ export function HistoryView({
   };
 
   const cardProps = (item: SessionWithPhotos) => ({
-    item,
-    onEdit,
-    onDelete,
+    item, onEdit, onDelete,
     isUploading: uploadingId === item.id,
     progress: uploadingId === item.id ? uploadProgress : null,
     currentUserEmail,
@@ -96,7 +94,7 @@ export function HistoryView({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div>
         <h2 className="text-base font-black text-gray-900">📋 Riwayat Inspeksi</h2>
         <p className="text-xs text-gray-400 font-medium mt-0.5">
@@ -104,44 +102,69 @@ export function HistoryView({
         </p>
       </div>
 
-      {/* SECTION: Recent */}
-      <div className="space-y-3">
-        <h3 className="text-xs font-black text-gray-500 uppercase tracking-widest">🕐 Terbaru</h3>
-        {recent.map((item) => (
-          <HistoryCard key={item.id} {...cardProps(item)} />
-        ))}
+      {/* Tab */}
+      <div className="flex gap-2 bg-gray-100 p-1 rounded-xl">
+        <button
+          onClick={() => setActiveTab('recent')}
+          className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
+            activeTab === 'recent'
+              ? 'bg-white text-gray-900 shadow-sm'
+              : 'text-gray-400 hover:text-gray-600'
+          }`}
+        >
+          🕐 Terbaru
+        </button>
+        <button
+          onClick={() => setActiveTab('byClient')}
+          className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
+            activeTab === 'byClient'
+              ? 'bg-white text-gray-900 shadow-sm'
+              : 'text-gray-400 hover:text-gray-600'
+          }`}
+        >
+          🏢 Per Perusahaan
+        </button>
       </div>
 
-      {/* SECTION: Per Perusahaan */}
-      <div className="space-y-2">
-        <h3 className="text-xs font-black text-gray-500 uppercase tracking-widest">🏢 Per Perusahaan</h3>
-        {[...byClient.entries()].map(([clientName, items]) => {
-          const isOpen = openClients.has(clientName);
-          return (
-            <div key={clientName} className="border border-gray-200 rounded-xl overflow-hidden">
-              <button
-                onClick={() => toggleClient(clientName)}
-                className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors"
-              >
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-bold text-gray-800">{clientName}</span>
-                  <span className="px-2 py-0.5 bg-blue-50 text-blue-600 border border-blue-100 rounded-full text-[10px] font-bold">
-                    {items.length} inspeksi
-                  </span>
-                </div>
-                <span className="text-gray-400 text-xs">{isOpen ? '▲' : '▼'}</span>
-              </button>
-              {isOpen && (
-                <div className="p-3 space-y-3 bg-white">
-                  {items.map((item) => (
-                    <HistoryCard key={item.id} {...cardProps(item)} />
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+      {/* Konten tab */}
+      {activeTab === 'recent' && (
+        <div className="space-y-3">
+          {recent.map((item) => (
+            <HistoryCard key={item.id} {...cardProps(item)} />
+          ))}
+        </div>
+      )}
+
+      {activeTab === 'byClient' && (
+        <div className="space-y-2">
+          {[...byClient.entries()].map(([clientName, items]) => {
+            const isOpen = openClients.has(clientName);
+            return (
+              <div key={clientName} className="border border-gray-200 rounded-xl overflow-hidden">
+                <button
+                  onClick={() => toggleClient(clientName)}
+                  className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-bold text-gray-800">{clientName}</span>
+                    <span className="px-2 py-0.5 bg-blue-50 text-blue-600 border border-blue-100 rounded-full text-[10px] font-bold">
+                      {items.length} inspeksi
+                    </span>
+                  </div>
+                  <span className="text-gray-400 text-xs">{isOpen ? '▲' : '▼'}</span>
+                </button>
+                {isOpen && (
+                  <div className="p-3 space-y-3 bg-white">
+                    {items.map((item) => (
+                      <HistoryCard key={item.id} {...cardProps(item)} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
