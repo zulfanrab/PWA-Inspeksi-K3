@@ -167,7 +167,18 @@ export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skip
           for (let idx = 0; idx < photosWithoutId.length && idx < allDriveIds.length; idx++) {
             await db.inspection_photos.update(photosWithoutId[idx].id, {
               driveFileId: allDriveIds[idx],
+              fileName: driveFileNames[idx],
             });
+          }
+
+          // Patch fileName ke foto yang sudah ada driveFileId tapi belum punya fileName
+          for (const photo of existingPhotos) {
+            if (!photo.fileName && photo.driveFileId) {
+              const idx = (driveData.drivePhotoIds ?? []).indexOf(photo.driveFileId);
+              if (idx !== -1 && driveFileNames[idx]) {
+                await db.inspection_photos.update(photo.id, { fileName: driveFileNames[idx] });
+              }
+            }
           }
 
           const localUpdatedAt = existing.updatedAt ?? existing.createdAt;
@@ -227,7 +238,18 @@ export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skip
           for (let idx = 0; idx < photosWithoutIdElse.length && idx < allDriveIdsElse.length; idx++) {
             await db.inspection_photos.update(photosWithoutIdElse[idx].id, {
               driveFileId: allDriveIdsElse[idx],
+              fileName: driveFileNames[idx],
             });
+          }
+
+          // Patch fileName ke foto yang sudah ada driveFileId tapi belum punya fileName
+          for (const photo of allPhotosElse) {
+            if (!photo.fileName && photo.driveFileId) {
+              const idx = (driveData.drivePhotoIds ?? []).indexOf(photo.driveFileId);
+              if (idx !== -1 && driveFileNames[idx]) {
+                await db.inspection_photos.update(photo.id, { fileName: driveFileNames[idx] });
+              }
+            }
           }
 
           pulled++;
