@@ -151,6 +151,20 @@ export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skip
             status: 'synced',
             drivePhotoIds: driveData.drivePhotoIds ?? [],
           });
+          // ✅ TAMBAHAN: populate foto yang belum ada di IndexedDB device ini
+for (const fileId of (driveData.drivePhotoIds ?? [])) {
+  const alreadyExists = await db.inspection_photos
+    .where('driveFileId').equals(fileId).first();
+  if (!alreadyExists) {
+    await db.inspection_photos.add({
+      id: crypto.randomUUID(),
+      sessionId: driveData.id,
+      dataUrl: '',
+      driveFileId: fileId,
+      createdAt: driveUpdatedAt,
+    });
+  }
+}
           pulled++;
         } else {
           await db.inspection_sessions.add({
