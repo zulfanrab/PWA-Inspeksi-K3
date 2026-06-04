@@ -96,7 +96,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       },
       fields: 'id, name',
     });
-
     // Set foto bisa diakses siapapun yang punya link (untuk cross-device visibility)
     await drive.permissions.create({
       fileId: uploadedFile.data.id!,
@@ -106,11 +105,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       },
     });
 
-    return res.status(200).json({
-      success: true,
-      photoIndex,
-      fileId: uploadedFile.data.id,
-    
     return res.status(200).json({
       success: true,
       photoIndex,

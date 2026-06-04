@@ -43,6 +43,7 @@ export function HistoryView({
   history,
   onEdit,
   onDelete,
+  onReSync,
   uploadingId,
   uploadProgress,
   currentUserEmail,
@@ -77,11 +78,11 @@ export function HistoryView({
   };
 
   const cardProps = (item: SessionWithPhotos) => ({
-    item, onEdit, onDelete,
-    isUploading: uploadingId === item.id,
-    progress: uploadingId === item.id ? uploadProgress : null,
-    currentUserEmail,
-  });
+  item, onEdit, onDelete, onReSync,   // ← tambah onReSync
+  isUploading: uploadingId === item.id,
+  progress: uploadingId === item.id ? uploadProgress : null,
+  currentUserEmail,
+});
 
   if (history.length === 0) {
     return (
@@ -173,6 +174,7 @@ function HistoryCard({
   item,
   onEdit,
   onDelete,
+  onReSync,
   isUploading,
   progress,
   currentUserEmail,
@@ -180,6 +182,7 @@ function HistoryCard({
   item: SessionWithPhotos;
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
+  onReSync: (id: string) => void;
   isUploading: boolean;
   progress: UploadProgress | null;
   currentUserEmail: string;
@@ -322,26 +325,35 @@ function HistoryCard({
         </div>
       )}
 
-      {/* Tombol bawah: Edit & Update + Download PDF */}
-      <div className="grid grid-cols-2 gap-2">
-        <button
-          onClick={() => onEdit(item.id)}
-          disabled={isUploading}
-          className="py-2.5 flex items-center justify-center gap-1.5 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-lg transition-all"
-          title="Edit data & foto — otomatis terupload setelah simpan"
-        >
-          {isUploading ? <><Spinner />Uploading...</> : <>✏️ Edit & Update</>}
-        </button>
+      {/* Tombol bawah: Edit & Update + Sync Ulang + Download PDF */}
+<div className="grid grid-cols-3 gap-2">
+  <button
+    onClick={() => onEdit(item.id)}
+    disabled={isUploading}
+    className="py-2.5 flex items-center justify-center gap-1.5 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-lg transition-all"
+    title="Edit data & foto"
+  >
+    {isUploading ? <><Spinner />Uploading...</> : <>✏️ Edit</>}
+  </button>
 
-        <button
-          onClick={handleDownloadPDF}
-          disabled={pdfLoading}
-          className="py-2.5 flex items-center justify-center gap-1.5 bg-slate-700 hover:bg-slate-800 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-lg transition-all"
-          title="Download laporan sebagai PDF"
-        >
-          {pdfLoading ? <><Spinner />PDF...</> : <>📄 Download PDF</>}
-        </button>
-      </div>
+  <button
+    onClick={() => onReSync(item.id)}
+    disabled={isUploading}
+    className="py-2.5 flex items-center justify-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-lg transition-all"
+    title="Upload ulang ke Drive"
+  >
+    {isUploading ? <><Spinner />Syncing...</> : <>🔄 Sync</>}
+  </button>
+
+  <button
+    onClick={handleDownloadPDF}
+    disabled={pdfLoading || isUploading}
+    className="py-2.5 flex items-center justify-center gap-1.5 bg-slate-700 hover:bg-slate-800 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-lg transition-all"
+    title="Download laporan sebagai PDF"
+  >
+    {pdfLoading ? <><Spinner />PDF...</> : <>📄 PDF</>}
+  </button>
+</div>
     </div>
   );
 }
