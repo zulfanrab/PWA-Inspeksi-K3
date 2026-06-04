@@ -189,7 +189,18 @@ export function FormView({
             <div className="grid grid-cols-3 gap-2">
               {existingPhotos.map((photo) => (
                 <div key={photo.id} className="relative aspect-square rounded-xl overflow-hidden border border-gray-200 group">
-                  <img src={photo.dataUrl} alt="foto" className="w-full h-full object-cover" />
+                  <img
+  src={
+    photo.dataUrl && photo.dataUrl.startsWith('data:image')
+      ? photo.dataUrl
+      : photo.driveFileId
+        ? `/api/photo-proxy?fileId=${photo.driveFileId}`
+        : ''
+  }
+  alt="foto"
+  className="w-full h-full object-cover"
+  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+/>
                   <button
                     onClick={() => onRemoveExistingPhoto(photo.id)}
                     className="absolute top-1 right-1 w-6 h-6 rounded-full bg-red-500 text-white text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all shadow-md"
