@@ -107,10 +107,15 @@ export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skip
     const deletedIds: string[] = data.deletedIds ?? [];
 
     // ✅ MIRROR DRIVE: hapus lokal yang tidak ada di Drive
+    // HANYA hapus sesi yang sudah fully_synced — jangan sentuh draft/pending milik device ini
     const driveIds = new Set(inspections.map((r: any) => r.id));
     const localSynced = await db.inspection_sessions.where('status').equals('synced').toArray();
     for (const local of localSynced) {
       if (!driveIds.has(local.id)) {
+        // Jangan hapus kalau masih dalam proses upload
+        if (local.uploadStatus === 'pending_upload' || local.uploadStatus === 'uploading_meta' || local.uploadStatus === 'uploading_photos' || local.uploadStatus === 'partial_failed') {
+          continue;
+        }
         await db.inspection_sessions.delete(local.id);
         await db.inspection_photos.where('sessionId').equals(local.id).delete();
       }
@@ -159,6 +164,21 @@ export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skip
             inspectorEmail: driveData.inspectorEmail,
             drivePhotoIds: driveData.drivePhotoIds ?? [],
           });
+          
+          // Populate foto dari drivePhotoIds (tanpa base64, hanya simpan driveFileId)
+          for (const fileId of (driveData.drivePhotoIds ?? [])) {
+            const alreadyExists = await db.inspection_photos
+              .where('driveFileId').equals(fileId).first();
+            if (!alreadyExists) {
+              await db.inspection_photos.add({
+                id: crypto.randomUUID(),
+                sessionId: driveData.id,
+                dataUrl: '',           // kosong — foto diambil langsung dari Drive saat ditampilkan
+                driveFileId: fileId,
+                createdAt: driveCreatedAt,
+              });
+            }
+          }
           pulled++;
         }
       } catch {

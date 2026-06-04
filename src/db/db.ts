@@ -29,6 +29,7 @@ export interface InspectionPhoto {
   id: string;
   sessionId: string;
   dataUrl: string;
+  driveFileId?: string;  // ← TAMBAHAN: fileId foto di Google Drive
   createdAt: number;
 }
 
@@ -104,6 +105,13 @@ export class MyDatabase extends Dexie {
     this.version(8).stores({
       inspection_sessions: 'id, clientName, status, createdAt, templateClientId, inspectorEmail, driveFolderId, uploadStatus',
       inspection_photos: 'id, sessionId, createdAt',
+      client_templates: 'id, name, createdAt, createdBy, deleted',
+      unit_templates: 'id, clientId, objectType, createdAt, createdBy, deleted',
+      user_roles: 'id, role, createdAt',
+    });
+    this.version(9).stores({
+      inspection_sessions: 'id, clientName, status, createdAt, templateClientId, inspectorEmail, driveFolderId, uploadStatus',
+      inspection_photos: 'id, sessionId, createdAt, driveFileId',
       client_templates: 'id, name, createdAt, createdBy, deleted',
       unit_templates: 'id, clientId, objectType, createdAt, createdBy, deleted',
       user_roles: 'id, role, createdAt',

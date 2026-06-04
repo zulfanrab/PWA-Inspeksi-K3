@@ -1,6 +1,6 @@
 // src/utils/pdfExport.ts
 // FIXED: Label field manusiawi (bukan camelCase), header perusahaan proper,
-//        foto adaptive layout (portrait=1 col full, landscape=2 col), aspect ratio dijaga
+//        foto adaptive layout COMPACT — semua foto masuk grid rapi, tidak makan space berlebihan
 
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -160,17 +160,177 @@ function checkPageBreak(
   return y;
 }
 
-// NEW: Deteksi apakah foto portrait atau landscape dari dataUrl
-// Menggunakan HTMLImageElement untuk baca dimensi
+// Helper: ambil dataUrl foto — dari lokal jika ada, dari Drive jika tidak
+async function resolvePhotoDataUrl(
+  photo: { dataUrl?: string; driveFileId?: string }
+): Promise<string> {
+  if (photo.dataUrl && photo.dataUrl.startsWith('data:image')) {
+    return photo.dataUrl;
+  }
+  if (photo.driveFileId) {
+    try {
+      const url = `https://drive.google.com/uc?export=download&id=${photo.driveFileId}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      return await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    } catch (err) {
+      console.warn('[pdfExport] Gagal fetch foto dari Drive:', err);
+      return '';
+    }
+  }
+  return '';
+}
+
 async function getImageDimensions(
   dataUrl: string
 ): Promise<{ width: number; height: number }> {
   return new Promise((resolve) => {
+    if (!dataUrl || !dataUrl.startsWith('data:image')) {
+      resolve({ width: 4, height: 3 });
+      return;
+    }
     const img = new Image();
     img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
-    img.onerror = () => resolve({ width: 4, height: 3 }); // fallback landscape
+    img.onerror = () => resolve({ width: 4, height: 3 });
     img.src = dataUrl;
   });
+}
+
+// ==========================================
+// FOTO LAYOUT — COMPACT GRID
+// ==========================================
+// Aturan layout baru:
+//   - Semua foto masuk grid 2 kolom (kiri & kanan), tidak peduli portrait/landscape
+//   - Tinggi baris ditentukan oleh foto tertinggi di baris itu (aspect ratio tetap terjaga)
+//   - Max tinggi per foto dibatasi 65mm — foto tidak akan makan setengah halaman
+//   - Foto portrait di kolom kiri/kanan tetap tidak gepeng, di-center secara vertikal
+//   - Gap antar foto: 4mm horizontal, 6mm vertikal
+//   - Caption nomor foto di bawah masing-masing foto
+
+const PHOTO_COL_GAP = 4;   // mm gap antara kolom kiri dan kanan
+const PHOTO_ROW_GAP = 6;   // mm gap antar baris
+const PHOTO_MAX_H  = 65;   // mm tinggi maksimum per foto (cegah foto makan setengah halaman)
+const CAPTION_H    = 6;    // mm ruang caption di bawah foto
+
+async function renderPhotoGrid(
+  doc: jsPDF,
+  photos: any[],
+  resolvedDataUrls: string[],
+  dimensions: { width: number; height: number }[],
+  startY: number,
+  pageH: number,
+  margin: number,
+  contentW: number
+): Promise<number> {
+  let y = startY;
+  const colW = (contentW - PHOTO_COL_GAP) / 2;
+
+  for (let i = 0; i < photos.length; i += 2) {
+    // Hitung dimensi foto kiri
+    const dimL = dimensions[i];
+    const aspectL = dimL.height / dimL.width;
+    const hL = Math.min(colW * aspectL, PHOTO_MAX_H);
+    const wL = hL / aspectL; // lebar aktual setelah dibatasi tinggi
+
+    // Hitung dimensi foto kanan (kalau ada)
+    let hR = 0;
+    let wR = 0;
+    if (i + 1 < photos.length) {
+      const dimR = dimensions[i + 1];
+      const aspectR = dimR.height / dimR.width;
+      hR = Math.min(colW * aspectR, PHOTO_MAX_H);
+      wR = hR / aspectR;
+    }
+
+    // Tinggi baris = foto tertinggi di baris ini
+    const rowH = Math.max(hL, hR);
+
+    // Cek page break — butuh rowH + caption + gap
+    y = checkPageBreak(doc, y, rowH + CAPTION_H + PHOTO_ROW_GAP, pageH, margin);
+
+    // ── Render foto KIRI ──
+    const dataUrlL = resolvedDataUrls[i] || '';
+    // Center horizontal dalam kolom (kalau foto lebih kecil dari colW)
+    const xOffsetL = margin + (colW - wL) / 2;
+    // Center vertikal dalam baris
+    const yOffsetL = y + (rowH - hL) / 2;
+
+    if (dataUrlL.startsWith('data:image')) {
+      try {
+        doc.addImage(dataUrlL, 'JPEG', xOffsetL, yOffsetL, wL, hL, undefined, 'MEDIUM');
+      } catch {
+        _drawPhotoPlaceholder(doc, margin, y, colW, rowH, COLOR);
+      }
+    } else {
+      _drawPhotoPlaceholder(doc, margin, y, colW, rowH, COLOR);
+    }
+
+    // Border tipis di sekitar area kolom kiri
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.2);
+    doc.rect(margin, y, colW, rowH, 'S');
+
+    // Caption kiri
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6);
+    doc.setTextColor(...COLOR.gray);
+    doc.text(`Foto ${i + 1}`, margin + colW / 2, y + rowH + 4, { align: 'center' });
+
+    // ── Render foto KANAN (kalau ada) ──
+    if (i + 1 < photos.length) {
+      const dataUrlR = resolvedDataUrls[i + 1] || '';
+      const xR = margin + colW + PHOTO_COL_GAP;
+      const xOffsetR = xR + (colW - wR) / 2;
+      const yOffsetR = y + (rowH - hR) / 2;
+
+      if (dataUrlR.startsWith('data:image')) {
+        try {
+          doc.addImage(dataUrlR, 'JPEG', xOffsetR, yOffsetR, wR, hR, undefined, 'MEDIUM');
+        } catch {
+          _drawPhotoPlaceholder(doc, xR, y, colW, rowH, COLOR);
+        }
+      } else {
+        _drawPhotoPlaceholder(doc, xR, y, colW, rowH, COLOR);
+      }
+
+      // Border tipis kolom kanan
+      doc.setDrawColor(226, 232, 240);
+      doc.setLineWidth(0.2);
+      doc.rect(xR, y, colW, rowH, 'S');
+
+      // Caption kanan
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6);
+      doc.setTextColor(...COLOR.gray);
+      doc.text(`Foto ${i + 2}`, xR + colW / 2, y + rowH + 4, { align: 'center' });
+    }
+
+    y += rowH + CAPTION_H + PHOTO_ROW_GAP;
+  }
+
+  return y;
+}
+
+// Helper: gambar kotak abu placeholder kalau foto gagal load
+function _drawPhotoPlaceholder(
+  doc: jsPDF,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  color: typeof COLOR
+) {
+  doc.setFillColor(243, 244, 246);
+  doc.rect(x, y, w, h, 'F');
+  doc.setFontSize(7);
+  doc.setTextColor(...color.gray);
+  doc.text('Foto tidak tersedia', x + w / 2, y + h / 2, { align: 'center' });
 }
 
 // ==========================================
@@ -189,7 +349,7 @@ export const exportToPDF = async (
 
   let y = margin;
 
-// ---- HEADER PERUSAHAAN ----
+  // ---- HEADER PERUSAHAAN ----
   doc.setFillColor(...COLOR.headerBg);
   doc.rect(0, 0, pageW, 38, 'F');
 
@@ -213,27 +373,23 @@ export const exportToPDF = async (
     doc.text('A', margin + 5, 16);
   }
 
-  // Nama perusahaan
   const textX = margin + 18;
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
   doc.setTextColor(...COLOR.white);
   doc.text('PT AKSARA RIKSA PERDANA', textX, 13);
 
-  // Subtitle
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(6.5);
   doc.setTextColor(163, 230, 188);
   doc.text('Perusahaan Jasa K3 (PJK3) — Terakreditasi Kemnaker RI', textX, 18);
 
-  // Info kontak — 2 kolom kecil
   doc.setFontSize(6);
   doc.setTextColor(203, 213, 225);
   doc.text('Jl. Cibodas Raya No. 02, Antapani Kidul,', textX, 23);
   doc.text('Kec. Antapani, Kota Bandung, Jawa Barat 40291', textX, 27);
   doc.text('+62 821-2984-9515  |  aksara.riksa.perdana@gmail.com  |  aksarariksapjk3.com', textX, 31);
 
-  // Label laporan di kanan atas
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9);
   doc.setTextColor(...COLOR.emerald);
@@ -247,12 +403,10 @@ export const exportToPDF = async (
   });
   doc.text(`Dicetak: ${nowStr}`, pageW - margin, 18, { align: 'right' });
 
-  // Garis bawah header
   doc.setDrawColor(...COLOR.emerald);
   doc.setLineWidth(0.4);
   doc.line(0, 38, pageW, 38);
 
-  // Strip jenis inspeksi
   doc.setFillColor(15, 23, 42);
   doc.rect(0, 38, pageW, 10, 'F');
   doc.setFont('helvetica', 'bold');
@@ -286,23 +440,15 @@ export const exportToPDF = async (
   doc.setTextColor(...COLOR.gray);
   const inspDate = item.createdAt
     ? new Date(item.createdAt).toLocaleDateString('id-ID', {
-        day: '2-digit',
-        month: 'long',
-        year: 'numeric',
+        day: '2-digit', month: 'long', year: 'numeric',
       })
     : '-';
-  doc.text(`Tanggal Inspeksi: ${inspDate}`, pageW - margin - 4, y + 5, {
-    align: 'right',
-  });
+  doc.text(`Tanggal Inspeksi: ${inspDate}`, pageW - margin - 4, y + 5, { align: 'right' });
   if (item.updatedAt && item.updatedAt !== item.createdAt) {
     const updDate = new Date(item.updatedAt).toLocaleDateString('id-ID', {
-      day: '2-digit',
-      month: 'long',
-      year: 'numeric',
+      day: '2-digit', month: 'long', year: 'numeric',
     });
-    doc.text(`Diperbarui: ${updDate}`, pageW - margin - 4, y + 12, {
-      align: 'right',
-    });
+    doc.text(`Diperbarui: ${updDate}`, pageW - margin - 4, y + 12, { align: 'right' });
   }
 
   y += 22;
@@ -321,19 +467,10 @@ export const exportToPDF = async (
       head: [['Field', 'Nilai']],
       body: commonRows,
       theme: 'grid',
-      headStyles: {
-        fillColor: COLOR.emerald,
-        textColor: COLOR.white,
-        fontStyle: 'bold',
-        fontSize: 8,
-      },
+      headStyles: { fillColor: COLOR.emerald, textColor: COLOR.white, fontStyle: 'bold', fontSize: 8 },
       bodyStyles: { fontSize: 8, cellPadding: 3 },
       columnStyles: {
-        0: {
-          cellWidth: contentW * 0.45,
-          fontStyle: 'bold',
-          textColor: COLOR.slate,
-        },
+        0: { cellWidth: contentW * 0.45, fontStyle: 'bold', textColor: COLOR.slate },
         1: { cellWidth: contentW * 0.55, textColor: COLOR.black },
       },
       alternateRowStyles: { fillColor: [248, 250, 252] },
@@ -343,21 +480,12 @@ export const exportToPDF = async (
 
   // ---- SEKSI: DATA TEKNIS SPESIFIK ----
   const specificKeys = Object.keys(item.unitData || {}).filter(
-    (k) =>
-      !COMMON_FIELD_KEYS.includes(k) &&
-      k !== NOTES_KEY &&
-      item.unitData[k] !== ''
+    (k) => !COMMON_FIELD_KEYS.includes(k) && k !== NOTES_KEY && item.unitData[k] !== ''
   );
 
   if (specificKeys.length > 0) {
     y = checkPageBreak(doc, y, 20, pageH, margin);
-    y = sectionHeader(
-      doc,
-      `DATA TEKNIS — ${objType.toUpperCase()}`,
-      y,
-      pageW,
-      margin
-    );
+    y = sectionHeader(doc, `DATA TEKNIS — ${objType.toUpperCase()}`, y, pageW, margin);
 
     const specificRows = specificKeys.map((k) => [
       FIELD_LABELS[k] || camelToLabel(k),
@@ -370,19 +498,10 @@ export const exportToPDF = async (
       head: [['Parameter', 'Nilai']],
       body: specificRows,
       theme: 'grid',
-      headStyles: {
-        fillColor: COLOR.slate,
-        textColor: COLOR.white,
-        fontStyle: 'bold',
-        fontSize: 8,
-      },
+      headStyles: { fillColor: COLOR.slate, textColor: COLOR.white, fontStyle: 'bold', fontSize: 8 },
       bodyStyles: { fontSize: 8, cellPadding: 3 },
       columnStyles: {
-        0: {
-          cellWidth: contentW * 0.5,
-          fontStyle: 'bold',
-          textColor: COLOR.slate,
-        },
+        0: { cellWidth: contentW * 0.5, fontStyle: 'bold', textColor: COLOR.slate },
         1: { cellWidth: contentW * 0.5, textColor: COLOR.black },
       },
       alternateRowStyles: { fillColor: [248, 250, 252] },
@@ -410,8 +529,7 @@ export const exportToPDF = async (
   }
 
   // ---- SEKSI: FOTO DOKUMENTASI ----
-  // FIXED: Adaptive layout — portrait=1 kolom full, landscape=2 kolom
-  // Aspect ratio dijaga, tidak ada foto yang gepeng
+  // Layout baru: grid 2 kolom seragam, max tinggi 65mm per foto
   const photos: any[] = item.photos || [];
   if (photos.length > 0) {
     y = checkPageBreak(doc, y, 30, pageH, margin);
@@ -423,189 +541,20 @@ export const exportToPDF = async (
       margin
     );
 
-    // Pre-load semua dimensi foto dulu
+    // Resolve semua foto dulu (lokal atau dari Drive)
+    const resolvedDataUrls = await Promise.all(
+      photos.map((p) => resolvePhotoDataUrl(p))
+    );
+    // Ambil dimensi semua foto
     const dimensions = await Promise.all(
-      photos.map((p) => getImageDimensions(p.dataUrl || ''))
+      resolvedDataUrls.map((url) => getImageDimensions(url))
     );
 
-    let i = 0;
-    while (i < photos.length) {
-      const dim = dimensions[i];
-      const isPortrait = dim.height > dim.width;
-
-      if (isPortrait) {
-        // ---- PORTRAIT: 1 kolom penuh ----
-        // Hitung tinggi berdasarkan aspect ratio, max 120mm tingginya
-        const aspectRatio = dim.height / dim.width;
-        const photoW = contentW;
-        const photoH = Math.min(photoW * aspectRatio, 120);
-
-        y = checkPageBreak(doc, y, photoH + 12, pageH, margin);
-
-        try {
-          const dataUrl: string = photos[i].dataUrl || '';
-          if (dataUrl.startsWith('data:image')) {
-            // Kalau foto tidak penuh lebar karena aspect ratio, center-kan
-            const actualW = photoH / aspectRatio;
-            const xOffset = margin + (contentW - actualW) / 2;
-            doc.addImage(
-              dataUrl,
-              'JPEG',
-              xOffset,
-              y,
-              actualW,
-              photoH,
-              undefined,
-              'MEDIUM'
-            );
-          }
-        } catch {
-          doc.setFillColor(243, 244, 246);
-          doc.rect(margin, y, contentW, photoH, 'F');
-          doc.setFontSize(7);
-          doc.setTextColor(...COLOR.gray);
-          doc.text('Foto tidak tersedia', margin + contentW / 2, y + photoH / 2, {
-            align: 'center',
-          });
-        }
-
-        // Caption
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(6.5);
-        doc.setTextColor(...COLOR.gray);
-        doc.text(`Foto ${i + 1} (portrait)`, margin, y + photoH + 3.5);
-
-        y += photoH + 8;
-        i++;
-      } else {
-        // ---- LANDSCAPE: 2 kolom berdampingan ----
-        // Cek apakah foto berikutnya juga landscape
-        const nextDim = i + 1 < photos.length ? dimensions[i + 1] : null;
-        const nextIsLandscape = nextDim ? nextDim.width >= nextDim.height : false;
-
-        const colW = (contentW - 6) / 2;
-
-        if (nextIsLandscape && i + 1 < photos.length) {
-          // Render 2 foto landscape berdampingan
-          // Pilih tinggi maksimum dari kedua foto (berdasarkan aspect ratio masing-masing)
-          const aspectLeft = dim.height / dim.width;
-          const aspectRight = nextDim!.height / nextDim!.width;
-          const heightLeft = colW * aspectLeft;
-          const heightRight = colW * aspectRight;
-          const rowH = Math.max(heightLeft, heightRight);
-
-          y = checkPageBreak(doc, y, rowH + 12, pageH, margin);
-
-          // Foto kiri
-          try {
-            const dataUrl = photos[i].dataUrl || '';
-            if (dataUrl.startsWith('data:image')) {
-              // Center vertikal dalam row
-              const actualH = colW * aspectLeft;
-              const yOffset = y + (rowH - actualH) / 2;
-              doc.addImage(
-                dataUrl,
-                'JPEG',
-                margin,
-                yOffset,
-                colW,
-                actualH,
-                undefined,
-                'MEDIUM'
-              );
-            }
-          } catch {
-            doc.setFillColor(243, 244, 246);
-            doc.rect(margin, y, colW, rowH, 'F');
-            doc.setFontSize(7);
-            doc.setTextColor(...COLOR.gray);
-            doc.text('Foto tidak tersedia', margin + colW / 2, y + rowH / 2, {
-              align: 'center',
-            });
-          }
-
-          // Foto kanan
-          try {
-            const dataUrl = photos[i + 1].dataUrl || '';
-            if (dataUrl.startsWith('data:image')) {
-              const actualH = colW * aspectRight;
-              const yOffset = y + (rowH - actualH) / 2;
-              doc.addImage(
-                dataUrl,
-                'JPEG',
-                margin + colW + 6,
-                yOffset,
-                colW,
-                actualH,
-                undefined,
-                'MEDIUM'
-              );
-            }
-          } catch {
-            doc.setFillColor(243, 244, 246);
-            doc.rect(margin + colW + 6, y, colW, rowH, 'F');
-            doc.setFontSize(7);
-            doc.setTextColor(...COLOR.gray);
-            doc.text(
-              'Foto tidak tersedia',
-              margin + colW + 6 + colW / 2,
-              y + rowH / 2,
-              { align: 'center' }
-            );
-          }
-
-          // Caption
-          doc.setFont('helvetica', 'normal');
-          doc.setFontSize(6.5);
-          doc.setTextColor(...COLOR.gray);
-          doc.text(`Foto ${i + 1}`, margin, y + rowH + 3.5);
-          doc.text(`Foto ${i + 2}`, margin + colW + 6, y + rowH + 3.5);
-
-          y += rowH + 8;
-          i += 2;
-        } else {
-          // Landscape sendirian (pasangan berikutnya portrait atau tidak ada)
-          // Render 1 kolom tapi dengan lebar penuh agar tidak terlalu kecil
-          const aspectRatio = dim.height / dim.width;
-          const photoW = contentW;
-          const photoH = photoW * aspectRatio;
-
-          y = checkPageBreak(doc, y, photoH + 12, pageH, margin);
-
-          try {
-            const dataUrl = photos[i].dataUrl || '';
-            if (dataUrl.startsWith('data:image')) {
-              doc.addImage(
-                dataUrl,
-                'JPEG',
-                margin,
-                y,
-                photoW,
-                photoH,
-                undefined,
-                'MEDIUM'
-              );
-            }
-          } catch {
-            doc.setFillColor(243, 244, 246);
-            doc.rect(margin, y, photoW, photoH, 'F');
-            doc.setFontSize(7);
-            doc.setTextColor(...COLOR.gray);
-            doc.text('Foto tidak tersedia', margin + photoW / 2, y + photoH / 2, {
-              align: 'center',
-            });
-          }
-
-          doc.setFont('helvetica', 'normal');
-          doc.setFontSize(6.5);
-          doc.setTextColor(...COLOR.gray);
-          doc.text(`Foto ${i + 1} (landscape)`, margin, y + photoH + 3.5);
-
-          y += photoH + 8;
-          i++;
-        }
-      }
-    }
+    // Render dengan grid 2 kolom compact
+    y = await renderPhotoGrid(
+      doc, photos, resolvedDataUrls, dimensions,
+      y, pageH, margin, contentW
+    );
   }
 
   // ---- FOOTER di setiap halaman ----
@@ -626,9 +575,7 @@ export const exportToPDF = async (
       margin,
       pageH - 4
     );
-    doc.text(`Halaman ${p} / ${totalPages}`, pageW - margin, pageH - 4, {
-      align: 'right',
-    });
+    doc.text(`Halaman ${p} / ${totalPages}`, pageW - margin, pageH - 4, { align: 'right' });
   }
 
   doc.save(`${fileName}.pdf`);

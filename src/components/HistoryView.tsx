@@ -239,6 +239,40 @@ function HistoryCard({
         <span className="px-2 py-0.5 bg-blue-50 text-blue-600 border border-blue-100 rounded-full text-[10px] font-bold">
           📷 {item.photos.length} foto
         </span>
+
+        {/* Preview foto — tampilkan maks 3 thumbnail */}
+        {item.photos.length > 0 && (
+          <div className="flex gap-1 mt-1 flex-wrap">
+            {item.photos.slice(0, 3).map((photo: any, idx: number) => {
+              // Tentukan src: pakai dataUrl lokal jika ada, pakai Drive URL jika tidak
+              const src = photo.dataUrl && photo.dataUrl.startsWith('data:image')
+                ? photo.dataUrl
+                : photo.driveFileId
+                  ? `https://drive.google.com/uc?export=view&id=${photo.driveFileId}`
+                  : null;
+
+              if (!src) return null;
+
+              return (
+                <img
+                  key={idx}
+                  src={src}
+                  alt={`Foto ${idx + 1}`}
+                  className="w-14 h-14 object-cover rounded border border-gray-200"
+                  onError={(e) => {
+                    // Kalau foto gagal load, sembunyikan thumbnail
+                    (e.target as HTMLImageElement).style.display = 'none';
+                  }}
+                />
+              );
+            })}
+            {item.photos.length > 3 && (
+              <div className="w-14 h-14 flex items-center justify-center rounded border border-gray-200 bg-gray-50 text-gray-400 text-[10px] font-bold">
+                +{item.photos.length - 3}
+              </div>
+            )}
+          </div>
+        )}
         {item.inspectorEmail && (
           <span className="px-2 py-0.5 bg-slate-50 text-slate-500 border border-slate-100 rounded-full text-[10px] font-bold truncate max-w-[140px]">
             👷 {item.inspectorEmail}
