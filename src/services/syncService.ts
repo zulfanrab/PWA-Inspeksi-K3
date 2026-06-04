@@ -146,13 +146,17 @@ export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skip
           const existingDriveIds = new Set(
             existingPhotos.map((p: any) => p.driveFileId).filter(Boolean)
           );
-          for (const fileId of (driveData.drivePhotoIds ?? [])) {
+          const driveFileNames: string[] = driveData.drivePhotoFileNames ?? [];
+          for (let fi = 0; fi < (driveData.drivePhotoIds ?? []).length; fi++) {
+            const fileId = driveData.drivePhotoIds[fi];
+            const fileName = driveFileNames[fi];
             if (!existingDriveIds.has(fileId)) {
               await db.inspection_photos.add({
                 id: crypto.randomUUID(),
                 sessionId: driveData.id,
                 dataUrl: '',
                 driveFileId: fileId,
+                fileName: fileName, // diisi saat pull-inspections return fileName
                 createdAt: driveUpdatedAt,
               });
             }
@@ -197,7 +201,10 @@ export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skip
             drivePhotoIds: driveData.drivePhotoIds ?? [],
           });
           
-          for (const fileId of (driveData.drivePhotoIds ?? [])) {
+          const driveFileNames: string[] = driveData.drivePhotoFileNames ?? [];
+          for (let fi = 0; fi < (driveData.drivePhotoIds ?? []).length; fi++) {
+            const fileId = driveData.drivePhotoIds[fi];
+            const fileName = driveFileNames[fi];
             const alreadyExists = await db.inspection_photos
               .where('driveFileId').equals(fileId).first();
             if (!alreadyExists) {
@@ -206,6 +213,7 @@ export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skip
                 sessionId: driveData.id,
                 dataUrl: '',
                 driveFileId: fileId,
+                fileName: fileName,
                 createdAt: driveCreatedAt,
               });
             }

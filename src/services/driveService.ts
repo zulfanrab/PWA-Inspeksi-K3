@@ -159,6 +159,7 @@ export const uploadToDrive = async (
       if (photoData.fileId && photo.id) {
         await db.inspection_photos.update(photo.id, {
           driveFileId: photoData.fileId,
+          fileName: photoData.fileName,
         });
       }
 

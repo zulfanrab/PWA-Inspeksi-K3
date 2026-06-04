@@ -29,7 +29,8 @@ export interface InspectionPhoto {
   id: string;
   sessionId: string;
   dataUrl: string;
-  driveFileId?: string;  // ← TAMBAHAN: fileId foto di Google Drive
+  driveFileId?: string;
+  fileName?: string;
   createdAt: number;
 }
 
@@ -111,7 +112,7 @@ export class MyDatabase extends Dexie {
     });
     this.version(9).stores({
       inspection_sessions: 'id, clientName, status, createdAt, templateClientId, inspectorEmail, driveFolderId, uploadStatus',
-      inspection_photos: 'id, sessionId, createdAt, driveFileId',
+      inspection_photos: 'id, sessionId, createdAt, driveFileId, fileName',
       client_templates: 'id, name, createdAt, createdBy, deleted',
       unit_templates: 'id, clientId, objectType, createdAt, createdBy, deleted',
       user_roles: 'id, role, createdAt',
@@ -133,7 +134,12 @@ export const SessionRepository = {
     const sessions = await db.inspection_sessions.where('status').equals('synced').toArray();
     return Promise.all(sessions.map(async (s) => ({
       ...s,
-      photos: await db.inspection_photos.where('sessionId').equals(s.id).toArray(),
+      photos: (await db.inspection_photos.where('sessionId').equals(s.id).toArray())
+        .sort((a, b) => {
+          // Sort by fileName (foto-001, foto-002) kalau ada, fallback ke createdAt
+          if (a.fileName && b.fileName) return a.fileName.localeCompare(b.fileName);
+          return a.createdAt - b.createdAt;
+        }),
     })));
   },
   getClientNames: async () => {

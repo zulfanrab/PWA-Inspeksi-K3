@@ -66,13 +66,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (folderId) {
           const photoRes = await drive.files.list({
             q: `'${folderId}' in parents and name != 'data-inspeksi.json' and trashed=false`,
-            fields: 'files(id)',
+            fields: 'files(id, name)',
             spaces: 'drive',
             pageSize: 1000,
           });
-          parsed.drivePhotoIds = (photoRes.data.files ?? []).map((f) => f.id!);
+          const photoFiles = photoRes.data.files ?? [];
+          // Urutkan by nama file (foto-001, foto-002, dst)
+          photoFiles.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
+          parsed.drivePhotoIds = photoFiles.map((f) => f.id!);
+          parsed.drivePhotoFileNames = photoFiles.map((f) => f.name!);
         } else {
           parsed.drivePhotoIds = [];
+          parsed.drivePhotoFileNames = [];
         }
 
         results.push(parsed);
