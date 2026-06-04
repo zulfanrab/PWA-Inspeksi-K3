@@ -178,7 +178,8 @@ export const uploadToDrive = async (
 
     await db.inspection_sessions.update(session.id, {
       uploadStatus: 'fully_synced',
-      status: 'synced' // ubah status jadi synced
+      status: 'synced',
+      updatedAt: Date.now(), // ← trigger device lain untuk pull ulang
     });
 
     return { success: true, folderId: folderId! };

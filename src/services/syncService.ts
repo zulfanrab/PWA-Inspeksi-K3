@@ -184,7 +184,6 @@ export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skip
             drivePhotoIds: driveData.drivePhotoIds ?? [],
           });
           
-          // Populate foto dari drivePhotoIds (tanpa base64, hanya simpan driveFileId)
           for (const fileId of (driveData.drivePhotoIds ?? [])) {
             const alreadyExists = await db.inspection_photos
               .where('driveFileId').equals(fileId).first();
@@ -192,12 +191,24 @@ export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skip
               await db.inspection_photos.add({
                 id: crypto.randomUUID(),
                 sessionId: driveData.id,
-                dataUrl: '',           // kosong — foto diambil langsung dari Drive saat ditampilkan
+                dataUrl: '',
                 driveFileId: fileId,
                 createdAt: driveCreatedAt,
               });
             }
           }
+
+          // Patch foto lama yang driveFileId-nya masih kosong
+          const allPhotosElse = await db.inspection_photos
+            .where('sessionId').equals(driveData.id).toArray();
+          const photosWithoutIdElse = allPhotosElse.filter((p: any) => !p.driveFileId);
+          const allDriveIdsElse = driveData.drivePhotoIds ?? [];
+          for (let idx = 0; idx < photosWithoutIdElse.length && idx < allDriveIdsElse.length; idx++) {
+            await db.inspection_photos.update(photosWithoutIdElse[idx].id, {
+              driveFileId: allDriveIdsElse[idx],
+            });
+          }
+
           pulled++;
         }
       } catch {
