@@ -99,7 +99,10 @@ export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skip
   let skipped = 0;
 
   try {
-    const res = await fetch(apiUrl('/api/pull-inspections'), { method: 'GET' });
+    const res = await fetch(apiUrl(`/api/pull-inspections?t=${Date.now()}`), {
+      method: 'GET',
+      headers: { 'Cache-Control': 'no-cache' },
+    });
     if (!res.ok) return { pulled: 0, skipped: 0 };
 
     const data = await res.json();
@@ -137,22 +140,7 @@ export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skip
         const existing = await db.inspection_sessions.get(driveData.id);
 
         if (existing) {
-          const localUpdatedAt = existing.updatedAt ?? existing.createdAt;
-          if (localUpdatedAt >= driveUpdatedAt) {
-            skipped++;
-            continue;
-          }
-          await db.inspection_sessions.update(driveData.id, {
-            clientName: driveData.clientName,
-            objectType: driveData.objectType,
-            unitData: driveData.unitData,
-            updatedAt: driveUpdatedAt,
-            inspectorEmail: driveData.inspectorEmail,
-            status: 'synced',
-            drivePhotoIds: driveData.drivePhotoIds ?? [],
-          });
-
-          // Populate foto dari Drive yang belum ada di lokal
+          // Populate foto dulu — tidak peduli timestamp
           const existingPhotos = await db.inspection_photos
             .where('sessionId').equals(driveData.id).toArray();
           const existingDriveIds = new Set(
@@ -169,6 +157,31 @@ export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skip
               });
             }
           }
+          // Patch foto lama yang driveFileId kosong
+          const photosWithoutId = existingPhotos.filter((p: any) => !p.driveFileId);
+          const allDriveIds = driveData.drivePhotoIds ?? [];
+          for (let idx = 0; idx < photosWithoutId.length && idx < allDriveIds.length; idx++) {
+            await db.inspection_photos.update(photosWithoutId[idx].id, {
+              driveFileId: allDriveIds[idx],
+            });
+          }
+
+          const localUpdatedAt = existing.updatedAt ?? existing.createdAt;
+          if (localUpdatedAt >= driveUpdatedAt) {
+            skipped++;
+            continue;
+          }
+          await db.inspection_sessions.update(driveData.id, {
+            clientName: driveData.clientName,
+            objectType: driveData.objectType,
+            unitData: driveData.unitData,
+            updatedAt: driveUpdatedAt,
+            inspectorEmail: driveData.inspectorEmail,
+            status: 'synced',
+            drivePhotoIds: driveData.drivePhotoIds ?? [],
+          });
+
+
 
           pulled++;
         } else {

@@ -115,6 +115,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.warn('[pull-inspections] Gagal baca deleted-log:', e);
     }
 
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     return res.status(200).json({ inspections: results, deletedIds });
 
   } catch (err: any) {
