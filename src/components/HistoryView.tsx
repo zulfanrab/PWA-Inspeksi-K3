@@ -248,7 +248,7 @@ function HistoryCard({
               const src = photo.dataUrl && photo.dataUrl.startsWith('data:image')
                 ? photo.dataUrl
                 : photo.driveFileId
-                  ? `https://drive.google.com/uc?export=view&id=${photo.driveFileId}`
+                  ? `/api/photo-proxy?fileId=${photo.driveFileId}`
                   : null;
 
               if (!src) return null;

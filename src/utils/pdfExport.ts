@@ -169,7 +169,7 @@ async function resolvePhotoDataUrl(
   }
   if (photo.driveFileId) {
     try {
-      const url = `https://drive.google.com/uc?export=download&id=${photo.driveFileId}`;
+      const url = `/api/photo-proxy?fileId=${photo.driveFileId}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const blob = await res.blob();
