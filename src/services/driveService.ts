@@ -154,6 +154,14 @@ export const uploadToDrive = async (
         throw new Error(errData?.error || `Gagal upload foto ke-${i + 1}`);
       }
 
+      // ✅ FIX: Simpan driveFileId balik ke inspection_photos
+      const photoData = await photoRes.json().catch(() => ({}));
+      if (photoData.fileId && photo.id) {
+        await db.inspection_photos.update(photo.id, {
+          driveFileId: photoData.fileId,
+        });
+      }
+
       // Catat progress di DB lokal biar aman kalau internet mendadak putus
       await db.inspection_sessions.update(session.id, {
         photosUploaded: i + 1
