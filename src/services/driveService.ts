@@ -223,6 +223,22 @@ export const uploadToDrive = async (
   }
 };
 
+export async function deletePhotoFromDrive(
+  driveFileId: string,
+  userEmail: string
+): Promise<void> {
+  const apiBase = getApiBaseUrl();
+  const res = await fetch(`${apiBase}/api/delete-photo`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fileId: driveFileId, userEmail }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error || 'Gagal hapus foto dari Drive');
+  }
+}
+
 // Dipertahankan untuk backward compat
 export async function uploadTextFile(
   _token: string,

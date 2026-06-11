@@ -27,6 +27,7 @@ import {
  isTokenExpiringSoon,
   trySilentRefresh,
   type UploadProgress,
+  deletePhotoFromDrive,
 } from './services/driveService';
 import {
   pullTemplatesFromDrive,
@@ -718,6 +719,19 @@ export default function App() {
           newPhotos,
           deletedPhotoIds
         );
+        // Hapus foto yang didelete dari Drive
+        if (deletedPhotoIds.length > 0 && isOnline) {
+          for (const photoId of deletedPhotoIds) {
+            const photo = existingPhotos.find(p => p.id === photoId);
+            if (photo?.driveFileId) {
+              try {
+                await deletePhotoFromDrive(photo.driveFileId, currentUserEmail);
+              } catch (e) {
+                console.warn('[App] Gagal hapus foto dari Drive:', e);
+              }
+            }
+          }
+        }
 
         if (isOnline) {
           try {
