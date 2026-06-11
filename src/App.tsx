@@ -24,7 +24,8 @@ import {
   saveToken,
   clearToken,
   TokenExpiredError,
-  isTokenExpiringSoon,
+ isTokenExpiringSoon,
+  trySilentRefresh,
   type UploadProgress,
 } from './services/driveService';
 import {
@@ -496,7 +497,23 @@ export default function App() {
     refreshData();
     pullTemplatesFromDrive().catch(console.warn);
     setTimeout(() => doPullInspections(), 2000);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+ }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto silent refresh — cek tiap 10 menit, refresh kalau token mau expired
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const check = () => {
+      if (isTokenExpiringSoon(15)) {
+        trySilentRefresh(
+          GOOGLE_CONFIG.clientId,
+          getGoogleRedirectUri()
+        );
+      }
+    };
+    check(); // cek langsung pas mount
+    const interval = setInterval(check, 10 * 60 * 1000); // tiap 10 menit
+    return () => clearInterval(interval);
+  }, [isAuthenticated]);
 
   // ── Auto sync ──────────────────────────────────────────────────────────────
 

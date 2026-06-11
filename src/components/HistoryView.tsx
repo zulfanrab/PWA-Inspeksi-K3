@@ -1,6 +1,7 @@
 // src/components/HistoryView.tsx
 // FIXED: Ganti tombol Upload Ulang → Edit & Update (langsung ke form edit)
 // FIXED: Tombol Download PDF tetap ada
+// NEW: Tombol Sync diganti jadi Photo Gallery dengan select multi + download
 
 import { useState, useMemo } from 'react';
 import type { InspectionSession, InspectionPhoto } from '../db/db';
@@ -31,7 +32,7 @@ interface HistoryViewProps {
   history: SessionWithPhotos[];
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
-  onReSync: (id: string) => void;        // tetap ada agar App.tsx tidak error
+  onReSync: (id: string) => void;
   isAuthenticated: boolean;
   isOnline: boolean;
   uploadingId: string | null;
@@ -78,11 +79,11 @@ export function HistoryView({
   };
 
   const cardProps = (item: SessionWithPhotos) => ({
-  item, onEdit, onDelete, onReSync,   // ← tambah onReSync
-  isUploading: uploadingId === item.id,
-  progress: uploadingId === item.id ? uploadProgress : null,
-  currentUserEmail,
-});
+    item, onEdit, onDelete, onReSync,
+    isUploading: uploadingId === item.id,
+    progress: uploadingId === item.id ? uploadProgress : null,
+    currentUserEmail,
+  });
 
   if (history.length === 0) {
     return (
@@ -127,7 +128,6 @@ export function HistoryView({
         </button>
       </div>
 
-      {/* Konten tab */}
       {activeTab === 'recent' && (
         <div className="space-y-3">
           {recent.map((item) => (
@@ -170,11 +170,14 @@ export function HistoryView({
   );
 }
 
+// ==========================================
+// HISTORY CARD
+// ==========================================
+
 function HistoryCard({
   item,
   onEdit,
   onDelete,
-  onReSync,
   isUploading,
   progress,
   currentUserEmail,
@@ -190,6 +193,7 @@ function HistoryCard({
   const meta = OBJECT_TYPES.find((o) => o.key === item.objectType);
   const dateStr = formatDate(item.updatedAt || item.createdAt);
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [showGallery, setShowGallery] = useState(false);
 
   const handleDownloadPDF = async () => {
     setPdfLoading(true);
@@ -243,29 +247,23 @@ function HistoryCard({
           📷 {item.photos.length} foto
         </span>
 
-        {/* Preview foto — tampilkan maks 3 thumbnail */}
+        {/* Preview foto — maks 3 thumbnail */}
         {item.photos.length > 0 && (
           <div className="flex gap-1 mt-1 flex-wrap">
             {item.photos.slice(0, 3).map((photo: any, idx: number) => {
-              // Tentukan src: pakai dataUrl lokal jika ada, pakai Drive URL jika tidak
               const src = photo.dataUrl && photo.dataUrl.startsWith('data:image')
                 ? photo.dataUrl
                 : photo.driveFileId
                   ? `/api/photo-proxy?fileId=${photo.driveFileId}`
                   : null;
-
               if (!src) return null;
-
               return (
                 <img
                   key={idx}
                   src={src}
                   alt={`Foto ${idx + 1}`}
                   className="w-14 h-14 object-cover rounded border border-gray-200"
-                  onError={(e) => {
-                    // Kalau foto gagal load, sembunyikan thumbnail
-                    (e.target as HTMLImageElement).style.display = 'none';
-                  }}
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                 />
               );
             })}
@@ -276,6 +274,7 @@ function HistoryCard({
             )}
           </div>
         )}
+
         {item.inspectorEmail && (
           <span className="px-2 py-0.5 bg-slate-50 text-slate-500 border border-slate-100 rounded-full text-[10px] font-bold truncate max-w-[140px]">
             👷 {item.inspectorEmail}
@@ -303,7 +302,7 @@ function HistoryCard({
         )}
       </div>
 
-      {/* Progress bar kalau sedang upload */}
+      {/* Progress bar */}
       {isUploading && progress && (
         <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 space-y-2">
           <div className="flex items-center justify-between">
@@ -325,38 +324,218 @@ function HistoryCard({
         </div>
       )}
 
-      {/* Tombol bawah: Edit & Update + Sync Ulang + Download PDF */}
-<div className="grid grid-cols-3 gap-2">
-  <button
-    onClick={() => onEdit(item.id)}
-    disabled={isUploading}
-    className="py-2.5 flex items-center justify-center gap-1.5 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-lg transition-all"
-    title="Edit data & foto"
-  >
-    {isUploading ? <><Spinner />Uploading...</> : <>✏️ Edit</>}
-  </button>
+      {/* Tombol bawah */}
+      <div className="grid grid-cols-3 gap-2">
+        <button
+          onClick={() => onEdit(item.id)}
+          disabled={isUploading}
+          className="py-2.5 flex items-center justify-center gap-1.5 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-lg transition-all"
+        >
+          {isUploading ? <><Spinner />Uploading...</> : <>✏️ Edit</>}
+        </button>
 
-  <button
-    onClick={() => onReSync(item.id)}
-    disabled={isUploading}
-    className="py-2.5 flex items-center justify-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-lg transition-all"
-    title="Upload ulang ke Drive"
-  >
-    {isUploading ? <><Spinner />Syncing...</> : <>🔄 Sync</>}
-  </button>
+        <button
+          onClick={() => setShowGallery(true)}
+          disabled={isUploading || item.photos.length === 0}
+          className="py-2.5 flex items-center justify-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-lg transition-all"
+        >
+          🖼️ Galeri
+        </button>
 
-  <button
-    onClick={handleDownloadPDF}
-    disabled={pdfLoading || isUploading}
-    className="py-2.5 flex items-center justify-center gap-1.5 bg-slate-700 hover:bg-slate-800 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-lg transition-all"
-    title="Download laporan sebagai PDF"
-  >
-    {pdfLoading ? <><Spinner />PDF...</> : <>📄 PDF</>}
-  </button>
-</div>
+        <button
+          onClick={handleDownloadPDF}
+          disabled={pdfLoading || isUploading}
+          className="py-2.5 flex items-center justify-center gap-1.5 bg-slate-700 hover:bg-slate-800 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-lg transition-all"
+        >
+          {pdfLoading ? <><Spinner />PDF...</> : <>📄 PDF</>}
+        </button>
+      </div>
+
+      {showGallery && (
+        <PhotoGalleryModal
+          photos={item.photos}
+          unitName={item.unitData?.namaUnit || 'Unit'}
+          onClose={() => setShowGallery(false)}
+        />
+      )}
     </div>
   );
 }
+
+// ==========================================
+// PHOTO GALLERY MODAL
+// ==========================================
+
+function PhotoGalleryModal({
+  photos,
+  unitName,
+  onClose,
+}: {
+  photos: any[];
+  unitName: string;
+  onClose: () => void;
+}) {
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [lightbox, setLightbox] = useState<number | null>(null);
+
+  const getSrc = (photo: any): string | null => {
+    if (photo.dataUrl?.startsWith('data:image')) return photo.dataUrl;
+    if (photo.driveFileId) return `/api/photo-proxy?fileId=${photo.driveFileId}`;
+    return null;
+  };
+
+  const toggleSelect = (idx: number) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      next.has(idx) ? next.delete(idx) : next.add(idx);
+      return next;
+    });
+  };
+
+  const selectAll = () => setSelected(new Set(photos.map((_, i) => i)));
+  const clearSelect = () => setSelected(new Set());
+
+  const downloadPhoto = (src: string, idx: number) => {
+    const a = document.createElement('a');
+    a.href = src;
+    a.download = `${unitName}_foto_${String(idx + 1).padStart(2, '0')}.jpg`;
+    a.click();
+  };
+
+  const downloadSelected = async () => {
+    for (const idx of Array.from(selected)) {
+      const src = getSrc(photos[idx]);
+      if (!src) continue;
+      await new Promise(r => setTimeout(r, 300));
+      downloadPhoto(src, idx);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/80 flex flex-col"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 bg-gray-900 flex-shrink-0">
+        <div>
+          <p className="text-white text-sm font-bold">🖼️ {unitName}</p>
+          <p className="text-gray-400 text-[10px]">{photos.length} foto</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {selected.size > 0 ? (
+            <>
+              <button
+                onClick={downloadSelected}
+                className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg"
+              >
+                ⬇️ Download {selected.size} foto
+              </button>
+              <button
+                onClick={clearSelect}
+                className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs font-bold rounded-lg"
+              >
+                Batal
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={selectAll}
+              className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs font-bold rounded-lg"
+            >
+              Pilih semua
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            className="w-8 h-8 flex items-center justify-center bg-gray-700 hover:bg-gray-600 text-white rounded-lg text-sm font-bold"
+          >✕</button>
+        </div>
+      </div>
+
+      {/* Grid foto */}
+      <div className="flex-1 overflow-y-auto p-3">
+        <div className="grid grid-cols-3 gap-2">
+          {photos.map((photo, idx) => {
+            const src = getSrc(photo);
+            if (!src) return null;
+            const isSelected = selected.has(idx);
+            return (
+              <div
+                key={idx}
+                className="relative rounded-lg overflow-hidden border-2 transition-all cursor-pointer"
+                style={{
+                  aspectRatio: '1',
+                  borderColor: isSelected ? '#10B981' : 'transparent',
+                }}
+              >
+                <img
+                  src={src}
+                  alt={`Foto ${idx + 1}`}
+                  className="w-full h-full object-cover"
+                  onClick={() => setLightbox(idx)}
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                />
+                {/* Checkbox */}
+                <button
+                  onClick={(e) => { e.stopPropagation(); toggleSelect(idx); }}
+                  className="absolute top-1.5 left-1.5 w-5 h-5 rounded-full border-2 border-white flex items-center justify-center text-[10px] font-bold"
+                  style={{ background: isSelected ? '#10B981' : 'rgba(0,0,0,0.4)' }}
+                >
+                  {isSelected ? '✓' : ''}
+                </button>
+                {/* Download single */}
+                <button
+                  onClick={(e) => { e.stopPropagation(); downloadPhoto(src, idx); }}
+                  className="absolute bottom-1.5 right-1.5 w-6 h-6 rounded-lg bg-black/50 hover:bg-black/80 text-white flex items-center justify-center text-[10px]"
+                >⬇️</button>
+                <span className="absolute bottom-1.5 left-1.5 text-[9px] text-white font-bold bg-black/40 px-1 rounded">
+                  {String(idx + 1).padStart(2, '0')}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Lightbox */}
+      {lightbox !== null && (
+        <div
+          className="absolute inset-0 z-10 bg-black/95 flex flex-col items-center justify-center"
+          onClick={() => setLightbox(null)}
+        >
+          <img
+            src={getSrc(photos[lightbox]) || ''}
+            alt={`Foto ${lightbox + 1}`}
+            className="max-w-full max-h-[80vh] object-contain rounded"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <div className="flex items-center gap-4 mt-4">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setLightbox(i => (i !== null && i > 0 ? i - 1 : i));
+              }}
+              className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white text-xs font-bold rounded-lg"
+            >← Prev</button>
+            <span className="text-white text-xs font-bold">{lightbox + 1} / {photos.length}</span>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setLightbox(i => (i !== null && i < photos.length - 1 ? i + 1 : i));
+              }}
+              className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white text-xs font-bold rounded-lg"
+            >Next →</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ==========================================
+// SPINNER
+// ==========================================
 
 function Spinner() {
   return (

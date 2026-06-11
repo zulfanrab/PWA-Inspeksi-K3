@@ -59,6 +59,34 @@ export function isTokenExpiringSoon(_withinMinutes = 10): boolean {
 }
 
 // ==========================================
+// SILENT REFRESH
+// ==========================================
+export function trySilentRefresh(clientId: string, redirectUri: string): void {
+  const silentUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=token&scope=openid email profile&prompt=none`;
+  
+  const iframe = document.createElement('iframe');
+  iframe.style.display = 'none';
+  iframe.src = silentUrl;
+  
+  iframe.onload = () => {
+    try {
+      const hash = iframe.contentWindow?.location.hash || '';
+      if (hash.includes('access_token')) {
+        const params = new URLSearchParams(hash.substring(1));
+        const token = params.get('access_token');
+        const expiresIn = parseInt(params.get('expires_in') || '3600', 10);
+        if (token) saveToken(token, expiresIn);
+      }
+    } catch {
+      // Cross-origin block — silent fail, user tetap bisa pakai app
+    } finally {
+      document.body.removeChild(iframe);
+    }
+  };
+  document.body.appendChild(iframe);
+}
+
+// ==========================================
 // MAIN UPLOAD FUNCTION (SEQUENTIAL QUEUE)
 // ==========================================
 

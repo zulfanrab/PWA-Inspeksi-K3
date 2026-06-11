@@ -136,8 +136,9 @@ export const SessionRepository = {
       ...s,
       photos: (await db.inspection_photos.where('sessionId').equals(s.id).toArray())
         .sort((a, b) => {
-          // Sort by fileName (foto-001, foto-002) kalau ada, fallback ke createdAt
           if (a.fileName && b.fileName) return a.fileName.localeCompare(b.fileName);
+          if (a.fileName) return -1;
+          if (b.fileName) return 1;
           return a.createdAt - b.createdAt;
         }),
     })));

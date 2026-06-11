@@ -113,9 +113,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     } else {
       const rootFolderId = await getOrCreateFolder(drive, 'Aksara Inspect', null);
       const clientFolderId = await getOrCreateFolder(drive, session.clientName, rootFolderId);
-      const dateStr = new Date(session.createdAt).toISOString().slice(0, 10);
+      const dateStr = new Date(session.createdAt).toLocaleDateString('sv-SE', { timeZone: 'Asia/Jakarta' });
       const dateFolderId = await getOrCreateFolder(drive, dateStr, clientFolderId);
-      const typeFolderId = await getOrCreateFolder(drive, session.objectType, dateFolderId);
+      const objectTypeLabel: Record<string, string> = {
+  'Angkur': 'Safety Anchor',
+  'PAA': 'Pesawat Angkat & Angkut',
+  'PUBT': 'Pesawat Uap & Bejana Tekan',
+  'PTP': 'Pesawat Tenaga & Produksi',
+  'Listrik': 'Instalasi Listrik',
+  'Penyalur Petir': 'Instalasi Penyalur Petir',
+  'Lift': 'Elevator & Eskalator',
+  'Proteksi Kebakaran': 'Proteksi Kebakaran',
+};
+const typeFolderName = objectTypeLabel[session.objectType] ?? session.objectType;
+const typeFolderId = await getOrCreateFolder(drive, typeFolderName, dateFolderId);
       const unitFolderName = `${session.unitData?.namaUnit || 'Unit'} - ${session.unitData?.nomorSeri || 'NoSeri'}`;
       unitFolderId = await getOrCreateFolder(drive, unitFolderName, typeFolderId);
     }
