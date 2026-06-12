@@ -20,32 +20,33 @@ function validateServiceAccountKey(key: unknown): key is ServiceAccountKey {
 
 export function getDriveClient() {
   const keyJson = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
+  
   if (!keyJson) {
-    throw new Error('[driveClient] GOOGLE_SERVICE_ACCOUNT_KEY tidak ada di env');
+    throw new Error('[driveClient] GOOGLE_SERVICE_ACCOUNT_KEY tidak ada di env Vercel');
   }
 
   let key: unknown;
   try {
     key = JSON.parse(keyJson);
   } catch {
-    throw new Error(
-      '[driveClient] GOOGLE_SERVICE_ACCOUNT_KEY bukan JSON valid. ' +
-      'Pastikan tidak ada newline atau karakter aneh saat paste ke Vercel env.'
-    );
+    throw new Error('[driveClient] GOOGLE_SERVICE_ACCOUNT_KEY bukan JSON valid. Pastikan format di Vercel tidak rusak.');
   }
 
   if (!validateServiceAccountKey(key)) {
-    throw new Error(
-      '[driveClient] Service account key tidak lengkap. ' +
-      'Field wajib: type, private_key, client_email, token_uri.'
-    );
+    throw new Error('[driveClient] Service account key tidak lengkap field-nya.');
   }
 
-  // Paling umum penyebab 400/500: private_key dari env kehilangan newline
-  // karena Vercel meng-escape \n menjadi \\n literal.
+  // =========================================================================
+  // FIX MUTLAK VERCEL: Mengubah literal "\\n" atau "\n" nyasar jadi baris baru beneran
+  // =========================================================================
+  let realPrivateKey = key.private_key;
+  if (typeof realPrivateKey === 'string') {
+    realPrivateKey = realPrivateKey.split('\\n').join('\n').replace(/\\n/g, '\n');
+  }
+
   const credentials = {
     ...key,
-    private_key: key.private_key.replace(/\\n/g, '\n'),
+    private_key: realPrivateKey,
   };
 
   const auth = new google.auth.GoogleAuth({
