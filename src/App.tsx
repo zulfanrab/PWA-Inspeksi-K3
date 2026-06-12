@@ -275,36 +275,38 @@ async function compressPhoto(dataUrl: string): Promise<string> {
 
 // ─── DESIGN TOKENS ───────────────────────────────────────────────────────────
 
-const T = {
-  emerald500: '#10B981',
-  emerald600: '#059669',
-  emerald700: '#047857',
-  emerald900: '#065F46',
-  emeraldLight: '#ECFDF5',
-  emeraldBorder: '#6EE7B7',
-  emeraldText: '#065F46',
-  amber400: '#FCD34D',
-  amber500: '#F59E0B',
-  amber600: '#D97706',
-  amber700: '#B45309',
-  amber800: '#92400E',
-  amberLight: '#FFFBEB',
-  amberBorder: '#FDE68A',
-  amberMid: '#FEF3C7',
-  redLight: '#FEF2F2',
-  redBorder: '#FCA5A5',
-  redText: '#B91C1C',
-  bg: '#F7F8FA',
-  white: '#FFFFFF',
-  border: 'rgba(0,0,0,0.08)',
-  borderHover: 'rgba(0,0,0,0.15)',
-  textPrimary: '#0F172A',
-  textSecondary: '#64748B',
-  textMuted: '#94A3B8',
-};
+function getTokens(dark: boolean) {
+  return {
+    emerald500: '#10B981',
+    emerald600: '#059669',
+    emerald700: '#047857',
+    emerald900: dark ? '#064E3B' : '#065F46',
+    emeraldLight: dark ? '#052e16' : '#ECFDF5',
+    emeraldBorder: dark ? '#064E3B' : '#6EE7B7',
+    emeraldText: dark ? '#34D399' : '#065F46',
+    amber400: '#FCD34D',
+    amber500: '#F59E0B',
+    amber600: '#D97706',
+    amber700: dark ? '#FCD34D' : '#B45309',
+    amber800: dark ? '#FEF3C7' : '#92400E',
+    amberLight: dark ? '#1C1400' : '#FFFBEB',
+    amberBorder: dark ? '#78350F' : '#FDE68A',
+    amberMid: dark ? '#292000' : '#FEF3C7',
+    redLight: dark ? '#1C0A0A' : '#FEF2F2',
+    redBorder: dark ? '#7F1D1D' : '#FCA5A5',
+    redText: dark ? '#FCA5A5' : '#B91C1C',
+    bg: dark ? '#0F172A' : '#F7F8FA',
+    white: dark ? '#1E293B' : '#FFFFFF',
+    border: dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
+    borderHover: dark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)',
+    textPrimary: dark ? '#F1F5F9' : '#0F172A',
+    textSecondary: dark ? '#94A3B8' : '#64748B',
+    textMuted: dark ? '#64748B' : '#94A3B8',
+  };
+}
 
 // ─── SUB-COMPONENTS ───────────────────────────────────────────────────────────
-
+const T = getTokens(false); // fallback untuk sub-components di luar App()
 function StatCard({ label, value, color, dot }: { label: string; value: number | string; color: string; dot: string }) {
   return (
     <div style={{ background: T.white, border: `0.5px solid ${T.border}`, borderRadius: 12, padding: '12px 14px', flex: 1 }}>
@@ -406,7 +408,10 @@ export default function App() {
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   const [tokenError, setTokenError] = useState<string | null>(null);
   const [pullStatus, setPullStatus] = useState<string | null>(null);
-
+  const [darkMode, setDarkMode] = useState(() => {
+    return localStorage.getItem('aksara_dark_mode') === 'true';
+  });
+  const T = getTokens(darkMode);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
@@ -498,8 +503,21 @@ export default function App() {
     refreshData();
     pullTemplatesFromDrive().catch(console.warn);
     setTimeout(() => doPullInspections(), 2000);
+    // Auto sync on mount kalau udah online + toggle aktif
+    const shouldAutoSync = localStorage.getItem('aksara_auto_sync') === 'true';
+    if (shouldAutoSync && navigator.onLine) {
+      setTimeout(() => triggerAutoSync(), 3000);
+    }
  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+ useEffect(() => {
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    localStorage.setItem('aksara_dark_mode', String(darkMode));
+  }, [darkMode]);
   // Auto silent refresh — cek tiap 10 menit, refresh kalau token mau expired
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -941,6 +959,13 @@ export default function App() {
               <span style={{ background: T.amber400, color: T.amber800, borderRadius: 10, padding: '1px 5px', fontSize: 10, fontWeight: 700 }}>{drafts.length}</span>
             </button>
           )}
+          <button
+            onClick={() => setDarkMode(d => !d)}
+            style={{ width: 32, height: 32, borderRadius: 10, background: darkMode ? '#1E293B' : '#F1F5F9', border: `0.5px solid ${T.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 16 }}
+            title="Toggle dark mode"
+          >
+            {darkMode ? '☀️' : '🌙'}
+          </button>
           {isAuthenticated ? (
             <button onClick={handleLogout} title={currentUserEmail} style={{ padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `0.5px solid ${T.redBorder}`, background: T.redLight, color: T.redText }}>Logout</button>
           ) : (
