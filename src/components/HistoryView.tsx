@@ -414,10 +414,11 @@ function PhotoGalleryModal({
   return (
     <div
       className="fixed inset-0 z-50 bg-black/80 flex flex-col"
+      style={{ paddingTop: 'env(safe-area-inset-top)' }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 bg-gray-900 flex-shrink-0">
+      <div className="flex items-center justify-between px-4 py-3 bg-gray-900 flex-shrink-0" style={{ minHeight: 56 }}>
         <div>
           <p className="text-white text-sm font-bold">🖼️ {unitName}</p>
           <p className="text-gray-400 text-[10px]">{photos.length} foto</p>
