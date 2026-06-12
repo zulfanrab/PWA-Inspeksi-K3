@@ -5,7 +5,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { google } from 'googleapis';
 import { Readable } from 'stream';
-import { getDriveClient } from './_driveClient';
+import { getDriveClient } from './driveClient';
 
 // ─── Konstanta ────────────────────────────────────────────────────────────────
 const ADMIN_EMAIL = 'zulfanrafly03@gmail.com';
