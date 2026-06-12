@@ -55,11 +55,24 @@ function base64ToStream(rawBase64: string): Readable {
  * Exclude folder dan file JSON dari hitungan.
  * Menggunakan pageToken untuk handle folder dengan >1000 file.
  */
+async function fetchDriveFilePage(
+  drive: ReturnType<typeof getDriveClient>,
+  q: string,
+  pageToken?: string
+) {
+  return drive.files.list({
+    q,
+    fields: DRIVE_QUERY_FIELDS,
+    spaces: 'drive',
+    pageSize: 1000,
+    ...(pageToken ? { pageToken } : {}),
+  });
+}
+
 async function countExistingPhotos(
   drive: ReturnType<typeof getDriveClient>,
   parentId: string
 ): Promise<number> {
-  // Escape single quote dalam parentId untuk keamanan query
   const safeParentId = parentId.replace(/'/g, "\\'");
   const q = [
     `'${safeParentId}' in parents`,
@@ -69,21 +82,14 @@ async function countExistingPhotos(
   ].join(' and ');
 
   let totalCount = 0;
-  let pageToken: string | undefined = undefined;
+  let nextPageToken: string | undefined = undefined;
 
-  // Loop untuk handle pagination — pageSize 1000 tidak menjamin semua file
-  do {
-    const response = await drive.files.list({
-      q,
-      fields: DRIVE_QUERY_FIELDS,
-      spaces: 'drive',
-      pageSize: 1000,
-      ...(pageToken ? { pageToken } : {}),
-    });
-
-    totalCount += response.data.files?.length ?? 0;
-    pageToken = response.data.nextPageToken ?? undefined;
-  } while (pageToken);
+  while (true) {
+    const page = await fetchDriveFilePage(drive, q, nextPageToken);
+    totalCount += page.data.files?.length ?? 0;
+    nextPageToken = page.data.nextPageToken ?? undefined;
+    if (!nextPageToken) break;
+  }
 
   return totalCount;
 }
