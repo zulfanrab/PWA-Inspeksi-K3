@@ -6,22 +6,60 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { google } from 'googleapis';
+import { getDriveClient } from './driveClient';
 
-function getDriveClient() {
-  const clientId = process.env.VITE_GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
 
-  if (!clientId || !clientSecret || !refreshToken) {
-    throw new Error('ENV tidak lengkap');
+
+async function getRootFolderId(drive: any): Promise<string | null> {
+  const res = await drive.files.list({
+    q: `name='Aksara Inspect' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+    fields: 'files(id)',
+    spaces: 'drive',
+    pageSize: 1,
+  });
+  return res.data.files?.[0]?.id ?? null;
+}
+
+async function appendTombstone(drive: any, sessionId: string): Promise<void> {
+  const rootId = await getRootFolderId(drive);
+  if (!rootId) return;
+
+  const logName = 'deleted-log.json';
+  const existing = await drive.files.list({
+    q: `name='${logName}' and '${rootId}' in parents and trashed=false`,
+    fields: 'files(id)',
+    spaces: 'drive',
+    pageSize: 1,
+  });
+
+  const entry = { sessionId, deletedAt: new Date().toISOString() };
+
+  if (existing.data.files?.length) {
+    const fileId = existing.data.files[0].id!;
+    const contentRes = await drive.files.get(
+      { fileId, alt: 'media' },
+      { responseType: 'json' }
+    );
+    const current: any[] = Array.isArray(contentRes.data) ? contentRes.data : [];
+    current.push(entry);
+    const { Readable } = await import('stream');
+    const stream = Readable.from([JSON.stringify(current)]);
+    await drive.files.update({
+      fileId,
+      media: { mimeType: 'application/json', body: stream },
+    });
+  } else {
+    const { Readable } = await import('stream');
+    const stream = Readable.from([JSON.stringify([entry])]);
+    await drive.files.create({
+      requestBody: {
+        name: logName,
+        parents: [rootId],
+        mimeType: 'application/json',
+      },
+      media: { mimeType: 'application/json', body: stream },
+    });
   }
-
-  const oauth2Client = new google.auth.OAuth2(
-    clientId, clientSecret,
-    'https://developers.google.com/oauthplayground'
-  );
-  oauth2Client.setCredentials({ refresh_token: refreshToken });
-  return google.drive({ version: 'v3', auth: oauth2Client });
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -47,12 +85,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const drive = getDriveClient();
 
-    // SKENARIO 1: Jalur Cepat (Punya folderId dari kodingan baru Claude)
+    // SKENARIO 1: Jalur Cepat (Punya folderId dari kodingan baru)
     if (folderId) {
       await drive.files.update({
         fileId: folderId,
         requestBody: { trashed: true },
       });
+      await appendTombstone(drive, sessionId || folderId);
       return res.status(200).json({ success: true, method: 'direct_folder' });
     }
 
@@ -75,6 +114,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               await drive.files.update({ fileId: parentId, requestBody: { trashed: true } });
             }
             await drive.files.update({ fileId: file.id!, requestBody: { trashed: true } });
+            
+            await appendTombstone(drive, sessionId);
             return res.status(200).json({ success: true, method: 'search_session' });
           }
         } catch (e) {
@@ -92,33 +133,118 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
+
+// ==========================================
+// FILE: api\delete-photo.ts
+// ==========================================
+
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { google } from 'googleapis';
+import { getDriveClient } from './driveClient';
+
+
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  try {
+    const { fileId, userEmail } = req.body;
+
+    if (!fileId) return res.status(400).json({ error: 'fileId wajib ada' });
+
+    const ADMIN_EMAIL = 'zulfanrafly03@gmail.com';
+    if (userEmail !== ADMIN_EMAIL) {
+      return res.status(403).json({ error: 'Akses ditolak' });
+    }
+
+    const drive = getDriveClient();
+    await drive.files.update({
+      fileId,
+      requestBody: { trashed: true },
+    });
+
+    return res.status(200).json({ success: true });
+  } catch (err: any) {
+    console.error('[api/delete-photo] Error:', err.message);
+    return res.status(500).json({ error: err.message || 'Gagal hapus foto' });
+  }
+}
+
+
+// ==========================================
+// FILE: api\driveClient.ts
+// ==========================================
+
+import { google } from 'googleapis';
+
+export function getDriveClient() {
+  const keyJson = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
+  if (!keyJson) throw new Error('GOOGLE_SERVICE_ACCOUNT_KEY tidak ada di env');
+
+  const key = JSON.parse(keyJson);
+
+  const auth = new google.auth.GoogleAuth({
+    credentials: key,
+    scopes: ['https://www.googleapis.com/auth/drive'],
+  });
+
+  return google.drive({ version: 'v3', auth });
+}
+
+
+// ==========================================
+// FILE: api\photo-proxy.ts
+// ==========================================
+
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { google } from 'googleapis';
+import { getDriveClient } from './driveClient';
+
+
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  if (req.method === 'OPTIONS') return res.status(200).end();
+
+  const { fileId } = req.query;
+  if (!fileId || typeof fileId !== 'string') {
+    return res.status(400).json({ error: 'fileId wajib diisi' });
+  }
+
+  try {
+    const drive = getDriveClient();
+    const response = await drive.files.get(
+      { fileId, alt: 'media' },
+      { responseType: 'arraybuffer' }
+    );
+
+    const buffer = Buffer.from(response.data as ArrayBuffer);
+    res.setHeader('Content-Type', response.headers['content-type'] || 'image/jpeg');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    return res.status(200).send(buffer);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+
 // ==========================================
 // FILE: api\pull-inspections.ts
 // ==========================================
 
 // api/pull-inspections.ts
-// FIXED: Ganti Service Account → OAuth Refresh Token
+// FIXED: Menghapus filter mimeType yang kaku, dan bikin sistem baca JSON jadi kebal error.
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { google } from 'googleapis';
+import { getDriveClient } from './driveClient';
 
-function getDriveClient() {
-  const clientId = process.env.VITE_GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
 
-  if (!clientId || !clientSecret || !refreshToken) {
-    throw new Error('ENV tidak lengkap: butuh VITE_GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN');
-  }
-
-  const oauth2Client = new google.auth.OAuth2(
-    clientId,
-    clientSecret,
-    'https://developers.google.com/oauthplayground'
-  );
-  oauth2Client.setCredentials({ refresh_token: refreshToken });
-  return google.drive({ version: 'v3', auth: oauth2Client });
-}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -131,11 +257,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const drive = getDriveClient();
 
-    // Cari semua data-inspeksi.json di Drive owner
-    const q = `name='data-inspeksi.json' and mimeType='text/plain' and trashed=false`;
+    // 🔥 FIX UTAMA: mimeType dihapus dari pencarian biar data versi lama & baru kebaca semua
+    const q = `name='data-inspeksi.json' and trashed=false`;
+    
     const listRes = await drive.files.list({
       q,
-      fields: 'files(id, name, modifiedTime)',
+      fields: 'files(id, name, modifiedTime, parents)',
       spaces: 'drive',
       pageSize: 1000,
     });
@@ -147,22 +274,85 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       try {
         const contentRes = await drive.files.get(
           { fileId: file.id!, alt: 'media' },
-          { responseType: 'text' }
+          { responseType: 'json' } // Biarkan googleapis yang nentuin ini teks atau objek
         );
-        const parsed = JSON.parse(contentRes.data as string);
+        
+        // 🔥 FIX PARSER: Kebal dari error JSON.parse
+        let parsed;
+        if (typeof contentRes.data === 'string') {
+          parsed = JSON.parse(contentRes.data);
+        } else {
+          parsed = contentRes.data;
+        }
+
+        // Ambil fileId foto dari folder yang sama
+        const folderId = file.parents?.[0];
+        if (folderId) {
+          const photoRes = await drive.files.list({
+            q: `'${folderId}' in parents and name != 'data-inspeksi.json' and trashed=false`,
+            fields: 'files(id, name)',
+            spaces: 'drive',
+            pageSize: 1000,
+          });
+          const photoFiles = photoRes.data.files ?? [];
+          // Urutkan by nama file (foto-001, foto-002, dst)
+          photoFiles.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
+          parsed.drivePhotoIds = photoFiles.map((f) => f.id!);
+          parsed.drivePhotoFileNames = photoFiles.map((f) => f.name!);
+        } else {
+          parsed.drivePhotoIds = [];
+          parsed.drivePhotoFileNames = [];
+        }
+
         results.push(parsed);
       } catch (fileErr) {
-        console.warn(`[pull-inspections] Skip file ${file.id}:`, fileErr);
+        console.warn(`[pull-inspections] Gagal baca file ${file.id}:`, fileErr);
       }
     }
 
-    return res.status(200).json({ inspections: results });
+    // ==========================================
+    // BACA TOMBSTONE (LOG PENGHAPUSAN)
+    // ==========================================
+    let deletedIds: string[] = [];
+    try {
+      const rootRes = await drive.files.list({
+        q: `name='Aksara Inspect' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+        fields: 'files(id)',
+        spaces: 'drive',
+        pageSize: 1,
+      });
+      const rootId = rootRes.data.files?.[0]?.id;
+      
+      if (rootId) {
+        const logRes = await drive.files.list({
+          q: `name='deleted-log.json' and '${rootId}' in parents and trashed=false`,
+          fields: 'files(id)',
+          spaces: 'drive',
+          pageSize: 1,
+        });
+        
+        if (logRes.data.files?.length) {
+          const logContent = await drive.files.get(
+            { fileId: logRes.data.files[0].id!, alt: 'media' },
+            { responseType: 'json' }
+          );
+          const log: any[] = Array.isArray(logContent.data) ? logContent.data : [];
+          deletedIds = log.map((e) => e.sessionId).filter(Boolean);
+        }
+      }
+    } catch (e) {
+      console.warn('[pull-inspections] Gagal baca deleted-log:', e);
+    }
+
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    return res.status(200).json({ inspections: results, deletedIds });
 
   } catch (err: any) {
     console.error('[api/pull-inspections] Error:', err);
-    return res.status(500).json({ error: err.message || 'Gagal pull inspections' });
+    return res.status(500).json({ error: err.message || 'Gagal mengambil data inspeksi' });
   }
 }
+
 
 // ==========================================
 // FILE: api\sync-templates.ts
@@ -175,29 +365,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { google } from 'googleapis';
 import { Readable } from 'stream';
+import { getDriveClient } from './driveClient';
 
 // ─── Konstanta ────────────────────────────────────────────────────────────────
 const ADMIN_EMAIL = 'zulfanrafly03@gmail.com';
 const TEMPLATES_FILENAME = '_sync_templates.json';
 
-// ─── Helper: Google Auth ──────────────────────────────────────────────────────
-function getDriveClient() {
-  const clientId = process.env.VITE_GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
 
-  if (!clientId || !clientSecret || !refreshToken) {
-    throw new Error('ENV tidak lengkap: butuh VITE_GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN');
-  }
-
-  const oauth2Client = new google.auth.OAuth2(
-    clientId,
-    clientSecret,
-    'https://developers.google.com/oauthplayground'
-  );
-  oauth2Client.setCredentials({ refresh_token: refreshToken });
-  return google.drive({ version: 'v3', auth: oauth2Client });
-}
 
 // ─── Helper: Cari File & Folder ─────────────────────────────────────────────
 async function getOrCreateFolder(
@@ -306,6 +480,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
+
 // ==========================================
 // FILE: api\upload-photo.ts
 // ==========================================
@@ -316,26 +491,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { google } from 'googleapis';
 import { Readable } from 'stream';
+import { getDriveClient } from './driveClient';
 
-// ─── AUTHENTICATION ──────────────────────────────────
-function getDriveClient() {
-  const clientId = process.env.VITE_GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
 
-  if (!clientId || !clientSecret || !refreshToken) {
-    throw new Error('ENV tidak lengkap');
-  }
-
-  const oauth2Client = new google.auth.OAuth2(
-    clientId,
-    clientSecret,
-    'https://developers.google.com/oauthplayground'
-  );
-  oauth2Client.setCredentials({ refresh_token: refreshToken });
-
-  return google.drive({ version: 'v3', auth: oauth2Client });
-}
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 // FIX TS ERROR: Menghapus variabel `mimeType` yang nganggur biar Vercel nggak ngamuk.
@@ -408,6 +566,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       },
       fields: 'id, name',
     });
+    // Set foto bisa diakses siapapun yang punya link (untuk cross-device visibility)
+    await drive.permissions.create({
+      fileId: uploadedFile.data.id!,
+      requestBody: {
+        role: 'reader',
+        type: 'anyone',
+      },
+    });
 
     return res.status(200).json({
       success: true,
@@ -427,6 +593,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
+
 // ==========================================
 // FILE: api\upload.ts
 // ==========================================
@@ -439,29 +606,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { google } from 'googleapis';
 import { Readable } from 'stream';
+import { getDriveClient } from './driveClient';
 
-// ─── AUTHENTICATION (Tetap pakai OAuth lo, bukan Service Account) ────────────
-function getDriveClient() {
-  const clientId = process.env.VITE_GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
 
-  if (!clientId || !clientSecret || !refreshToken) {
-    throw new Error(
-      'ENV tidak lengkap: butuh VITE_GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN'
-    );
-  }
-
-  const oauth2Client = new google.auth.OAuth2(
-    clientId,
-    clientSecret,
-    'https://developers.google.com/oauthplayground'
-  );
-
-  oauth2Client.setCredentials({ refresh_token: refreshToken });
-
-  return google.drive({ version: 'v3', auth: oauth2Client });
-}
 
 // ─── FOLDER & FILE HELPERS ───────────────────────────────────────────────────
 async function findFolder(
@@ -539,14 +686,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const drive = getDriveClient();
 
-    // 1. Bikin/Cari Struktur Folder (Sama persis kayak logika lo yang udah bener)
-    const rootFolderId = await getOrCreateFolder(drive, 'Aksara Inspect', null);
-    const clientFolderId = await getOrCreateFolder(drive, session.clientName, rootFolderId);
-    const dateStr = new Date(session.createdAt).toISOString().slice(0, 10);
-    const dateFolderId = await getOrCreateFolder(drive, dateStr, clientFolderId);
-    const typeFolderId = await getOrCreateFolder(drive, session.objectType, dateFolderId);
-    const unitFolderName = `${session.unitData?.namaUnit || 'Unit'} - ${session.unitData?.nomorSeri || 'NoSeri'}`;
-    const unitFolderId = await getOrCreateFolder(drive, unitFolderName, typeFolderId);
+    // Kalau sudah punya folderId (edit), skip buat folder baru
+    let unitFolderId: string;
+    if (req.body.existingFolderId) {
+      unitFolderId = req.body.existingFolderId;
+    } else {
+      const rootFolderId = await getOrCreateFolder(drive, 'Aksara Inspect', null);
+      const clientFolderId = await getOrCreateFolder(drive, session.clientName, rootFolderId);
+      const dateStr = new Date(session.createdAt).toLocaleDateString('sv-SE', { timeZone: 'Asia/Jakarta' });
+      const dateFolderId = await getOrCreateFolder(drive, dateStr, clientFolderId);
+      const objectTypeLabel: Record<string, string> = {
+  'Angkur': 'Safety Anchor',
+  'PAA': 'Pesawat Angkat & Angkut',
+  'PUBT': 'Pesawat Uap & Bejana Tekan',
+  'PTP': 'Pesawat Tenaga & Produksi',
+  'Listrik': 'Instalasi Listrik',
+  'Penyalur Petir': 'Instalasi Penyalur Petir',
+  'Lift': 'Elevator & Eskalator',
+  'Proteksi Kebakaran': 'Proteksi Kebakaran',
+};
+const typeFolderName = objectTypeLabel[session.objectType] ?? session.objectType;
+const typeFolderId = await getOrCreateFolder(drive, typeFolderName, dateFolderId);
+      const unitFolderName = `${session.unitData?.namaUnit || 'Unit'} - ${session.unitData?.nomorSeri || 'NoSeri'}`;
+      unitFolderId = await getOrCreateFolder(drive, unitFolderName, typeFolderId);
+    }
 
     // 2. Upload JSON Metadata
     const dataPayload = JSON.stringify({
@@ -575,6 +738,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: message });
   }
 }
+
 
 // ==========================================
 // FILE: dev-dist\registerSW.js
@@ -5555,8 +5719,10 @@ import {
   saveToken,
   clearToken,
   TokenExpiredError,
-  isTokenExpiringSoon,
+ isTokenExpiringSoon,
+  trySilentRefresh,
   type UploadProgress,
+  deletePhotoFromDrive,
 } from './services/driveService';
 import {
   pullTemplatesFromDrive,
@@ -5804,36 +5970,38 @@ async function compressPhoto(dataUrl: string): Promise<string> {
 
 // ─── DESIGN TOKENS ───────────────────────────────────────────────────────────
 
-const T = {
-  emerald500: '#10B981',
-  emerald600: '#059669',
-  emerald700: '#047857',
-  emerald900: '#065F46',
-  emeraldLight: '#ECFDF5',
-  emeraldBorder: '#6EE7B7',
-  emeraldText: '#065F46',
-  amber400: '#FCD34D',
-  amber500: '#F59E0B',
-  amber600: '#D97706',
-  amber700: '#B45309',
-  amber800: '#92400E',
-  amberLight: '#FFFBEB',
-  amberBorder: '#FDE68A',
-  amberMid: '#FEF3C7',
-  redLight: '#FEF2F2',
-  redBorder: '#FCA5A5',
-  redText: '#B91C1C',
-  bg: '#F7F8FA',
-  white: '#FFFFFF',
-  border: 'rgba(0,0,0,0.08)',
-  borderHover: 'rgba(0,0,0,0.15)',
-  textPrimary: '#0F172A',
-  textSecondary: '#64748B',
-  textMuted: '#94A3B8',
-};
+function getTokens(dark: boolean) {
+  return {
+    emerald500: '#10B981',
+    emerald600: '#059669',
+    emerald700: '#047857',
+    emerald900: dark ? '#064E3B' : '#065F46',
+    emeraldLight: dark ? '#052e16' : '#ECFDF5',
+    emeraldBorder: dark ? '#064E3B' : '#6EE7B7',
+    emeraldText: dark ? '#34D399' : '#065F46',
+    amber400: '#FCD34D',
+    amber500: '#F59E0B',
+    amber600: '#D97706',
+    amber700: dark ? '#FCD34D' : '#B45309',
+    amber800: dark ? '#FEF3C7' : '#92400E',
+    amberLight: dark ? '#1C1400' : '#FFFBEB',
+    amberBorder: dark ? '#78350F' : '#FDE68A',
+    amberMid: dark ? '#292000' : '#FEF3C7',
+    redLight: dark ? '#1C0A0A' : '#FEF2F2',
+    redBorder: dark ? '#7F1D1D' : '#FCA5A5',
+    redText: dark ? '#FCA5A5' : '#B91C1C',
+    bg: dark ? '#0F172A' : '#F7F8FA',
+    white: dark ? '#1E293B' : '#FFFFFF',
+    border: dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
+    borderHover: dark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)',
+    textPrimary: dark ? '#F1F5F9' : '#0F172A',
+    textSecondary: dark ? '#94A3B8' : '#64748B',
+    textMuted: dark ? '#64748B' : '#94A3B8',
+  };
+}
 
 // ─── SUB-COMPONENTS ───────────────────────────────────────────────────────────
-
+const T = getTokens(false); // fallback untuk sub-components di luar App()
 function StatCard({ label, value, color, dot }: { label: string; value: number | string; color: string; dot: string }) {
   return (
     <div style={{ background: T.white, border: `0.5px solid ${T.border}`, borderRadius: 12, padding: '12px 14px', flex: 1 }}>
@@ -5935,7 +6103,10 @@ export default function App() {
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   const [tokenError, setTokenError] = useState<string | null>(null);
   const [pullStatus, setPullStatus] = useState<string | null>(null);
-
+  const [darkMode, setDarkMode] = useState(() => {
+    return localStorage.getItem('aksara_dark_mode') === 'true';
+  });
+  const T = getTokens(darkMode);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
@@ -6027,19 +6198,50 @@ export default function App() {
     refreshData();
     pullTemplatesFromDrive().catch(console.warn);
     setTimeout(() => doPullInspections(), 2000);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    // Auto sync on mount kalau udah online + toggle aktif
+    const shouldAutoSync = localStorage.getItem('aksara_auto_sync') === 'true';
+    if (shouldAutoSync && navigator.onLine) {
+      setTimeout(() => triggerAutoSync(), 3000);
+    }
+ }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+ useEffect(() => {
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    localStorage.setItem('aksara_dark_mode', String(darkMode));
+  }, [darkMode]);
+  // Auto silent refresh — cek tiap 10 menit, refresh kalau token mau expired
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const check = () => {
+      if (isTokenExpiringSoon(15)) {
+        trySilentRefresh(
+          GOOGLE_CONFIG.clientId,
+          getGoogleRedirectUri()
+        );
+      }
+    };
+    check(); // cek langsung pas mount
+    const interval = setInterval(check, 10 * 60 * 1000); // tiap 10 menit
+    return () => clearInterval(interval);
+  }, [isAuthenticated]);
 
   // ── Auto sync ──────────────────────────────────────────────────────────────
 
   const triggerAutoSync = useCallback(async () => {
+    if (!isAuthenticated) return;
+    if (!navigator.onLine) return;
     const currentDrafts = await SessionRepository.getDrafts();
     if (currentDrafts.length === 0) return;
     for (const draft of currentDrafts) {
       try {
         setUploadingId(draft.id);
         // Auto sync = create baru, kirim semua foto (onlyNewPhotos = null)
-        await uploadToDrive(draft, draft.photos, (p) => setUploadProgress(p), null);
-        await SessionRepository.markSynced(draft.id);
+        const { folderId } = await uploadToDrive(draft, draft.photos, (p) => setUploadProgress(p), null);
+        await SessionRepository.markSynced(draft.id, folderId);
       } catch (err: unknown) {
         if (err instanceof TokenExpiredError) {
           setIsAuthenticated(false);
@@ -6232,6 +6434,19 @@ export default function App() {
           newPhotos,
           deletedPhotoIds
         );
+        // Hapus foto yang didelete dari Drive
+        if (deletedPhotoIds.length > 0 && isOnline) {
+          for (const photoId of deletedPhotoIds) {
+            const photo = existingPhotos.find(p => p.id === photoId);
+            if (photo?.driveFileId) {
+              try {
+                await deletePhotoFromDrive(photo.driveFileId, currentUserEmail);
+              } catch (e) {
+                console.warn('[App] Gagal hapus foto dari Drive:', e);
+              }
+            }
+          }
+        }
 
         if (isOnline) {
           try {
@@ -6423,7 +6638,7 @@ export default function App() {
       <input ref={galleryInputRef} type="file" accept="image/*" multiple onChange={handlePhotos} style={{ display: 'none' }} aria-hidden="true" />
 
       {/* NAVBAR */}
-      <header style={{ position: 'sticky', top: 0, zIndex: 50, background: 'rgba(255,255,255,0.97)', backdropFilter: 'blur(8px)', borderBottom: `0.5px solid ${T.border}`, padding: '0 16px', height: 52, display: 'flex', alignItems: 'center', justifyContent: 'space-between', maxWidth: 640, margin: '0 auto' }}>
+      <header style={{ position: 'sticky', top: 0, zIndex: 50, background: darkMode ? 'rgba(15,23,42,0.97)' : 'rgba(255,255,255,0.97)', backdropFilter: 'blur(8px)', borderBottom: `0.5px solid ${T.border}`, padding: '0 16px', paddingTop: 'env(safe-area-inset-top)', height: `calc(52px + env(safe-area-inset-top))`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', maxWidth: 640, margin: '0 auto' }}>
         <button onClick={() => { resetForm(); setView('HOME'); }} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
           <img src="/icons/icon-192.png" alt="ARP" style={{ width: 30, height: 30, borderRadius: 9, objectFit: 'cover' }} />
           <span style={{ fontSize: 13, fontWeight: 700, color: T.textPrimary, letterSpacing: '-0.3px' }}>
@@ -6441,6 +6656,13 @@ export default function App() {
               <span style={{ background: T.amber400, color: T.amber800, borderRadius: 10, padding: '1px 5px', fontSize: 10, fontWeight: 700 }}>{drafts.length}</span>
             </button>
           )}
+          <button
+            onClick={() => setDarkMode(d => !d)}
+            style={{ width: 32, height: 32, borderRadius: 10, background: darkMode ? '#1E293B' : '#F1F5F9', border: `0.5px solid ${T.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 16 }}
+            title="Toggle dark mode"
+          >
+            {darkMode ? '☀️' : '🌙'}
+          </button>
           {isAuthenticated ? (
             <button onClick={handleLogout} title={currentUserEmail} style={{ padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `0.5px solid ${T.redBorder}`, background: T.redLight, color: T.redText }}>Logout</button>
           ) : (
@@ -6501,7 +6723,7 @@ export default function App() {
                 <div style={{ width: 44, height: 44, borderRadius: 12, background: 'rgba(255,255,255,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.emeraldBorder, flexShrink: 0, position: 'relative', zIndex: 1 }}>{ICONS.factory}</div>
                 <div style={{ flex: 1, position: 'relative', zIndex: 1 }}>
                   <p style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>Dari Template Unit</p>
-                  <p style={{ fontSize: 11, color: T.emeraldBorder, marginTop: 2 }}>Pilih klien → unit → form otomatis terisi</p>
+                  <p style={{ fontSize: 11, color: T.emeraldText, marginTop: 2 }}>Pilih klien → unit → form otomatis terisi</p>
                 </div>
                 <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 18, position: 'relative', zIndex: 1 }}>›</span>
               </button>
@@ -6555,6 +6777,7 @@ export default function App() {
             uploadProgress={uploadProgress} isOnline={isOnline} autoSync={autoSync}
             onAutoSyncToggle={handleAutoSyncToggle} onLogin={handleLogin}
             onEdit={handleEdit} onDelete={handleDelete} onSync={handleSync}
+            onSyncAll={triggerAutoSync}
           />
         )}
 
@@ -6575,7 +6798,7 @@ export default function App() {
 
       {/* BOTTOM NAV + FAB */}
       {(view === 'HOME' || view === 'HISTORY' || view === 'SYNC_HUB' || view === 'ADMIN') && (
-        <nav style={{ position: 'fixed', bottom: 0, left: 0, right: 0, background: 'rgba(255,255,255,0.97)', backdropFilter: 'blur(8px)', borderTop: `0.5px solid ${T.border}`, padding: '8px 16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-around', maxWidth: 640, margin: '0 auto', zIndex: 40 }}>
+        <nav style={{ position: 'fixed', bottom: 0, left: 0, right: 0, background: darkMode ? 'rgba(15,23,42,0.97)' : 'rgba(255,255,255,0.97)', backdropFilter: 'blur(8px)', borderTop: `0.5px solid ${T.border}`, padding: '8px 16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-around', maxWidth: 640, margin: '0 auto', zIndex: 40 }}>
           <NavTab icon={ICONS.home} label="Beranda" active={view === 'HOME'} onClick={() => { resetForm(); setView('HOME'); }} />
           <NavTab icon={ICONS.clipboard} label="Riwayat" active={view === 'HISTORY'} onClick={() => setView('HISTORY')} />
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
@@ -8277,7 +8500,18 @@ export function FormView({
             <div className="grid grid-cols-3 gap-2">
               {existingPhotos.map((photo) => (
                 <div key={photo.id} className="relative aspect-square rounded-xl overflow-hidden border border-gray-200 group">
-                  <img src={photo.dataUrl} alt="foto" className="w-full h-full object-cover" />
+                  <img
+  src={
+    photo.dataUrl && photo.dataUrl.startsWith('data:image')
+      ? photo.dataUrl
+      : photo.driveFileId
+        ? `/api/photo-proxy?fileId=${photo.driveFileId}`
+        : ''
+  }
+  alt="foto"
+  className="w-full h-full object-cover"
+  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+/>
                   <button
                     onClick={() => onRemoveExistingPhoto(photo.id)}
                     className="absolute top-1 right-1 w-6 h-6 rounded-full bg-red-500 text-white text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all shadow-md"
@@ -8517,8 +8751,9 @@ export default function Header({ currentView, setCurrentView, syncCount }: Heade
 // src/components/HistoryView.tsx
 // FIXED: Ganti tombol Upload Ulang → Edit & Update (langsung ke form edit)
 // FIXED: Tombol Download PDF tetap ada
+// NEW: Tombol Sync diganti jadi Photo Gallery dengan select multi + download
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import type { InspectionSession, InspectionPhoto } from '../db/db';
 import { exportToPDF } from '../utils/pdfExport';
 import type { UploadProgress } from '../services/driveService';
@@ -8547,7 +8782,7 @@ interface HistoryViewProps {
   history: SessionWithPhotos[];
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
-  onReSync: (id: string) => void;        // tetap ada agar App.tsx tidak error
+  onReSync: (id: string) => void;
   isAuthenticated: boolean;
   isOnline: boolean;
   uploadingId: string | null;
@@ -8559,10 +8794,57 @@ export function HistoryView({
   history,
   onEdit,
   onDelete,
+  onReSync,
   uploadingId,
   uploadProgress,
   currentUserEmail,
 }: HistoryViewProps) {
+  const [activeTab, setActiveTab] = useState<'recent' | 'byClient'>('recent');
+  const [openClients, setOpenClients] = useState<Set<string>>(new Set());
+
+  const recent = useMemo(
+    () => [...history].sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt)).slice(0, 5),
+    [history]
+  );
+
+  const byClient = useMemo(() => {
+    const map = new Map<string, SessionWithPhotos[]>();
+    for (const item of history) {
+      const list = map.get(item.clientName) ?? [];
+      list.push(item);
+      map.set(item.clientName, list);
+    }
+    for (const [key, list] of map) {
+      map.set(key, list.sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt)));
+    }
+    return map;
+  }, [history]);
+
+  const toggleClient = (name: string) => {
+    setOpenClients((prev) => {
+      const next = new Set(prev);
+      next.has(name) ? next.delete(name) : next.add(name);
+      return next;
+    });
+  };
+
+  const cardProps = (item: SessionWithPhotos) => ({
+    item, onEdit, onDelete, onReSync,
+    isUploading: uploadingId === item.id,
+    progress: uploadingId === item.id ? uploadProgress : null,
+    currentUserEmail,
+  });
+
+  if (history.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 text-center">
+        <div className="text-5xl mb-3 opacity-60">📋</div>
+        <p className="text-sm font-bold text-gray-500">Belum ada riwayat</p>
+        <p className="text-xs text-gray-400 mt-1">Data yang sudah di-sync ke Drive akan muncul di sini</p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <div>
@@ -8572,30 +8854,75 @@ export function HistoryView({
         </p>
       </div>
 
-      {history.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-16 text-center">
-          <div className="text-5xl mb-3 opacity-60">📋</div>
-          <p className="text-sm font-bold text-gray-500">Belum ada riwayat</p>
-          <p className="text-xs text-gray-400 mt-1">Data yang sudah di-sync ke Drive akan muncul di sini</p>
-        </div>
-      ) : (
+      {/* Tab */}
+      <div className="flex gap-2 bg-gray-100 p-1 rounded-xl">
+        <button
+          onClick={() => setActiveTab('recent')}
+          className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
+            activeTab === 'recent'
+              ? 'bg-white text-gray-900 shadow-sm'
+              : 'text-gray-400 hover:text-gray-600'
+          }`}
+        >
+          🕐 Terbaru
+        </button>
+        <button
+          onClick={() => setActiveTab('byClient')}
+          className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
+            activeTab === 'byClient'
+              ? 'bg-white text-gray-900 shadow-sm'
+              : 'text-gray-400 hover:text-gray-600'
+          }`}
+        >
+          🏢 Per Perusahaan
+        </button>
+      </div>
+
+      {activeTab === 'recent' && (
         <div className="space-y-3">
-          {history.map((item) => (
-            <HistoryCard
-              key={item.id}
-              item={item}
-              onEdit={onEdit}
-              onDelete={onDelete}
-              isUploading={uploadingId === item.id}
-              progress={uploadingId === item.id ? uploadProgress : null}
-              currentUserEmail={currentUserEmail} // TAMBAHKAN INI
-            />
+          {recent.map((item) => (
+            <HistoryCard key={item.id} {...cardProps(item)} />
           ))}
+        </div>
+      )}
+
+      {activeTab === 'byClient' && (
+        <div className="space-y-2">
+          {[...byClient.entries()].map(([clientName, items]) => {
+            const isOpen = openClients.has(clientName);
+            return (
+              <div key={clientName} className="border border-gray-200 rounded-xl overflow-hidden">
+                <button
+                  onClick={() => toggleClient(clientName)}
+                  className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-bold text-gray-800">{clientName}</span>
+                    <span className="px-2 py-0.5 bg-blue-50 text-blue-600 border border-blue-100 rounded-full text-[10px] font-bold">
+                      {items.length} inspeksi
+                    </span>
+                  </div>
+                  <span className="text-gray-400 text-xs">{isOpen ? '▲' : '▼'}</span>
+                </button>
+                {isOpen && (
+                  <div className="p-3 space-y-3 bg-white">
+                    {items.map((item) => (
+                      <HistoryCard key={item.id} {...cardProps(item)} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
   );
 }
+
+// ==========================================
+// HISTORY CARD
+// ==========================================
 
 function HistoryCard({
   item,
@@ -8608,6 +8935,7 @@ function HistoryCard({
   item: SessionWithPhotos;
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
+  onReSync: (id: string) => void;
   isUploading: boolean;
   progress: UploadProgress | null;
   currentUserEmail: string;
@@ -8615,6 +8943,7 @@ function HistoryCard({
   const meta = OBJECT_TYPES.find((o) => o.key === item.objectType);
   const dateStr = formatDate(item.updatedAt || item.createdAt);
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [showGallery, setShowGallery] = useState(false);
 
   const handleDownloadPDF = async () => {
     setPdfLoading(true);
@@ -8667,6 +8996,35 @@ function HistoryCard({
         <span className="px-2 py-0.5 bg-blue-50 text-blue-600 border border-blue-100 rounded-full text-[10px] font-bold">
           📷 {item.photos.length} foto
         </span>
+
+        {/* Preview foto — maks 3 thumbnail */}
+        {item.photos.length > 0 && (
+          <div className="flex gap-1 mt-1 flex-wrap">
+            {item.photos.slice(0, 3).map((photo: any, idx: number) => {
+              const src = photo.dataUrl && photo.dataUrl.startsWith('data:image')
+                ? photo.dataUrl
+                : photo.driveFileId
+                  ? `/api/photo-proxy?fileId=${photo.driveFileId}`
+                  : null;
+              if (!src) return null;
+              return (
+                <img
+                  key={idx}
+                  src={src}
+                  alt={`Foto ${idx + 1}`}
+                  className="w-14 h-14 object-cover rounded border border-gray-200"
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                />
+              );
+            })}
+            {item.photos.length > 3 && (
+              <div className="w-14 h-14 flex items-center justify-center rounded border border-gray-200 bg-gray-50 text-gray-400 text-[10px] font-bold">
+                +{item.photos.length - 3}
+              </div>
+            )}
+          </div>
+        )}
+
         {item.inspectorEmail && (
           <span className="px-2 py-0.5 bg-slate-50 text-slate-500 border border-slate-100 rounded-full text-[10px] font-bold truncate max-w-[140px]">
             👷 {item.inspectorEmail}
@@ -8694,7 +9052,7 @@ function HistoryCard({
         )}
       </div>
 
-      {/* Progress bar kalau sedang upload */}
+      {/* Progress bar */}
       {isUploading && progress && (
         <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 space-y-2">
           <div className="flex items-center justify-between">
@@ -8716,29 +9074,219 @@ function HistoryCard({
         </div>
       )}
 
-      {/* Tombol bawah: Edit & Update + Download PDF */}
-      <div className="grid grid-cols-2 gap-2">
+      {/* Tombol bawah */}
+      <div className="grid grid-cols-3 gap-2">
         <button
           onClick={() => onEdit(item.id)}
           disabled={isUploading}
           className="py-2.5 flex items-center justify-center gap-1.5 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-lg transition-all"
-          title="Edit data & foto — otomatis terupload setelah simpan"
         >
-          {isUploading ? <><Spinner />Uploading...</> : <>✏️ Edit & Update</>}
+          {isUploading ? <><Spinner />Uploading...</> : <>✏️ Edit</>}
+        </button>
+
+        <button
+          onClick={() => setShowGallery(true)}
+          disabled={isUploading || item.photos.length === 0}
+          className="py-2.5 flex items-center justify-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-lg transition-all"
+        >
+          🖼️ Galeri
         </button>
 
         <button
           onClick={handleDownloadPDF}
-          disabled={pdfLoading}
+          disabled={pdfLoading || isUploading}
           className="py-2.5 flex items-center justify-center gap-1.5 bg-slate-700 hover:bg-slate-800 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-lg transition-all"
-          title="Download laporan sebagai PDF"
         >
-          {pdfLoading ? <><Spinner />PDF...</> : <>📄 Download PDF</>}
+          {pdfLoading ? <><Spinner />PDF...</> : <>📄 PDF</>}
         </button>
       </div>
+
+      {showGallery && (
+        <PhotoGalleryModal
+          photos={item.photos}
+          unitName={item.unitData?.namaUnit || 'Unit'}
+          onClose={() => setShowGallery(false)}
+        />
+      )}
     </div>
   );
 }
+
+// ==========================================
+// PHOTO GALLERY MODAL
+// ==========================================
+
+function PhotoGalleryModal({
+  photos,
+  unitName,
+  onClose,
+}: {
+  photos: any[];
+  unitName: string;
+  onClose: () => void;
+}) {
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [lightbox, setLightbox] = useState<number | null>(null);
+
+  const getSrc = (photo: any): string | null => {
+    if (photo.dataUrl?.startsWith('data:image')) return photo.dataUrl;
+    if (photo.driveFileId) return `/api/photo-proxy?fileId=${photo.driveFileId}`;
+    return null;
+  };
+
+  const toggleSelect = (idx: number) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      next.has(idx) ? next.delete(idx) : next.add(idx);
+      return next;
+    });
+  };
+
+  const selectAll = () => setSelected(new Set(photos.map((_, i) => i)));
+  const clearSelect = () => setSelected(new Set());
+
+  const downloadPhoto = (src: string, idx: number) => {
+    const a = document.createElement('a');
+    a.href = src;
+    a.download = `${unitName}_foto_${String(idx + 1).padStart(2, '0')}.jpg`;
+    a.click();
+  };
+
+  const downloadSelected = async () => {
+    for (const idx of Array.from(selected)) {
+      const src = getSrc(photos[idx]);
+      if (!src) continue;
+      await new Promise(r => setTimeout(r, 300));
+      downloadPhoto(src, idx);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/80 flex flex-col"
+      style={{ paddingTop: 'env(safe-area-inset-top)' }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 bg-gray-900 flex-shrink-0" style={{ minHeight: 56 }}>
+        <div>
+          <p className="text-white text-sm font-bold">🖼️ {unitName}</p>
+          <p className="text-gray-400 text-[10px]">{photos.length} foto</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {selected.size > 0 ? (
+            <>
+              <button
+                onClick={downloadSelected}
+                className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg"
+              >
+                ⬇️ Download {selected.size} foto
+              </button>
+              <button
+                onClick={clearSelect}
+                className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs font-bold rounded-lg"
+              >
+                Batal
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={selectAll}
+              className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs font-bold rounded-lg"
+            >
+              Pilih semua
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            className="w-8 h-8 flex items-center justify-center bg-gray-700 hover:bg-gray-600 text-white rounded-lg text-sm font-bold"
+          >✕</button>
+        </div>
+      </div>
+
+      {/* Grid foto */}
+      <div className="flex-1 overflow-y-auto p-3">
+        <div className="grid grid-cols-3 gap-2">
+          {photos.map((photo, idx) => {
+            const src = getSrc(photo);
+            if (!src) return null;
+            const isSelected = selected.has(idx);
+            return (
+              <div
+                key={idx}
+                className="relative rounded-lg overflow-hidden border-2 transition-all cursor-pointer"
+                style={{
+                  aspectRatio: '1',
+                  borderColor: isSelected ? '#10B981' : 'transparent',
+                }}
+              >
+                <img
+                  src={src}
+                  alt={`Foto ${idx + 1}`}
+                  className="w-full h-full object-cover"
+                  onClick={() => setLightbox(idx)}
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                />
+                {/* Checkbox */}
+                <button
+                  onClick={(e) => { e.stopPropagation(); toggleSelect(idx); }}
+                  className="absolute top-1.5 left-1.5 w-5 h-5 rounded-full border-2 border-white flex items-center justify-center text-[10px] font-bold"
+                  style={{ background: isSelected ? '#10B981' : 'rgba(0,0,0,0.4)' }}
+                >
+                  {isSelected ? '✓' : ''}
+                </button>
+                {/* Download single */}
+                <button
+                  onClick={(e) => { e.stopPropagation(); downloadPhoto(src, idx); }}
+                  className="absolute bottom-1.5 right-1.5 w-6 h-6 rounded-lg bg-black/50 hover:bg-black/80 text-white flex items-center justify-center text-[10px]"
+                >⬇️</button>
+                <span className="absolute bottom-1.5 left-1.5 text-[9px] text-white font-bold bg-black/40 px-1 rounded">
+                  {String(idx + 1).padStart(2, '0')}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Lightbox */}
+      {lightbox !== null && (
+        <div
+          className="absolute inset-0 z-10 bg-black/95 flex flex-col items-center justify-center"
+          onClick={() => setLightbox(null)}
+        >
+          <img
+            src={getSrc(photos[lightbox]) || ''}
+            alt={`Foto ${lightbox + 1}`}
+            className="max-w-full max-h-[80vh] object-contain rounded"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <div className="flex items-center gap-4 mt-4">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setLightbox(i => (i !== null && i > 0 ? i - 1 : i));
+              }}
+              className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white text-xs font-bold rounded-lg"
+            >← Prev</button>
+            <span className="text-white text-xs font-bold">{lightbox + 1} / {photos.length}</span>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setLightbox(i => (i !== null && i < photos.length - 1 ? i + 1 : i));
+              }}
+              className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white text-xs font-bold rounded-lg"
+            >Next →</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ==========================================
+// SPINNER
+// ==========================================
 
 function Spinner() {
   return (
@@ -8919,6 +9467,7 @@ interface SyncHubProps {
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
   onSync: (id: string) => void;
+  onSyncAll: () => void;
 }
 
 const OBJECT_TYPES = [
@@ -8955,6 +9504,7 @@ export function SyncHub({
   onEdit,
   onDelete,
   onSync,
+  onSyncAll,
 }: SyncHubProps) {
   return (
     <div className="space-y-4">
@@ -9065,7 +9615,14 @@ export function SyncHub({
       {uploadingId && uploadProgress && (
         <UploadProgressBar progress={uploadProgress} />
       )}
-
+{drafts.length > 1 && isAuthenticated && isOnline && !uploadingId && (
+        <button
+          onClick={onSyncAll}
+          className="w-full py-3 flex items-center justify-center gap-2 bg-gray-900 hover:bg-black text-white text-sm font-bold rounded-xl transition-all shadow-sm"
+        >
+          ☁️ Upload Semua ({drafts.length} draft sekaligus)
+        </button>
+      )}
       {drafts.length === 0 ? (
         <EmptyState icon="✅" title="Semua data sudah tersinkronisasi" subtitle="Tidak ada draft yang tertunda" />
       ) : (
@@ -9319,6 +9876,7 @@ export interface InspectionSession {
   templateUnitId?: string;
   inspectorEmail?: string;
   driveFolderId?: string;
+  drivePhotoIds?: string[];
   uploadStatus?: UploadStatus;
   photosUploaded?: number;
 }
@@ -9327,6 +9885,8 @@ export interface InspectionPhoto {
   id: string;
   sessionId: string;
   dataUrl: string;
+  driveFileId?: string;
+  fileName?: string;
   createdAt: number;
 }
 
@@ -9399,6 +9959,20 @@ export class MyDatabase extends Dexie {
       unit_templates: 'id, clientId, objectType, createdAt, createdBy, deleted',
       user_roles: 'id, role, createdAt',
     });
+    this.version(8).stores({
+      inspection_sessions: 'id, clientName, status, createdAt, templateClientId, inspectorEmail, driveFolderId, uploadStatus',
+      inspection_photos: 'id, sessionId, createdAt',
+      client_templates: 'id, name, createdAt, createdBy, deleted',
+      unit_templates: 'id, clientId, objectType, createdAt, createdBy, deleted',
+      user_roles: 'id, role, createdAt',
+    });
+    this.version(9).stores({
+      inspection_sessions: 'id, clientName, status, createdAt, templateClientId, inspectorEmail, driveFolderId, uploadStatus',
+      inspection_photos: 'id, sessionId, createdAt, driveFileId, fileName',
+      client_templates: 'id, name, createdAt, createdBy, deleted',
+      unit_templates: 'id, clientId, objectType, createdAt, createdBy, deleted',
+      user_roles: 'id, role, createdAt',
+    });
   }
 }
 
@@ -9416,7 +9990,13 @@ export const SessionRepository = {
     const sessions = await db.inspection_sessions.where('status').equals('synced').toArray();
     return Promise.all(sessions.map(async (s) => ({
       ...s,
-      photos: await db.inspection_photos.where('sessionId').equals(s.id).toArray(),
+      photos: (await db.inspection_photos.where('sessionId').equals(s.id).toArray())
+        .sort((a, b) => {
+          if (a.fileName && b.fileName) return a.fileName.localeCompare(b.fileName);
+          if (a.fileName) return -1;
+          if (b.fileName) return 1;
+          return a.createdAt - b.createdAt;
+        }),
     })));
   },
   getClientNames: async () => {
@@ -9577,7 +10157,6 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
-
 /* Smooth scroll */
 html {
   scroll-behavior: smooth;
@@ -9591,6 +10170,12 @@ input[type='number']::-webkit-outer-spin-button {
 }
 input[type='number'] {
   -moz-appearance: textfield;
+  appearance: textfield;
+}
+/* Dark mode base */
+.dark body {
+  background-color: #0F172A;
+  color: #F1F5F9;
 }
 
 // ==========================================
@@ -9674,6 +10259,54 @@ export function isTokenExpiringSoon(_withinMinutes = 10): boolean {
 }
 
 // ==========================================
+// SILENT REFRESH
+// ==========================================
+export function trySilentRefresh(clientId: string, redirectUri: string): void {
+  // Cek dulu apakah token masih valid — kalau masih aman, skip
+  const expiryStr = localStorage.getItem('google_token_expiry');
+  if (expiryStr) {
+    const expiry = parseInt(expiryStr, 10);
+    // Kalau masih lebih dari 5 menit, skip refresh
+    if (Date.now() < expiry - 5 * 60_000) return;
+  }
+
+  const silentUrl = [
+    'https://accounts.google.com/o/oauth2/v2/auth',
+    `?client_id=${clientId}`,
+    `&redirect_uri=${redirectUri}`,
+    `&response_type=token`,
+    `&scope=openid%20email%20profile`,
+    `&prompt=none`,
+  ].join('');
+
+  const popup = window.open(silentUrl, '_blank', 'width=1,height=1,left=-1000,top=-1000');
+  if (!popup) return;
+
+  const timer = setInterval(() => {
+    try {
+      const hash = popup.location.hash;
+      if (hash.includes('access_token')) {
+        const params = new URLSearchParams(hash.substring(1));
+        const token = params.get('access_token');
+        const expiresIn = parseInt(params.get('expires_in') || '3600', 10);
+        if (token) saveToken(token, expiresIn);
+        clearInterval(timer);
+        popup.close();
+      }
+      if (popup.closed) clearInterval(timer);
+    } catch {
+      // Cross-origin — belum redirect balik, tunggu
+    }
+  }, 500);
+
+  // Timeout 15 detik — kalau gagal, tutup popup
+  setTimeout(() => {
+    clearInterval(timer);
+    if (!popup.closed) popup.close();
+  }, 15000);
+}
+
+// ==========================================
 // MAIN UPLOAD FUNCTION (SEQUENTIAL QUEUE)
 // ==========================================
 
@@ -9693,8 +10326,7 @@ export const uploadToDrive = async (
 
   try {
     // ── PHASE 1: Upload JSON & Bikin Folder ──
-    // (Jalanin ini kalau belum punya folderId, atau statusnya bukan lagi ngelanjutin upload foto)
-    if (!folderId || session.uploadStatus !== 'partial_failed') {
+    if (!folderId) {
       onProgress?.({
         current: 0,
         total: totalSteps,
@@ -9712,6 +10344,7 @@ export const uploadToDrive = async (
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          existingFolderId: session.driveFolderId ?? null,
           inspectionData: {
             id: session.id,
             clientName: session.clientName,
@@ -9769,6 +10402,15 @@ export const uploadToDrive = async (
         throw new Error(errData?.error || `Gagal upload foto ke-${i + 1}`);
       }
 
+      // ✅ FIX: Simpan driveFileId balik ke inspection_photos
+      const photoData = await photoRes.json().catch(() => ({}));
+      if (photoData.fileId && photo.id) {
+        await db.inspection_photos.update(photo.id, {
+          driveFileId: photoData.fileId,
+          fileName: photoData.fileName,
+        });
+      }
+
       // Catat progress di DB lokal biar aman kalau internet mendadak putus
       await db.inspection_sessions.update(session.id, {
         photosUploaded: i + 1
@@ -9785,7 +10427,8 @@ export const uploadToDrive = async (
 
     await db.inspection_sessions.update(session.id, {
       uploadStatus: 'fully_synced',
-      status: 'synced' // ubah status jadi synced
+      status: 'synced',
+      updatedAt: Date.now(), // ← trigger device lain untuk pull ulang
     });
 
     return { success: true, folderId: folderId! };
@@ -9799,6 +10442,22 @@ export const uploadToDrive = async (
     throw err;
   }
 };
+
+export async function deletePhotoFromDrive(
+  driveFileId: string,
+  userEmail: string
+): Promise<void> {
+  const apiBase = getApiBaseUrl();
+  const res = await fetch(`${apiBase}/api/delete-photo`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fileId: driveFileId, userEmail }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error || 'Gagal hapus foto dari Drive');
+  }
+}
 
 // Dipertahankan untuk backward compat
 export async function uploadTextFile(
@@ -9859,7 +10518,7 @@ export async function pushTemplatesToDrive(): Promise<void> {
 }
 
 // ==========================================
-// TEMPLATES — PULL (PEMBERSIHAN ZOMBIE TEMPLATE KLIEN)
+// TEMPLATES — PULL 
 // ==========================================
 export async function pullTemplatesFromDrive(): Promise<void> {
   try {
@@ -9867,12 +10526,9 @@ export async function pullTemplatesFromDrive(): Promise<void> {
     if (!res.ok) return;
 
     const payload = await res.json();
-    
-    // Pastikan baca data sesuai format Claude!
     const clientTemplates = payload.client_templates || [];
     const unitTemplates = payload.unit_templates || [];
 
-    // Proses Klien
     for (const template of clientTemplates) {
       if (template.deleted === true) {
         await db.client_templates.where('id').equals(template.id).delete();
@@ -9888,7 +10544,6 @@ export async function pullTemplatesFromDrive(): Promise<void> {
       }
     }
 
-    // Proses Unit
     for (const template of unitTemplates) {
       if (template.deleted === true) {
         await db.unit_templates.where('id').equals(template.id).delete();
@@ -9906,31 +10561,52 @@ export async function pullTemplatesFromDrive(): Promise<void> {
         });
       }
     }
-
   } catch (err) {
     console.error('[syncService] pullTemplatesFromDrive error:', err);
   }
 }
 
 // ==========================================
-// INSPECTIONS — PULL (TANPA PENGHAPUSAN OTOMATIS)
+// INSPECTIONS — PULL (MIRROR DRIVE)
 // ==========================================
-export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skipped: number; }> {
+export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skipped: number }> {
   let pulled = 0;
   let skipped = 0;
 
   try {
-    const res = await fetch(apiUrl('/api/pull-inspections'), { method: 'GET' });
+    const res = await fetch(apiUrl(`/api/pull-inspections?t=${Date.now()}`), {
+      method: 'GET',
+      headers: { 'Cache-Control': 'no-cache' },
+    });
     if (!res.ok) return { pulled: 0, skipped: 0 };
 
     const data = await res.json();
     const inspections: any[] = data.inspections ?? [];
+    const deletedIds: string[] = data.deletedIds ?? [];
 
-    // 🔥 FITUR GARBAGE COLLECTION/PEMBERSIH OTOMATIS DIHAPUS TOTAL 🔥
-    // Kita nggak akan biarin sistem hapus data lo secara otomatis lagi!
+    // ✅ MIRROR DRIVE: hapus lokal yang tidak ada di Drive
+    // HANYA hapus sesi yang sudah fully_synced — jangan sentuh draft/pending milik device ini
+    const driveIds = new Set(inspections.map((r: any) => r.id));
+    const localSynced = await db.inspection_sessions.where('status').equals('synced').toArray();
+    for (const local of localSynced) {
+      if (!driveIds.has(local.id)) {
+        // Jangan hapus kalau masih dalam proses upload
+        if (local.uploadStatus === 'pending_upload' || local.uploadStatus === 'uploading_meta' || local.uploadStatus === 'uploading_photos' || local.uploadStatus === 'partial_failed') {
+          continue;
+        }
+        await db.inspection_sessions.delete(local.id);
+        await db.inspection_photos.where('sessionId').equals(local.id).delete();
+      }
+    }
 
+    // Update / Tambah data dari Drive, skip jika sudah di tombstone
     for (const driveData of inspections) {
       try {
+        if (deletedIds.includes(driveData.id)) {
+          skipped++;
+          continue;
+        }
+
         const driveCreatedAt = new Date(driveData.createdAt).getTime();
         const driveUpdatedAt = driveData.updatedAt
           ? new Date(driveData.updatedAt).getTime()
@@ -9939,6 +10615,47 @@ export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skip
         const existing = await db.inspection_sessions.get(driveData.id);
 
         if (existing) {
+          // Populate foto dulu — tidak peduli timestamp
+          const existingPhotos = await db.inspection_photos
+            .where('sessionId').equals(driveData.id).toArray();
+          const existingDriveIds = new Set(
+            existingPhotos.map((p: any) => p.driveFileId).filter(Boolean)
+          );
+          const driveFileNames: string[] = driveData.drivePhotoFileNames ?? [];
+          for (let fi = 0; fi < (driveData.drivePhotoIds ?? []).length; fi++) {
+            const fileId = driveData.drivePhotoIds[fi];
+            const fileName = driveFileNames[fi];
+            if (!existingDriveIds.has(fileId)) {
+              await db.inspection_photos.add({
+                id: crypto.randomUUID(),
+                sessionId: driveData.id,
+                dataUrl: '',
+                driveFileId: fileId,
+                fileName: fileName, // diisi saat pull-inspections return fileName
+                createdAt: driveUpdatedAt,
+              });
+            }
+          }
+          // Patch foto lama yang driveFileId kosong
+          const photosWithoutId = existingPhotos.filter((p: any) => !p.driveFileId);
+          const allDriveIds = driveData.drivePhotoIds ?? [];
+          for (let idx = 0; idx < photosWithoutId.length && idx < allDriveIds.length; idx++) {
+            await db.inspection_photos.update(photosWithoutId[idx].id, {
+              driveFileId: allDriveIds[idx],
+              fileName: driveFileNames[idx],
+            });
+          }
+
+          // Patch fileName ke foto yang sudah ada driveFileId tapi belum punya fileName
+          for (const photo of existingPhotos) {
+            if (!photo.fileName && photo.driveFileId) {
+              const idx = (driveData.drivePhotoIds ?? []).indexOf(photo.driveFileId);
+              if (idx !== -1 && driveFileNames[idx]) {
+                await db.inspection_photos.update(photo.id, { fileName: driveFileNames[idx] });
+              }
+            }
+          }
+
           const localUpdatedAt = existing.updatedAt ?? existing.createdAt;
           if (localUpdatedAt >= driveUpdatedAt) {
             skipped++;
@@ -9951,7 +10668,11 @@ export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skip
             updatedAt: driveUpdatedAt,
             inspectorEmail: driveData.inspectorEmail,
             status: 'synced',
+            drivePhotoIds: driveData.drivePhotoIds ?? [],
           });
+
+
+
           pulled++;
         } else {
           await db.inspection_sessions.add({
@@ -9963,10 +10684,52 @@ export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skip
             createdAt: driveCreatedAt,
             updatedAt: driveUpdatedAt,
             inspectorEmail: driveData.inspectorEmail,
+            drivePhotoIds: driveData.drivePhotoIds ?? [],
           });
+          
+          const driveFileNames: string[] = driveData.drivePhotoFileNames ?? [];
+          for (let fi = 0; fi < (driveData.drivePhotoIds ?? []).length; fi++) {
+            const fileId = driveData.drivePhotoIds[fi];
+            const fileName = driveFileNames[fi];
+            const alreadyExists = await db.inspection_photos
+              .where('driveFileId').equals(fileId).first();
+            if (!alreadyExists) {
+              await db.inspection_photos.add({
+                id: crypto.randomUUID(),
+                sessionId: driveData.id,
+                dataUrl: '',
+                driveFileId: fileId,
+                fileName: fileName,
+                createdAt: driveCreatedAt,
+              });
+            }
+          }
+
+          // Patch foto lama yang driveFileId-nya masih kosong
+          const allPhotosElse = await db.inspection_photos
+            .where('sessionId').equals(driveData.id).toArray();
+          const photosWithoutIdElse = allPhotosElse.filter((p: any) => !p.driveFileId);
+          const allDriveIdsElse = driveData.drivePhotoIds ?? [];
+          for (let idx = 0; idx < photosWithoutIdElse.length && idx < allDriveIdsElse.length; idx++) {
+            await db.inspection_photos.update(photosWithoutIdElse[idx].id, {
+              driveFileId: allDriveIdsElse[idx],
+              fileName: driveFileNames[idx],
+            });
+          }
+
+          // Patch fileName ke foto yang sudah ada driveFileId tapi belum punya fileName
+          for (const photo of allPhotosElse) {
+            if (!photo.fileName && photo.driveFileId) {
+              const idx = (driveData.drivePhotoIds ?? []).indexOf(photo.driveFileId);
+              if (idx !== -1 && driveFileNames[idx]) {
+                await db.inspection_photos.update(photo.id, { fileName: driveFileNames[idx] });
+              }
+            }
+          }
+
           pulled++;
         }
-      } catch (itemErr) {
+      } catch {
         skipped++;
       }
     }
@@ -9990,7 +10753,7 @@ export default {
 
 // src/utils/pdfExport.ts
 // FIXED: Label field manusiawi (bukan camelCase), header perusahaan proper,
-//        foto adaptive layout (portrait=1 col full, landscape=2 col), aspect ratio dijaga
+//        foto adaptive layout COMPACT — semua foto masuk grid rapi, tidak makan space berlebihan
 
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -10150,17 +10913,177 @@ function checkPageBreak(
   return y;
 }
 
-// NEW: Deteksi apakah foto portrait atau landscape dari dataUrl
-// Menggunakan HTMLImageElement untuk baca dimensi
+// Helper: ambil dataUrl foto — dari lokal jika ada, dari Drive jika tidak
+async function resolvePhotoDataUrl(
+  photo: { dataUrl?: string; driveFileId?: string }
+): Promise<string> {
+  if (photo.dataUrl && photo.dataUrl.startsWith('data:image')) {
+    return photo.dataUrl;
+  }
+  if (photo.driveFileId) {
+    try {
+      const url = `/api/photo-proxy?fileId=${photo.driveFileId}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      return await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    } catch (err) {
+      console.warn('[pdfExport] Gagal fetch foto dari Drive:', err);
+      return '';
+    }
+  }
+  return '';
+}
+
 async function getImageDimensions(
   dataUrl: string
 ): Promise<{ width: number; height: number }> {
   return new Promise((resolve) => {
+    if (!dataUrl || !dataUrl.startsWith('data:image')) {
+      resolve({ width: 4, height: 3 });
+      return;
+    }
     const img = new Image();
     img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
-    img.onerror = () => resolve({ width: 4, height: 3 }); // fallback landscape
+    img.onerror = () => resolve({ width: 4, height: 3 });
     img.src = dataUrl;
   });
+}
+
+// ==========================================
+// FOTO LAYOUT — COMPACT GRID
+// ==========================================
+// Aturan layout baru:
+//   - Semua foto masuk grid 2 kolom (kiri & kanan), tidak peduli portrait/landscape
+//   - Tinggi baris ditentukan oleh foto tertinggi di baris itu (aspect ratio tetap terjaga)
+//   - Max tinggi per foto dibatasi 65mm — foto tidak akan makan setengah halaman
+//   - Foto portrait di kolom kiri/kanan tetap tidak gepeng, di-center secara vertikal
+//   - Gap antar foto: 4mm horizontal, 6mm vertikal
+//   - Caption nomor foto di bawah masing-masing foto
+
+const PHOTO_COL_GAP = 4;   // mm gap antara kolom kiri dan kanan
+const PHOTO_ROW_GAP = 6;   // mm gap antar baris
+const PHOTO_MAX_H  = 65;   // mm tinggi maksimum per foto (cegah foto makan setengah halaman)
+const CAPTION_H    = 6;    // mm ruang caption di bawah foto
+
+async function renderPhotoGrid(
+  doc: jsPDF,
+  photos: any[],
+  resolvedDataUrls: string[],
+  dimensions: { width: number; height: number }[],
+  startY: number,
+  pageH: number,
+  margin: number,
+  contentW: number
+): Promise<number> {
+  let y = startY;
+  const colW = (contentW - PHOTO_COL_GAP) / 2;
+
+  for (let i = 0; i < photos.length; i += 2) {
+    // Hitung dimensi foto kiri
+    const dimL = dimensions[i];
+    const aspectL = dimL.height / dimL.width;
+    const hL = Math.min(colW * aspectL, PHOTO_MAX_H);
+    const wL = hL / aspectL; // lebar aktual setelah dibatasi tinggi
+
+    // Hitung dimensi foto kanan (kalau ada)
+    let hR = 0;
+    let wR = 0;
+    if (i + 1 < photos.length) {
+      const dimR = dimensions[i + 1];
+      const aspectR = dimR.height / dimR.width;
+      hR = Math.min(colW * aspectR, PHOTO_MAX_H);
+      wR = hR / aspectR;
+    }
+
+    // Tinggi baris = foto tertinggi di baris ini
+    const rowH = Math.max(hL, hR);
+
+    // Cek page break — butuh rowH + caption + gap
+    y = checkPageBreak(doc, y, rowH + CAPTION_H + PHOTO_ROW_GAP, pageH, margin);
+
+    // ── Render foto KIRI ──
+    const dataUrlL = resolvedDataUrls[i] || '';
+    // Center horizontal dalam kolom (kalau foto lebih kecil dari colW)
+    const xOffsetL = margin + (colW - wL) / 2;
+    // Center vertikal dalam baris
+    const yOffsetL = y + (rowH - hL) / 2;
+
+    if (dataUrlL.startsWith('data:image')) {
+      try {
+        doc.addImage(dataUrlL, 'JPEG', xOffsetL, yOffsetL, wL, hL, undefined, 'MEDIUM');
+      } catch {
+        _drawPhotoPlaceholder(doc, margin, y, colW, rowH, COLOR);
+      }
+    } else {
+      _drawPhotoPlaceholder(doc, margin, y, colW, rowH, COLOR);
+    }
+
+    // Border tipis di sekitar area kolom kiri
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.2);
+    doc.rect(margin, y, colW, rowH, 'S');
+
+    // Caption kiri
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6);
+    doc.setTextColor(...COLOR.gray);
+    doc.text(`Foto ${i + 1}`, margin + colW / 2, y + rowH + 4, { align: 'center' });
+
+    // ── Render foto KANAN (kalau ada) ──
+    if (i + 1 < photos.length) {
+      const dataUrlR = resolvedDataUrls[i + 1] || '';
+      const xR = margin + colW + PHOTO_COL_GAP;
+      const xOffsetR = xR + (colW - wR) / 2;
+      const yOffsetR = y + (rowH - hR) / 2;
+
+      if (dataUrlR.startsWith('data:image')) {
+        try {
+          doc.addImage(dataUrlR, 'JPEG', xOffsetR, yOffsetR, wR, hR, undefined, 'MEDIUM');
+        } catch {
+          _drawPhotoPlaceholder(doc, xR, y, colW, rowH, COLOR);
+        }
+      } else {
+        _drawPhotoPlaceholder(doc, xR, y, colW, rowH, COLOR);
+      }
+
+      // Border tipis kolom kanan
+      doc.setDrawColor(226, 232, 240);
+      doc.setLineWidth(0.2);
+      doc.rect(xR, y, colW, rowH, 'S');
+
+      // Caption kanan
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6);
+      doc.setTextColor(...COLOR.gray);
+      doc.text(`Foto ${i + 2}`, xR + colW / 2, y + rowH + 4, { align: 'center' });
+    }
+
+    y += rowH + CAPTION_H + PHOTO_ROW_GAP;
+  }
+
+  return y;
+}
+
+// Helper: gambar kotak abu placeholder kalau foto gagal load
+function _drawPhotoPlaceholder(
+  doc: jsPDF,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  color: typeof COLOR
+) {
+  doc.setFillColor(243, 244, 246);
+  doc.rect(x, y, w, h, 'F');
+  doc.setFontSize(7);
+  doc.setTextColor(...color.gray);
+  doc.text('Foto tidak tersedia', x + w / 2, y + h / 2, { align: 'center' });
 }
 
 // ==========================================
@@ -10179,7 +11102,7 @@ export const exportToPDF = async (
 
   let y = margin;
 
-// ---- HEADER PERUSAHAAN ----
+  // ---- HEADER PERUSAHAAN ----
   doc.setFillColor(...COLOR.headerBg);
   doc.rect(0, 0, pageW, 38, 'F');
 
@@ -10203,27 +11126,23 @@ export const exportToPDF = async (
     doc.text('A', margin + 5, 16);
   }
 
-  // Nama perusahaan
   const textX = margin + 18;
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
   doc.setTextColor(...COLOR.white);
   doc.text('PT AKSARA RIKSA PERDANA', textX, 13);
 
-  // Subtitle
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(6.5);
   doc.setTextColor(163, 230, 188);
   doc.text('Perusahaan Jasa K3 (PJK3) — Terakreditasi Kemnaker RI', textX, 18);
 
-  // Info kontak — 2 kolom kecil
   doc.setFontSize(6);
   doc.setTextColor(203, 213, 225);
   doc.text('Jl. Cibodas Raya No. 02, Antapani Kidul,', textX, 23);
   doc.text('Kec. Antapani, Kota Bandung, Jawa Barat 40291', textX, 27);
   doc.text('+62 821-2984-9515  |  aksara.riksa.perdana@gmail.com  |  aksarariksapjk3.com', textX, 31);
 
-  // Label laporan di kanan atas
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9);
   doc.setTextColor(...COLOR.emerald);
@@ -10237,12 +11156,10 @@ export const exportToPDF = async (
   });
   doc.text(`Dicetak: ${nowStr}`, pageW - margin, 18, { align: 'right' });
 
-  // Garis bawah header
   doc.setDrawColor(...COLOR.emerald);
   doc.setLineWidth(0.4);
   doc.line(0, 38, pageW, 38);
 
-  // Strip jenis inspeksi
   doc.setFillColor(15, 23, 42);
   doc.rect(0, 38, pageW, 10, 'F');
   doc.setFont('helvetica', 'bold');
@@ -10276,23 +11193,15 @@ export const exportToPDF = async (
   doc.setTextColor(...COLOR.gray);
   const inspDate = item.createdAt
     ? new Date(item.createdAt).toLocaleDateString('id-ID', {
-        day: '2-digit',
-        month: 'long',
-        year: 'numeric',
+        day: '2-digit', month: 'long', year: 'numeric',
       })
     : '-';
-  doc.text(`Tanggal Inspeksi: ${inspDate}`, pageW - margin - 4, y + 5, {
-    align: 'right',
-  });
+  doc.text(`Tanggal Inspeksi: ${inspDate}`, pageW - margin - 4, y + 5, { align: 'right' });
   if (item.updatedAt && item.updatedAt !== item.createdAt) {
     const updDate = new Date(item.updatedAt).toLocaleDateString('id-ID', {
-      day: '2-digit',
-      month: 'long',
-      year: 'numeric',
+      day: '2-digit', month: 'long', year: 'numeric',
     });
-    doc.text(`Diperbarui: ${updDate}`, pageW - margin - 4, y + 12, {
-      align: 'right',
-    });
+    doc.text(`Diperbarui: ${updDate}`, pageW - margin - 4, y + 12, { align: 'right' });
   }
 
   y += 22;
@@ -10311,19 +11220,10 @@ export const exportToPDF = async (
       head: [['Field', 'Nilai']],
       body: commonRows,
       theme: 'grid',
-      headStyles: {
-        fillColor: COLOR.emerald,
-        textColor: COLOR.white,
-        fontStyle: 'bold',
-        fontSize: 8,
-      },
+      headStyles: { fillColor: COLOR.emerald, textColor: COLOR.white, fontStyle: 'bold', fontSize: 8 },
       bodyStyles: { fontSize: 8, cellPadding: 3 },
       columnStyles: {
-        0: {
-          cellWidth: contentW * 0.45,
-          fontStyle: 'bold',
-          textColor: COLOR.slate,
-        },
+        0: { cellWidth: contentW * 0.45, fontStyle: 'bold', textColor: COLOR.slate },
         1: { cellWidth: contentW * 0.55, textColor: COLOR.black },
       },
       alternateRowStyles: { fillColor: [248, 250, 252] },
@@ -10333,21 +11233,12 @@ export const exportToPDF = async (
 
   // ---- SEKSI: DATA TEKNIS SPESIFIK ----
   const specificKeys = Object.keys(item.unitData || {}).filter(
-    (k) =>
-      !COMMON_FIELD_KEYS.includes(k) &&
-      k !== NOTES_KEY &&
-      item.unitData[k] !== ''
+    (k) => !COMMON_FIELD_KEYS.includes(k) && k !== NOTES_KEY && item.unitData[k] !== ''
   );
 
   if (specificKeys.length > 0) {
     y = checkPageBreak(doc, y, 20, pageH, margin);
-    y = sectionHeader(
-      doc,
-      `DATA TEKNIS — ${objType.toUpperCase()}`,
-      y,
-      pageW,
-      margin
-    );
+    y = sectionHeader(doc, `DATA TEKNIS — ${objType.toUpperCase()}`, y, pageW, margin);
 
     const specificRows = specificKeys.map((k) => [
       FIELD_LABELS[k] || camelToLabel(k),
@@ -10360,19 +11251,10 @@ export const exportToPDF = async (
       head: [['Parameter', 'Nilai']],
       body: specificRows,
       theme: 'grid',
-      headStyles: {
-        fillColor: COLOR.slate,
-        textColor: COLOR.white,
-        fontStyle: 'bold',
-        fontSize: 8,
-      },
+      headStyles: { fillColor: COLOR.slate, textColor: COLOR.white, fontStyle: 'bold', fontSize: 8 },
       bodyStyles: { fontSize: 8, cellPadding: 3 },
       columnStyles: {
-        0: {
-          cellWidth: contentW * 0.5,
-          fontStyle: 'bold',
-          textColor: COLOR.slate,
-        },
+        0: { cellWidth: contentW * 0.5, fontStyle: 'bold', textColor: COLOR.slate },
         1: { cellWidth: contentW * 0.5, textColor: COLOR.black },
       },
       alternateRowStyles: { fillColor: [248, 250, 252] },
@@ -10400,8 +11282,7 @@ export const exportToPDF = async (
   }
 
   // ---- SEKSI: FOTO DOKUMENTASI ----
-  // FIXED: Adaptive layout — portrait=1 kolom full, landscape=2 kolom
-  // Aspect ratio dijaga, tidak ada foto yang gepeng
+  // Layout baru: grid 2 kolom seragam, max tinggi 65mm per foto
   const photos: any[] = item.photos || [];
   if (photos.length > 0) {
     y = checkPageBreak(doc, y, 30, pageH, margin);
@@ -10413,189 +11294,20 @@ export const exportToPDF = async (
       margin
     );
 
-    // Pre-load semua dimensi foto dulu
+    // Resolve semua foto dulu (lokal atau dari Drive)
+    const resolvedDataUrls = await Promise.all(
+      photos.map((p) => resolvePhotoDataUrl(p))
+    );
+    // Ambil dimensi semua foto
     const dimensions = await Promise.all(
-      photos.map((p) => getImageDimensions(p.dataUrl || ''))
+      resolvedDataUrls.map((url) => getImageDimensions(url))
     );
 
-    let i = 0;
-    while (i < photos.length) {
-      const dim = dimensions[i];
-      const isPortrait = dim.height > dim.width;
-
-      if (isPortrait) {
-        // ---- PORTRAIT: 1 kolom penuh ----
-        // Hitung tinggi berdasarkan aspect ratio, max 120mm tingginya
-        const aspectRatio = dim.height / dim.width;
-        const photoW = contentW;
-        const photoH = Math.min(photoW * aspectRatio, 120);
-
-        y = checkPageBreak(doc, y, photoH + 12, pageH, margin);
-
-        try {
-          const dataUrl: string = photos[i].dataUrl || '';
-          if (dataUrl.startsWith('data:image')) {
-            // Kalau foto tidak penuh lebar karena aspect ratio, center-kan
-            const actualW = photoH / aspectRatio;
-            const xOffset = margin + (contentW - actualW) / 2;
-            doc.addImage(
-              dataUrl,
-              'JPEG',
-              xOffset,
-              y,
-              actualW,
-              photoH,
-              undefined,
-              'MEDIUM'
-            );
-          }
-        } catch {
-          doc.setFillColor(243, 244, 246);
-          doc.rect(margin, y, contentW, photoH, 'F');
-          doc.setFontSize(7);
-          doc.setTextColor(...COLOR.gray);
-          doc.text('Foto tidak tersedia', margin + contentW / 2, y + photoH / 2, {
-            align: 'center',
-          });
-        }
-
-        // Caption
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(6.5);
-        doc.setTextColor(...COLOR.gray);
-        doc.text(`Foto ${i + 1} (portrait)`, margin, y + photoH + 3.5);
-
-        y += photoH + 8;
-        i++;
-      } else {
-        // ---- LANDSCAPE: 2 kolom berdampingan ----
-        // Cek apakah foto berikutnya juga landscape
-        const nextDim = i + 1 < photos.length ? dimensions[i + 1] : null;
-        const nextIsLandscape = nextDim ? nextDim.width >= nextDim.height : false;
-
-        const colW = (contentW - 6) / 2;
-
-        if (nextIsLandscape && i + 1 < photos.length) {
-          // Render 2 foto landscape berdampingan
-          // Pilih tinggi maksimum dari kedua foto (berdasarkan aspect ratio masing-masing)
-          const aspectLeft = dim.height / dim.width;
-          const aspectRight = nextDim!.height / nextDim!.width;
-          const heightLeft = colW * aspectLeft;
-          const heightRight = colW * aspectRight;
-          const rowH = Math.max(heightLeft, heightRight);
-
-          y = checkPageBreak(doc, y, rowH + 12, pageH, margin);
-
-          // Foto kiri
-          try {
-            const dataUrl = photos[i].dataUrl || '';
-            if (dataUrl.startsWith('data:image')) {
-              // Center vertikal dalam row
-              const actualH = colW * aspectLeft;
-              const yOffset = y + (rowH - actualH) / 2;
-              doc.addImage(
-                dataUrl,
-                'JPEG',
-                margin,
-                yOffset,
-                colW,
-                actualH,
-                undefined,
-                'MEDIUM'
-              );
-            }
-          } catch {
-            doc.setFillColor(243, 244, 246);
-            doc.rect(margin, y, colW, rowH, 'F');
-            doc.setFontSize(7);
-            doc.setTextColor(...COLOR.gray);
-            doc.text('Foto tidak tersedia', margin + colW / 2, y + rowH / 2, {
-              align: 'center',
-            });
-          }
-
-          // Foto kanan
-          try {
-            const dataUrl = photos[i + 1].dataUrl || '';
-            if (dataUrl.startsWith('data:image')) {
-              const actualH = colW * aspectRight;
-              const yOffset = y + (rowH - actualH) / 2;
-              doc.addImage(
-                dataUrl,
-                'JPEG',
-                margin + colW + 6,
-                yOffset,
-                colW,
-                actualH,
-                undefined,
-                'MEDIUM'
-              );
-            }
-          } catch {
-            doc.setFillColor(243, 244, 246);
-            doc.rect(margin + colW + 6, y, colW, rowH, 'F');
-            doc.setFontSize(7);
-            doc.setTextColor(...COLOR.gray);
-            doc.text(
-              'Foto tidak tersedia',
-              margin + colW + 6 + colW / 2,
-              y + rowH / 2,
-              { align: 'center' }
-            );
-          }
-
-          // Caption
-          doc.setFont('helvetica', 'normal');
-          doc.setFontSize(6.5);
-          doc.setTextColor(...COLOR.gray);
-          doc.text(`Foto ${i + 1}`, margin, y + rowH + 3.5);
-          doc.text(`Foto ${i + 2}`, margin + colW + 6, y + rowH + 3.5);
-
-          y += rowH + 8;
-          i += 2;
-        } else {
-          // Landscape sendirian (pasangan berikutnya portrait atau tidak ada)
-          // Render 1 kolom tapi dengan lebar penuh agar tidak terlalu kecil
-          const aspectRatio = dim.height / dim.width;
-          const photoW = contentW;
-          const photoH = photoW * aspectRatio;
-
-          y = checkPageBreak(doc, y, photoH + 12, pageH, margin);
-
-          try {
-            const dataUrl = photos[i].dataUrl || '';
-            if (dataUrl.startsWith('data:image')) {
-              doc.addImage(
-                dataUrl,
-                'JPEG',
-                margin,
-                y,
-                photoW,
-                photoH,
-                undefined,
-                'MEDIUM'
-              );
-            }
-          } catch {
-            doc.setFillColor(243, 244, 246);
-            doc.rect(margin, y, photoW, photoH, 'F');
-            doc.setFontSize(7);
-            doc.setTextColor(...COLOR.gray);
-            doc.text('Foto tidak tersedia', margin + photoW / 2, y + photoH / 2, {
-              align: 'center',
-            });
-          }
-
-          doc.setFont('helvetica', 'normal');
-          doc.setFontSize(6.5);
-          doc.setTextColor(...COLOR.gray);
-          doc.text(`Foto ${i + 1} (landscape)`, margin, y + photoH + 3.5);
-
-          y += photoH + 8;
-          i++;
-        }
-      }
-    }
+    // Render dengan grid 2 kolom compact
+    y = await renderPhotoGrid(
+      doc, photos, resolvedDataUrls, dimensions,
+      y, pageH, margin, contentW
+    );
   }
 
   // ---- FOOTER di setiap halaman ----
@@ -10616,9 +11328,7 @@ export const exportToPDF = async (
       margin,
       pageH - 4
     );
-    doc.text(`Halaman ${p} / ${totalPages}`, pageW - margin, pageH - 4, {
-      align: 'right',
-    });
+    doc.text(`Halaman ${p} / ${totalPages}`, pageW - margin, pageH - 4, { align: 'right' });
   }
 
   doc.save(`${fileName}.pdf`);
@@ -10641,6 +11351,7 @@ export default {
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
   ],
+  darkMode: 'class',
   theme: {
     extend: {},
   },

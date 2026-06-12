@@ -86,27 +86,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const drive = getDriveClient();
 
-    // Kalau sudah punya folderId (edit), skip buat folder baru
+// Kalau sudah punya folderId (edit), skip buat folder baru
     let unitFolderId: string;
     if (req.body.existingFolderId) {
       unitFolderId = req.body.existingFolderId;
     } else {
-      const rootFolderId = await getOrCreateFolder(drive, 'Aksara Inspect', null);
+      // Menggunakan ID dari env jika ada, kalau tidak ada baru cari/buat folder 'Aksara Inspect'
+      const rootFolderId = process.env.ROOT_FOLDER_ID || (await getOrCreateFolder(drive, 'Aksara Inspect', null));
+      
       const clientFolderId = await getOrCreateFolder(drive, session.clientName, rootFolderId);
       const dateStr = new Date(session.createdAt).toLocaleDateString('sv-SE', { timeZone: 'Asia/Jakarta' });
       const dateFolderId = await getOrCreateFolder(drive, dateStr, clientFolderId);
+      
       const objectTypeLabel: Record<string, string> = {
-  'Angkur': 'Safety Anchor',
-  'PAA': 'Pesawat Angkat & Angkut',
-  'PUBT': 'Pesawat Uap & Bejana Tekan',
-  'PTP': 'Pesawat Tenaga & Produksi',
-  'Listrik': 'Instalasi Listrik',
-  'Penyalur Petir': 'Instalasi Penyalur Petir',
-  'Lift': 'Elevator & Eskalator',
-  'Proteksi Kebakaran': 'Proteksi Kebakaran',
-};
-const typeFolderName = objectTypeLabel[session.objectType] ?? session.objectType;
-const typeFolderId = await getOrCreateFolder(drive, typeFolderName, dateFolderId);
+        'Angkur': 'Safety Anchor',
+        'PAA': 'Pesawat Angkat & Angkut',
+        'PUBT': 'Pesawat Uap & Bejana Tekan',
+        'PTP': 'Pesawat Tenaga & Produksi',
+        'Listrik': 'Instalasi Listrik',
+        'Penyalur Petir': 'Instalasi Penyalur Petir',
+        'Lift': 'Elevator & Eskalator',
+        'Proteksi Kebakaran': 'Proteksi Kebakaran',
+      };
+      
+      const typeFolderName = objectTypeLabel[session.objectType] ?? session.objectType;
+      const typeFolderId = await getOrCreateFolder(drive, typeFolderName, dateFolderId);
       const unitFolderName = `${session.unitData?.namaUnit || 'Unit'} - ${session.unitData?.nomorSeri || 'NoSeri'}`;
       unitFolderId = await getOrCreateFolder(drive, unitFolderName, typeFolderId);
     }
