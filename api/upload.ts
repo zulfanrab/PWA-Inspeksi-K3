@@ -87,13 +87,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const drive = getDriveClient();
 
 // Kalau sudah punya folderId (edit), skip buat folder baru
-    let unitFolderId: string;
+let unitFolderId: string;
     if (req.body.existingFolderId) {
       unitFolderId = req.body.existingFolderId;
     } else {
-      // Menggunakan ID dari env jika ada, kalau tidak ada baru cari/buat folder 'Aksara Inspect'
-      const rootFolderId = process.env.ROOT_FOLDER_ID || (await getOrCreateFolder(drive, 'Aksara Inspect', null));
+      // Validasi variabel
+      const envRootId = process.env.ROOT_FOLDER_ID?.trim();
       
+      // Kalau env ada, pake itu. Kalau gak ada, baru cari.
+      const rootFolderId = envRootId 
+        ? envRootId 
+        : await getOrCreateFolder(drive, 'Aksara Inspect', null);
+      
+      console.log('Menggunakan Root Folder ID:', rootFolderId); // Buat ngetes di log
+
       const clientFolderId = await getOrCreateFolder(drive, session.clientName, rootFolderId);
       const dateStr = new Date(session.createdAt).toLocaleDateString('sv-SE', { timeZone: 'Asia/Jakarta' });
       const dateFolderId = await getOrCreateFolder(drive, dateStr, clientFolderId);
