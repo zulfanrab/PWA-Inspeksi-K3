@@ -62,28 +62,48 @@ export function isTokenExpiringSoon(_withinMinutes = 10): boolean {
 // SILENT REFRESH
 // ==========================================
 export function trySilentRefresh(clientId: string, redirectUri: string): void {
-  const silentUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=token&scope=openid email profile&prompt=none`;
-  
-  const iframe = document.createElement('iframe');
-  iframe.style.display = 'none';
-  iframe.src = silentUrl;
-  
-  iframe.onload = () => {
+  // Cek dulu apakah token masih valid — kalau masih aman, skip
+  const expiryStr = localStorage.getItem('google_token_expiry');
+  if (expiryStr) {
+    const expiry = parseInt(expiryStr, 10);
+    // Kalau masih lebih dari 5 menit, skip refresh
+    if (Date.now() < expiry - 5 * 60_000) return;
+  }
+
+  const silentUrl = [
+    'https://accounts.google.com/o/oauth2/v2/auth',
+    `?client_id=${clientId}`,
+    `&redirect_uri=${redirectUri}`,
+    `&response_type=token`,
+    `&scope=openid%20email%20profile`,
+    `&prompt=none`,
+  ].join('');
+
+  const popup = window.open(silentUrl, '_blank', 'width=1,height=1,left=-1000,top=-1000');
+  if (!popup) return;
+
+  const timer = setInterval(() => {
     try {
-      const hash = iframe.contentWindow?.location.hash || '';
+      const hash = popup.location.hash;
       if (hash.includes('access_token')) {
         const params = new URLSearchParams(hash.substring(1));
         const token = params.get('access_token');
         const expiresIn = parseInt(params.get('expires_in') || '3600', 10);
         if (token) saveToken(token, expiresIn);
+        clearInterval(timer);
+        popup.close();
       }
+      if (popup.closed) clearInterval(timer);
     } catch {
-      // Cross-origin block — silent fail, user tetap bisa pakai app
-    } finally {
-      document.body.removeChild(iframe);
+      // Cross-origin — belum redirect balik, tunggu
     }
-  };
-  document.body.appendChild(iframe);
+  }, 500);
+
+  // Timeout 15 detik — kalau gagal, tutup popup
+  setTimeout(() => {
+    clearInterval(timer);
+    if (!popup.closed) popup.close();
+  }, 15000);
 }
 
 // ==========================================

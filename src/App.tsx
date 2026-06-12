@@ -537,14 +537,16 @@ export default function App() {
   // ── Auto sync ──────────────────────────────────────────────────────────────
 
   const triggerAutoSync = useCallback(async () => {
+    if (!isAuthenticated) return;
+    if (!navigator.onLine) return;
     const currentDrafts = await SessionRepository.getDrafts();
     if (currentDrafts.length === 0) return;
     for (const draft of currentDrafts) {
       try {
         setUploadingId(draft.id);
         // Auto sync = create baru, kirim semua foto (onlyNewPhotos = null)
-        await uploadToDrive(draft, draft.photos, (p) => setUploadProgress(p), null);
-        await SessionRepository.markSynced(draft.id);
+        const { folderId } = await uploadToDrive(draft, draft.photos, (p) => setUploadProgress(p), null);
+        await SessionRepository.markSynced(draft.id, folderId);
       } catch (err: unknown) {
         if (err instanceof TokenExpiredError) {
           setIsAuthenticated(false);
@@ -941,7 +943,7 @@ export default function App() {
       <input ref={galleryInputRef} type="file" accept="image/*" multiple onChange={handlePhotos} style={{ display: 'none' }} aria-hidden="true" />
 
       {/* NAVBAR */}
-      <header style={{ position: 'sticky', top: 0, zIndex: 50, background: 'rgba(255,255,255,0.97)', backdropFilter: 'blur(8px)', borderBottom: `0.5px solid ${T.border}`, padding: '0 16px', paddingTop: 'env(safe-area-inset-top)', height: `calc(52px + env(safe-area-inset-top))`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', maxWidth: 640, margin: '0 auto' }}>
+      <header style={{ position: 'sticky', top: 0, zIndex: 50, background: darkMode ? 'rgba(15,23,42,0.97)' : 'rgba(255,255,255,0.97)', backdropFilter: 'blur(8px)', borderBottom: `0.5px solid ${T.border}`, padding: '0 16px', paddingTop: 'env(safe-area-inset-top)', height: `calc(52px + env(safe-area-inset-top))`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', maxWidth: 640, margin: '0 auto' }}>
         <button onClick={() => { resetForm(); setView('HOME'); }} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
           <img src="/icons/icon-192.png" alt="ARP" style={{ width: 30, height: 30, borderRadius: 9, objectFit: 'cover' }} />
           <span style={{ fontSize: 13, fontWeight: 700, color: T.textPrimary, letterSpacing: '-0.3px' }}>
@@ -1026,7 +1028,7 @@ export default function App() {
                 <div style={{ width: 44, height: 44, borderRadius: 12, background: 'rgba(255,255,255,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.emeraldBorder, flexShrink: 0, position: 'relative', zIndex: 1 }}>{ICONS.factory}</div>
                 <div style={{ flex: 1, position: 'relative', zIndex: 1 }}>
                   <p style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>Dari Template Unit</p>
-                  <p style={{ fontSize: 11, color: T.emeraldBorder, marginTop: 2 }}>Pilih klien → unit → form otomatis terisi</p>
+                  <p style={{ fontSize: 11, color: T.emeraldText, marginTop: 2 }}>Pilih klien → unit → form otomatis terisi</p>
                 </div>
                 <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 18, position: 'relative', zIndex: 1 }}>›</span>
               </button>
@@ -1101,7 +1103,7 @@ export default function App() {
 
       {/* BOTTOM NAV + FAB */}
       {(view === 'HOME' || view === 'HISTORY' || view === 'SYNC_HUB' || view === 'ADMIN') && (
-        <nav style={{ position: 'fixed', bottom: 0, left: 0, right: 0, background: 'rgba(255,255,255,0.97)', backdropFilter: 'blur(8px)', borderTop: `0.5px solid ${T.border}`, padding: '8px 16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-around', maxWidth: 640, margin: '0 auto', zIndex: 40 }}>
+        <nav style={{ position: 'fixed', bottom: 0, left: 0, right: 0, background: darkMode ? 'rgba(15,23,42,0.97)' : 'rgba(255,255,255,0.97)', backdropFilter: 'blur(8px)', borderTop: `0.5px solid ${T.border}`, padding: '8px 16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-around', maxWidth: 640, margin: '0 auto', zIndex: 40 }}>
           <NavTab icon={ICONS.home} label="Beranda" active={view === 'HOME'} onClick={() => { resetForm(); setView('HOME'); }} />
           <NavTab icon={ICONS.clipboard} label="Riwayat" active={view === 'HISTORY'} onClick={() => setView('HISTORY')} />
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
