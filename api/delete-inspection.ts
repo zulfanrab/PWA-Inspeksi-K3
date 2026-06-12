@@ -1,22 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { google } from 'googleapis';
+import { getDriveClient } from './_driveClient';
 
-function getDriveClient() {
-  const clientId = process.env.VITE_GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
 
-  if (!clientId || !clientSecret || !refreshToken) {
-    throw new Error('ENV tidak lengkap');
-  }
-
-  const oauth2Client = new google.auth.OAuth2(
-    clientId, clientSecret,
-    'https://developers.google.com/oauthplayground'
-  );
-  oauth2Client.setCredentials({ refresh_token: refreshToken });
-  return google.drive({ version: 'v3', auth: oauth2Client });
-}
 
 async function getRootFolderId(drive: any): Promise<string | null> {
   const res = await drive.files.list({

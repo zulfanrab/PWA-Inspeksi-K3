@@ -1,15 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { google } from 'googleapis';
+import { getDriveClient } from './_driveClient';
 
-function getDriveClient() {
-  const oauth2Client = new google.auth.OAuth2(
-    process.env.VITE_GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
-    'https://developers.google.com/oauthplayground'
-  );
-  oauth2Client.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
-  return google.drive({ version: 'v3', auth: oauth2Client });
-}
+
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
