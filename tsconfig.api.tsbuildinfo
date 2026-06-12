@@ -1,0 +1,1 @@
+{"root":["./api/delete-inspection.ts","./api/delete-photo.ts","./api/driveclient.ts","./api/photo-proxy.ts","./api/pull-inspections.ts","./api/sync-templates.ts","./api/upload-photo.ts","./api/upload.ts"],"version":"5.6.3"}

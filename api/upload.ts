@@ -4,7 +4,7 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { Readable } from 'stream';
-import { getDriveClient } from './driveClient';
+import { getDriveClient } from './driveClient.js';
 
 // ─── TYPES ────────────────────────────────────────────────────────────────────
 

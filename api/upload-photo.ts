@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { Readable } from 'stream';
-import { getDriveClient } from './driveClient';
+import { getDriveClient } from './driveClient.js';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const MAX_SIZE_BYTES = 4 * 1024 * 1024; // 4MB

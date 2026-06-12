@@ -3,7 +3,7 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { google } from 'googleapis';
-import { getDriveClient } from './driveClient';
+import { getDriveClient } from './driveClient.js';
 
 
 
