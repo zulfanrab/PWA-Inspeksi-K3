@@ -519,18 +519,16 @@ export default function App() {
     localStorage.setItem('aksara_dark_mode', String(darkMode));
   }, [darkMode]);
   // Auto silent refresh — cek tiap 10 menit, refresh kalau token mau expired
-  useEffect(() => {
+useEffect(() => {
     if (!isAuthenticated) return;
-    const check = () => {
+    const interval = setInterval(() => {
       if (isTokenExpiringSoon(15)) {
         trySilentRefresh(
           GOOGLE_CONFIG.clientId,
           getGoogleRedirectUri()
         );
       }
-    };
-    check(); // cek langsung pas mount
-    const interval = setInterval(check, 10 * 60 * 1000); // tiap 10 menit
+    }, 10 * 60 * 1000);
     return () => clearInterval(interval);
   }, [isAuthenticated]);
 
