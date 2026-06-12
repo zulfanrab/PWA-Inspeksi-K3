@@ -1,34 +1,105 @@
 // api/upload.ts
-// VERSI BARU (SMART APPEND PHASE 1)
-// Tugas file ini HANYA membuat folder dan file JSON. 
-// Foto TIDAK lagi di-upload di sini untuk mencegah Error 413 Payload Too Large.
+// Tugas: Membuat struktur folder dan menyimpan metadata JSON ke Google Drive.
+// Foto di-handle terpisah oleh api/upload-photo.ts untuk menghindari 413.
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { google } from 'googleapis';
 import { Readable } from 'stream';
 import { getDriveClient } from './driveClient';
 
+// ─── TYPES ────────────────────────────────────────────────────────────────────
 
+type DriveClient = ReturnType<typeof getDriveClient>;
 
-// ─── FOLDER & FILE HELPERS ───────────────────────────────────────────────────
+interface UnitData {
+  namaUnit?: string;
+  nomorSeri?: string;
+  [key: string]: unknown;
+}
+
+interface InspectionSession {
+  id: string;
+  clientName: string;
+  objectType: string;
+  createdAt: string;
+  updatedAt?: string;
+  unitData?: UnitData;
+  totalPhotos?: number;
+  inspectorEmail?: string;
+}
+
+interface UploadRequestBody {
+  inspectionData?: InspectionSession;
+  session?: InspectionSession;
+  existingFolderId?: string;
+}
+
+// ─── CONSTANTS ────────────────────────────────────────────────────────────────
+
+const OBJECT_TYPE_LABELS: Record<string, string> = {
+  Angkur: 'Safety Anchor',
+  PAA: 'Pesawat Angkat & Angkut',
+  PUBT: 'Pesawat Uap & Bejana Tekan',
+  PTP: 'Pesawat Tenaga & Produksi',
+  Listrik: 'Instalasi Listrik',
+  'Penyalur Petir': 'Instalasi Penyalur Petir',
+  Lift: 'Elevator & Eskalator',
+  'Proteksi Kebakaran': 'Proteksi Kebakaran',
+};
+
+// ─── DRIVE HELPERS ────────────────────────────────────────────────────────────
+
+/**
+ * Escape single quote untuk query Drive API.
+ * Drive query pakai sintaks berbeda dari SQL — backslash escape, bukan doubling.
+ */
+function escapeDriveQuery(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+/**
+ * Cari folder berdasarkan nama dan parent.
+ * Return ID folder jika ditemukan, null jika tidak ada.
+ */
 async function findFolder(
-  drive: ReturnType<typeof google.drive>,
+  drive: DriveClient,
   name: string,
   parentId: string | null
 ): Promise<string | null> {
-  const parentQuery = parentId ? `'${parentId}' in parents` : `'root' in parents`;
-  const q = `name='${name.replace(/'/g, "\\'")}' and mimeType='application/vnd.google-apps.folder' and ${parentQuery} and trashed=false`;
-  const res = await drive.files.list({ q, fields: 'files(id)', spaces: 'drive' });
-  return res.data.files?.[0]?.id ?? null;
+  const parentClause = parentId
+    ? `'${escapeDriveQuery(parentId)}' in parents`
+    : `'root' in parents`;
+
+  const q = [
+    `name='${escapeDriveQuery(name)}'`,
+    `mimeType='application/vnd.google-apps.folder'`,
+    parentClause,
+    `trashed=false`,
+  ].join(' and ');
+
+  const response = await drive.files.list({
+    q,
+    fields: 'files(id)',
+    spaces: 'drive',
+    pageSize: 1, // Kita hanya butuh satu hasil, jangan waste quota
+  });
+
+  return response.data.files?.[0]?.id ?? null;
 }
 
+/**
+ * Ambil folder yang ada atau buat baru jika belum ada.
+ * Idempotent — aman dipanggil berkali-kali dengan argumen sama.
+ */
 async function getOrCreateFolder(
-  drive: ReturnType<typeof google.drive>,
+  drive: DriveClient,
   name: string,
   parentId: string | null
 ): Promise<string> {
-  const existing = await findFolder(drive, name, parentId);
-  if (existing) return existing;
+  const existingId = await findFolder(drive, name, parentId);
+  if (existingId) {
+    console.log(`[getOrCreateFolder] Found: "${name}" → ${existingId}`);
+    return existingId;
+  }
 
   const requestBody: Record<string, unknown> = {
     name,
@@ -36,116 +107,172 @@ async function getOrCreateFolder(
   };
   if (parentId) requestBody.parents = [parentId];
 
-  const res = await drive.files.create({ requestBody, fields: 'id' });
-  return res.data.id!;
+  const response = await drive.files.create({
+    requestBody,
+    fields: 'id',
+  });
+
+  const newId = response.data.id;
+  if (!newId) throw new Error(`[getOrCreateFolder] Drive tidak mengembalikan ID untuk folder "${name}"`);
+
+  console.log(`[getOrCreateFolder] Created: "${name}" → ${newId}`);
+  return newId;
 }
 
+/**
+ * Buat atau update file teks (JSON) di dalam folder Drive.
+ *
+ * FIX KRITIS: Saat `files.update`, jangan masukkan `mimeType` ke `requestBody`.
+ * Drive API v3 menolak ini dengan 400 Bad Request.
+ * `mimeType` hanya boleh ada di object `media`.
+ */
 async function upsertTextFile(
-  drive: ReturnType<typeof google.drive>,
-  name: string,
+  drive: DriveClient,
+  fileName: string,
   content: string,
   parentId: string
 ): Promise<void> {
-  const q = `name='${name.replace(/'/g, "\\'")}' and '${parentId}' in parents and trashed=false`;
-  const listRes = await drive.files.list({ q, fields: 'files(id)', spaces: 'drive' });
-  const existingId = listRes.data.files?.[0]?.id;
-  const stream = Readable.from([content]);
-  const media = { mimeType: 'application/json', body: stream };
+  const q = [
+    `name='${escapeDriveQuery(fileName)}'`,
+    `'${escapeDriveQuery(parentId)}' in parents`,
+    `trashed=false`,
+  ].join(' and ');
+
+  const listResponse = await drive.files.list({
+    q,
+    fields: 'files(id)',
+    spaces: 'drive',
+    pageSize: 1,
+  });
+
+  const existingId = listResponse.data.files?.[0]?.id;
+
+  // FIX: Gunakan Buffer agar stream tidak corrupt saat flush
+  const contentBuffer = Buffer.from(content, 'utf-8');
+  const media = {
+    mimeType: 'application/json',
+    body: Readable.from(contentBuffer),
+  };
 
   if (existingId) {
+    // FIX UTAMA 400: Saat update, requestBody TIDAK boleh mengandung mimeType.
+    // mimeType hanya dikirim lewat object `media`.
     await drive.files.update({
       fileId: existingId,
-      requestBody: { name, mimeType: 'application/json' },
+      requestBody: { name: fileName },
       media,
     });
+    console.log(`[upsertTextFile] Updated: "${fileName}" (${existingId})`);
   } else {
     await drive.files.create({
-      requestBody: { name, mimeType: 'application/json', parents: [parentId] },
+      requestBody: {
+        name: fileName,
+        mimeType: 'application/json',
+        parents: [parentId],
+      },
       media,
       fields: 'id',
     });
+    console.log(`[upsertTextFile] Created: "${fileName}"`);
   }
 }
 
 // ─── MAIN HANDLER ─────────────────────────────────────────────────────────────
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Origin', process.env.ALLOWED_ORIGIN ?? '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
 
   try {
-    // Terima data dari format baru (inspectionData) atau format lama (session)
-    const session = req.body.inspectionData || req.body.session;
+    const body = req.body as UploadRequestBody;
+    const session = body.inspectionData ?? body.session;
 
-    if (!session?.id) {
-      return res.status(400).json({ error: 'Payload tidak valid: data inspeksi wajib ada' });
+    if (!session?.id || !session?.clientName || !session?.objectType) {
+      return res.status(400).json({
+        error: 'Payload tidak valid: id, clientName, dan objectType wajib ada.',
+      });
     }
 
     const drive = getDriveClient();
 
-// Kalau sudah punya folderId (edit), skip buat folder baru
-let unitFolderId: string;
-    if (req.body.existingFolderId) {
-      unitFolderId = req.body.existingFolderId;
+    // ── Resolusi Folder ───────────────────────────────────────────────────────
+    let unitFolderId: string;
+
+    if (body.existingFolderId) {
+      // Mode edit: folder sudah ada, tidak perlu buat ulang
+      unitFolderId = body.existingFolderId;
+      console.log(`[upload] Mode edit, menggunakan folder: ${unitFolderId}`);
     } else {
-      // Validasi variabel
-      const envRootId = process.env.ROOT_FOLDER_ID?.trim();
-      
-      // Kalau env ada, pake itu. Kalau gak ada, baru cari.
-      const rootFolderId = envRootId 
-        ? envRootId 
-        : await getOrCreateFolder(drive, 'Aksara Inspect', null);
-      
-      console.log('Menggunakan Root Folder ID:', rootFolderId); // Buat ngetes di log
+      // Mode baru: buat struktur folder lengkap
+      const rootFolderId =
+        process.env.ROOT_FOLDER_ID?.trim() ||
+        (await getOrCreateFolder(drive, 'Aksara Inspect', null));
+
+      console.log(`[upload] Root folder: ${rootFolderId}`);
 
       const clientFolderId = await getOrCreateFolder(drive, session.clientName, rootFolderId);
-      const dateStr = new Date(session.createdAt).toLocaleDateString('sv-SE', { timeZone: 'Asia/Jakarta' });
+
+      // Format tanggal YYYY-MM-DD pakai locale 'sv-SE' (ISO-like, konsisten cross-timezone)
+      const dateStr = new Date(session.createdAt).toLocaleDateString('sv-SE', {
+        timeZone: 'Asia/Jakarta',
+      });
       const dateFolderId = await getOrCreateFolder(drive, dateStr, clientFolderId);
-      
-      const objectTypeLabel: Record<string, string> = {
-        'Angkur': 'Safety Anchor',
-        'PAA': 'Pesawat Angkat & Angkut',
-        'PUBT': 'Pesawat Uap & Bejana Tekan',
-        'PTP': 'Pesawat Tenaga & Produksi',
-        'Listrik': 'Instalasi Listrik',
-        'Penyalur Petir': 'Instalasi Penyalur Petir',
-        'Lift': 'Elevator & Eskalator',
-        'Proteksi Kebakaran': 'Proteksi Kebakaran',
-      };
-      
-      const typeFolderName = objectTypeLabel[session.objectType] ?? session.objectType;
+
+      const typeFolderName = OBJECT_TYPE_LABELS[session.objectType] ?? session.objectType;
       const typeFolderId = await getOrCreateFolder(drive, typeFolderName, dateFolderId);
-      const unitFolderName = `${session.unitData?.namaUnit || 'Unit'} - ${session.unitData?.nomorSeri || 'NoSeri'}`;
+
+      const namaUnit = session.unitData?.namaUnit?.trim() || 'Unit';
+      const nomorSeri = session.unitData?.nomorSeri?.trim() || 'NoSeri';
+      const unitFolderName = `${namaUnit} - ${nomorSeri}`;
+
       unitFolderId = await getOrCreateFolder(drive, unitFolderName, typeFolderId);
     }
 
-    // 2. Upload JSON Metadata
-    const dataPayload = JSON.stringify({
-      id: session.id,
-      clientName: session.clientName,
-      objectType: session.objectType,
-      createdAt: session.createdAt,
-      updatedAt: session.updatedAt,
-      unitData: session.unitData,
-      totalPhotos: session.totalPhotos || 0, // Info dari frontend
-      inspectorEmail: session.inspectorEmail ?? null,
-    }, null, 2);
-    
+    // ── Upload Metadata JSON ──────────────────────────────────────────────────
+    const dataPayload = JSON.stringify(
+      {
+        id: session.id,
+        clientName: session.clientName,
+        objectType: session.objectType,
+        createdAt: session.createdAt,
+        updatedAt: session.updatedAt ?? new Date().toISOString(),
+        unitData: session.unitData ?? {},
+        totalPhotos: session.totalPhotos ?? 0,
+        inspectorEmail: session.inspectorEmail ?? null,
+      },
+      null,
+      2
+    );
+
     await upsertTextFile(drive, 'data-inspeksi.json', dataPayload, unitFolderId);
 
-    // 3. SELESAI. Cuma balikin folderId buat dipake sama fungsi upload foto
     return res.status(200).json({
       success: true,
       folderId: unitFolderId,
-      message: 'Folder dan metadata JSON berhasil dibuat',
+      message: 'Folder dan metadata JSON berhasil dibuat.',
     });
 
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Upload meta gagal';
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Upload meta gagal';
+    // Log detail Google API error jika ada
+    const googleDetail = (error as any)?.response?.data ?? null;
+
     console.error('[api/upload] Error:', message);
-    return res.status(500).json({ error: message });
+    if (googleDetail) {
+      console.error('[api/upload] Google API detail:', JSON.stringify(googleDetail));
+    }
+
+    return res.status(500).json({
+      error: message,
+      ...(process.env.NODE_ENV !== 'production' && googleDetail
+        ? { googleError: googleDetail }
+        : {}),
+    });
   }
 }
