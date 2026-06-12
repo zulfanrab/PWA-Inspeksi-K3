@@ -21,6 +21,7 @@ interface SyncHubProps {
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
   onSync: (id: string) => void;
+  onSyncAll: () => void;
 }
 
 const OBJECT_TYPES = [
@@ -57,6 +58,7 @@ export function SyncHub({
   onEdit,
   onDelete,
   onSync,
+  onSyncAll,
 }: SyncHubProps) {
   return (
     <div className="space-y-4">
@@ -167,7 +169,14 @@ export function SyncHub({
       {uploadingId && uploadProgress && (
         <UploadProgressBar progress={uploadProgress} />
       )}
-
+{drafts.length > 1 && isAuthenticated && isOnline && !uploadingId && (
+        <button
+          onClick={onSyncAll}
+          className="w-full py-3 flex items-center justify-center gap-2 bg-gray-900 hover:bg-black text-white text-sm font-bold rounded-xl transition-all shadow-sm"
+        >
+          ☁️ Upload Semua ({drafts.length} draft sekaligus)
+        </button>
+      )}
       {drafts.length === 0 ? (
         <EmptyState icon="✅" title="Semua data sudah tersinkronisasi" subtitle="Tidak ada draft yang tertunda" />
       ) : (

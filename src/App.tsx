@@ -1055,6 +1055,7 @@ export default function App() {
             uploadProgress={uploadProgress} isOnline={isOnline} autoSync={autoSync}
             onAutoSyncToggle={handleAutoSyncToggle} onLogin={handleLogin}
             onEdit={handleEdit} onDelete={handleDelete} onSync={handleSync}
+            onSyncAll={triggerAutoSync}
           />
         )}
 
