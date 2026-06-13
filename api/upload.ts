@@ -76,11 +76,13 @@ async function findFolder(
     `trashed=false`,
   ].join(' and ');
 
-  const response = await drive.files.list({
+const response = await drive.files.list({
     q,
     fields: 'files(id)',
     spaces: 'drive',
-    pageSize: 1, // Kita hanya butuh satu hasil, jangan waste quota
+    pageSize: 1,
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
   });
 
   return response.data.files?.[0]?.id ?? null;
@@ -107,9 +109,10 @@ async function getOrCreateFolder(
   };
   if (parentId) requestBody.parents = [parentId];
 
-  const response = await drive.files.create({
+const response = await drive.files.create({
     requestBody,
     fields: 'id',
+    supportsAllDrives: true,
   });
 
   const newId = response.data.id;
@@ -138,11 +141,13 @@ async function upsertTextFile(
     `trashed=false`,
   ].join(' and ');
 
-  const listResponse = await drive.files.list({
+ const listResponse = await drive.files.list({
     q,
     fields: 'files(id)',
     spaces: 'drive',
     pageSize: 1,
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
   });
 
   const existingId = listResponse.data.files?.[0]?.id;
@@ -161,6 +166,7 @@ async function upsertTextFile(
       fileId: existingId,
       requestBody: { name: fileName },
       media,
+      supportsAllDrives: true,
     });
     console.log(`[upsertTextFile] Updated: "${fileName}" (${existingId})`);
   } else {
@@ -172,6 +178,7 @@ async function upsertTextFile(
       },
       media,
       fields: 'id',
+      supportsAllDrives: true,
     });
     console.log(`[upsertTextFile] Created: "${fileName}"`);
   }
