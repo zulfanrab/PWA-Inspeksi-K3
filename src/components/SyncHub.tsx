@@ -204,29 +204,23 @@ export function SyncHub({
 // UPLOAD PROGRESS BAR
 // ==========================================
 
-function UploadProgressBar({ progress }: { progress: UploadProgress }) {
-  const pct = Math.round((progress.current / progress.total) * 100);
-  const phaseLabel: Record<UploadProgress['phase'], string> = {
-    folder: '📁 Menyiapkan folder...',
-    data: '📄 Mengupload data inspeksi...',
-    photo: `📷 Mengupload ${progress.fileName}`,
-  };
+// ==========================================
+// UPLOAD PROGRESS BAR
+// ==========================================
 
+function UploadProgressBar({ progress }: { progress: UploadProgress }) {
   return (
     <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 space-y-2">
       <div className="flex items-center justify-between">
-        <p className="text-xs font-bold text-emerald-700">{phaseLabel[progress.phase]}</p>
-        <p className="text-xs font-black text-emerald-600">{pct}%</p>
+        <p className="text-xs font-bold text-emerald-700">📷 Mengupload foto {progress.loaded} dari {progress.total}...</p>
+        <p className="text-xs font-black text-emerald-600">{progress.percentage}%</p>
       </div>
       <div className="w-full h-2 bg-emerald-100 rounded-full overflow-hidden">
         <div
           className="h-full bg-emerald-500 rounded-full transition-all duration-300"
-          style={{ width: `${pct}%` }}
+          style={{ width: `${progress.percentage}%` }}
         />
       </div>
-      <p className="text-[10px] text-emerald-500 font-medium">
-        {progress.current} / {progress.total} langkah
-      </p>
     </div>
   );
 }

@@ -302,23 +302,21 @@ function HistoryCard({
         )}
       </div>
 
-      {/* Progress bar */}
+{/* Progress bar */}
       {isUploading && progress && (
         <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 space-y-2">
           <div className="flex items-center justify-between">
             <p className="text-xs font-bold text-emerald-700">
-              {progress.phase === 'folder' && '📁 Menyiapkan...'}
-              {progress.phase === 'data' && '📄 Upload data...'}
-              {progress.phase === 'photo' && `📷 ${progress.fileName}`}
+              📷 Foto {progress.loaded} dari {progress.total}
             </p>
             <p className="text-xs font-black text-emerald-600">
-              {Math.round((progress.current / progress.total) * 100)}%
+              {progress.percentage}%
             </p>
           </div>
           <div className="w-full h-2 bg-emerald-100 rounded-full overflow-hidden">
             <div
               className="h-full bg-emerald-500 rounded-full transition-all duration-300"
-              style={{ width: `${Math.round((progress.current / progress.total) * 100)}%` }}
+              style={{ width: `${progress.percentage}%` }}
             />
           </div>
         </div>
