@@ -949,12 +949,14 @@ const handleDelete = async (id: string) => {
         const err = await res.json().catch(() => ({}));
         throw new Error(err?.error || `HTTP ${res.status}`);
       }
+
+      // 🔥 LANGSUNG CLEANUP DARI deleted-log SETELAH DELETE SUKSES
+      await doPullInspections();
+      return;
     }
 
-    // 2. Hapus dari DB lokal
+    // Kalau draft, hapus langsung dari DB lokal
     await SessionRepository.delete(id);
-
-    // 3. Hapus dari state PALING AKHIR (kalau semua sukses baru hilang dari UI)
     setHistory(prev => prev.filter(item => item.id !== id));
 
   } catch (err: any) {
