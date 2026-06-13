@@ -424,30 +424,8 @@ const refreshData = useCallback(async () => {
       SessionRepository.getHistory(),
       SessionRepository.getClientNames(),
     ]);
-
-    // 🔥 NEW: Cek deleted-log dari Drive dan bersihkan data yang sudah dihapus
-    if (isAuthenticated) {
-      try {
-        const apiBase = getApiBaseUrl();
-        const res = await fetch(`${apiBase}/api/pull-inspections`);
-        const data = await res.json();
-        const deletedIds = data.deletedIds ?? [];
-        
-        // Hapus dari IndexedDB data yang sudah dihapus di Drive
-        for (const deletedId of deletedIds) {
-          await SessionRepository.delete(deletedId).catch(() => {});
-        }
-      } catch (e) {
-        console.warn('[refreshData] Gagal cek deleted-log:', e);
-      }
-    }
-
-    // Re-fetch setelah cleanup
-    const d2 = await SessionRepository.getDrafts();
-    const h2 = await SessionRepository.getHistory();
-    
-    setDrafts(d2);
-    setHistory(h2);
+    setDrafts(d);
+    setHistory(h);
     setClientSuggestions(names);
   } catch (err: any) {
     if (err?.name === 'QuotaExceededError' || err?.inner?.name === 'QuotaExceededError') {
@@ -456,7 +434,44 @@ const refreshData = useCallback(async () => {
       console.error('[App] refreshData error:', err);
     }
   }
-}, [isAuthenticated]);
+}, []);
+
+const setupRole = useCallback(async (email: string, name: string) => {
+  await RoleRepository.seedIfEmpty(email, name);
+  setRoleChecked(true);
+}, []);
+
+const doPullInspections = useCallback(async () => {
+  try {
+    const result = await pullInspectionsFromDrive();
+    if (result.pulled > 0) {
+      await refreshData();
+      setPullStatus(`✅ ${result.pulled} data baru dari Drive`);
+      setTimeout(() => setPullStatus(null), 4000);
+    }
+    
+    // 🔥 BERSIHKAN DELETED ITEMS SETELAH PULL
+    if (isAuthenticated) {
+      try {
+        const apiBase = getApiBaseUrl();
+        const res = await fetch(`${apiBase}/api/pull-inspections`);
+        const data = await res.json();
+        const deletedIds = data.deletedIds ?? [];
+        
+        for (const deletedId of deletedIds) {
+          await SessionRepository.delete(deletedId).catch(() => {});
+        }
+        if (deletedIds.length > 0) {
+          await refreshData();
+        }
+      } catch (e) {
+        console.warn('[doPullInspections] Gagal cek deleted-log:', e);
+      }
+    }
+  } catch (err) {
+    console.warn('[App] pullInspectionsFromDrive error:', err);
+  }
+}, [refreshData, isAuthenticated]);
 
   // ── Auth on mount ──────────────────────────────────────────────────────────
 
@@ -946,11 +961,6 @@ const handleDelete = async (id: string) => {
     alert(`⚠️ Gagal hapus: ${err.message}`);
   }
 };
-
-    // Kalau cloud sukses (atau data emang masih draft), baru hapus permanen di DB HP
-    await SessionRepository.delete(id);
-    await refreshData();
-  };
 
   // ── Computed ───────────────────────────────────────────────────────────────
 
