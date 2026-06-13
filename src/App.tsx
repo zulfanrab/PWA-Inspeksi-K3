@@ -1078,25 +1078,37 @@ const triggerAutoSync = useCallback(async () => {
           <ClientPicker onPick={handleUnitPicked} onManual={handleManualPick} onCancel={() => setView('HOME')} />
         )}
 
-        {view === 'FORM' && (
-          <FormView
-            formMode={formMode} activeObject={activeObject} clientName={clientName}
-            clientSuggestions={clientSuggestions} formData={formData} commonFields={COMMON_FIELDS}
-            specificFields={specificFields} existingPhotos={existingPhotos} newPhotos={newPhotos}
-            totalPhotos={totalPhotos} isSaving={isSaving} objMeta={objMeta}
-            showClientDropdown={showClientDropdown}
-            onClientNameChange={setClientName}
-            onClientNameFocus={() => setShowClientDropdown(true)}
-            onClientSuggestionSelect={(name) => { setClientName(name); setShowClientDropdown(false); }}
-            onFieldChange={handleFieldChange}
-            onCameraClick={() => cameraInputRef.current?.click()}
-            onGalleryClick={() => galleryInputRef.current?.click()}
-            onRemoveExistingPhoto={removeExistingPhoto}
-            onRemoveNewPhoto={removeNewPhoto}
-            onSave={handleSaveForm}
-            onCancel={() => { resetForm(); setView('HOME'); }}
-          />
-        )}
+{view === 'FORM' && (
+  <FormView
+    formMode={formMode} 
+    activeObject={activeObject} 
+    clientName={clientName}
+    clientSuggestions={clientSuggestions} 
+    formData={formData} 
+    commonFields={COMMON_FIELDS}
+    specificFields={specificFields} 
+    existingPhotos={existingPhotos} 
+    newPhotos={newPhotos}
+    totalPhotos={totalPhotos} 
+    isSaving={isSaving} 
+    objMeta={objMeta}
+    showClientDropdown={showClientDropdown}
+    uploadingId={uploadingId}          // <--- TAMBAH INI
+    uploadProgress={uploadProgress}    // <--- TAMBAH INI
+    editingId={editingId}
+    onClientNameChange={setClientName}
+    onClientNameFocus={() => setShowClientDropdown(true)}
+    onClientSuggestionSelect={(name) => { setClientName(name); setShowClientDropdown(false); }}
+    onFieldChange={handleFieldChange}
+    onCameraClick={() => cameraInputRef.current?.click()}
+    onGalleryClick={() => galleryInputRef.current?.click()}
+    onRemoveExistingPhoto={removeExistingPhoto}
+    onRemoveNewPhoto={removeNewPhoto}
+    onSave={handleSaveForm}
+    onCancel={() => { resetForm(); setView('HOME'); }}
+    editingId={editingId} // Pastikan ini juga udah masuk biar bisa ngecek matching ID
+  />
+)}
 
         {view === 'SYNC_HUB' && (
           <SyncHub

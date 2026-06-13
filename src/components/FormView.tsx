@@ -1,6 +1,4 @@
 // src/components/FormView.tsx
-// FIXED: onAddPhotoClick diganti onCameraClick + onGalleryClick (dual foto option)
-
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import type { InspectionPhoto } from '../db/db';
@@ -26,6 +24,9 @@ interface ObjectMeta {
 }
 
 interface FormViewProps {
+  editingId: string | null;
+  uploadingId: string | null;
+  uploadProgress: { percentage: number; loaded: number; total: number } | null;
   formMode: FormMode;
   activeObject: string;
   objMeta: ObjectMeta | undefined;
@@ -44,7 +45,6 @@ interface FormViewProps {
   onClientNameFocus: () => void;
   onClientSuggestionSelect: (name: string) => void;
   onFieldChange: (name: string, value: string) => void;
-  // FIXED: dual option — kamera langsung + pilih dari galeri
   onCameraClick: () => void;
   onGalleryClick: () => void;
   onRemoveExistingPhoto: (id: string) => void;
@@ -54,6 +54,9 @@ interface FormViewProps {
 }
 
 export function FormView({
+  editingId,
+  uploadingId,
+  uploadProgress,
   formMode,
   activeObject,
   objMeta,
@@ -71,7 +74,6 @@ export function FormView({
   onClientNameFocus,
   onClientSuggestionSelect,
   onFieldChange,
-  // FIXED: pakai dua prop baru, hapus onAddPhotoClick
   onCameraClick,
   onGalleryClick,
   onRemoveExistingPhoto,
@@ -190,17 +192,17 @@ export function FormView({
               {existingPhotos.map((photo) => (
                 <div key={photo.id} className="relative aspect-square rounded-xl overflow-hidden border border-gray-200 group">
                   <img
-  src={
-    photo.dataUrl && photo.dataUrl.startsWith('data:image')
-      ? photo.dataUrl
-      : photo.driveFileId
-        ? `/api/photo-proxy?fileId=${photo.driveFileId}`
-        : ''
-  }
-  alt="foto"
-  className="w-full h-full object-cover"
-  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-/>
+                    src={
+                      photo.dataUrl && photo.dataUrl.startsWith('data:image')
+                        ? photo.dataUrl
+                        : photo.driveFileId
+                          ? `/api/photo-proxy?fileId=${photo.driveFileId}`
+                          : ''
+                    }
+                    alt="foto"
+                    className="w-full h-full object-cover"
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                  />
                   <button
                     onClick={() => onRemoveExistingPhoto(photo.id)}
                     className="absolute top-1 right-1 w-6 h-6 rounded-full bg-red-500 text-white text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all shadow-md"
@@ -234,7 +236,6 @@ export function FormView({
           </div>
         )}
 
-        {/* FIXED: Dua tombol — kamera langsung + galeri */}
         <div className="grid grid-cols-2 gap-2">
           <button
             onClick={onCameraClick}
@@ -250,6 +251,25 @@ export function FormView({
           </button>
         </div>
       </div>
+
+      {/* Progress Bar */}
+      {uploadingId === editingId && uploadProgress && (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 animate-in fade-in slide-in-from-bottom-2">
+          <div className="flex justify-between items-end mb-2">
+            <div>
+              <p className="text-xs font-bold text-emerald-800">Sedang Mengupload...</p>
+              <p className="text-[10px] text-emerald-600">Jangan tutup aplikasi!</p>
+            </div>
+            <span className="text-sm font-black text-emerald-700">{uploadProgress.percentage}%</span>
+          </div>
+          <div className="h-2 w-full bg-emerald-100 rounded-full overflow-hidden">
+            <div 
+              className="h-full bg-emerald-500 transition-all duration-300 ease-out" 
+              style={{ width: `${uploadProgress.percentage}%` }} 
+            />
+          </div>
+        </div>
+      )}
 
       {/* Action Buttons */}
       <div className="sticky bottom-0 bg-slate-50/95 backdrop-blur pt-3 pb-2 -mx-4 px-4 border-t border-gray-200 flex gap-3">
@@ -296,17 +316,7 @@ function Spinner() {
   );
 }
 
-export function FormField({
-  field,
-  value,
-  onChange,
-  accent = false,
-}: {
-  field: FieldDef;
-  value: string;
-  onChange: (val: string) => void;
-  accent?: boolean;
-}) {
+export function FormField({ field, value, onChange, accent = false }: { field: FieldDef, value: string, onChange: (val: string) => void, accent?: boolean }) {
   const baseInput = `
     w-full bg-gray-50 border rounded-xl px-4 py-3 text-sm text-gray-900
     placeholder-gray-400 outline-none transition-all
@@ -321,9 +331,7 @@ export function FormField({
       <label className={`block text-[10px] font-bold uppercase tracking-widest mb-1.5 ${accent ? 'text-emerald-700' : 'text-gray-500'}`}>
         {field.label}
         {field.required && <span className="text-red-500 ml-1">*</span>}
-        {field.unit && (
-          <span className="ml-1 normal-case font-medium opacity-60">({field.unit})</span>
-        )}
+        {field.unit && <span className="ml-1 normal-case font-medium opacity-60">({field.unit})</span>}
       </label>
 
       {field.type === 'select' ? (
@@ -340,9 +348,7 @@ export function FormField({
           }}
         >
           <option value="">— Pilih —</option>
-          {field.options?.map((o) => (
-            <option key={o} value={o}>{o}</option>
-          ))}
+          {field.options?.map((o) => <option key={o} value={o}>{o}</option>)}
         </select>
       ) : field.type === 'textarea' ? (
         <textarea
