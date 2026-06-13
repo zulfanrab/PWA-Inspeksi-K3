@@ -503,11 +503,7 @@ export default function App() {
     refreshData();
     pullTemplatesFromDrive().catch(console.warn);
     setTimeout(() => doPullInspections(), 2000);
-    // Auto sync on mount kalau udah online + toggle aktif
-    const shouldAutoSync = localStorage.getItem('aksara_auto_sync') === 'true';
-    if (shouldAutoSync && navigator.onLine) {
-      setTimeout(() => triggerAutoSync(), 3000);
-    }
+
  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
  useEffect(() => {
@@ -534,29 +530,57 @@ useEffect(() => {
 
   // ── Auto sync ──────────────────────────────────────────────────────────────
 
-  const triggerAutoSync = useCallback(async () => {
-    if (!isAuthenticated) return;
-    if (!navigator.onLine) return;
+const triggerAutoSync = useCallback(async () => {
+    // 1. Cek status login (sekarang selalu membaca status terbaru)
+    if (!isAuthenticated) {
+      console.log('[BulkSync] Batal: Belum terautentikasi (belum login)');
+      return;
+    }
+    
+    // 2. Cek koneksi
+    if (!navigator.onLine) {
+      console.log('[BulkSync] Batal: Offline');
+      return;
+    }
+    
     const currentDrafts = await SessionRepository.getDrafts();
     if (currentDrafts.length === 0) return;
+    
+    console.log(`[BulkSync] Memulai upload massal untuk ${currentDrafts.length} draft...`);
+    
+    // 3. Upload satu per satu secara berurutan agar aman
     for (const draft of currentDrafts) {
       try {
+        console.log(`[BulkSync] Mengupload draft: ${draft.id}`);
         setUploadingId(draft.id);
-        // Auto sync = create baru, kirim semua foto (onlyNewPhotos = null)
         const { folderId } = await uploadToDrive(draft, draft.photos, (p) => setUploadProgress(p), null);
         await SessionRepository.markSynced(draft.id, folderId);
       } catch (err: unknown) {
+        console.error(`[BulkSync] Gagal upload draft ${draft.id}:`, err);
         if (err instanceof TokenExpiredError) {
           setIsAuthenticated(false);
           setTokenError((err as Error).message);
-          break;
+          break; // Stop semua jika token mati
         }
       }
     }
+    
     setUploadingId(null);
     setUploadProgress(null);
     await refreshData();
-  }, [refreshData]);
+    console.log('[BulkSync] Proses upload massal selesai');
+    
+  }, [refreshData, isAuthenticated]);
+  // 🔄 TRIGGER AUTO-SYNC SAAT APLIKASI BARU DIBUKA (VERSI ANTI-GAGAL)
+  useEffect(() => {
+    if (isAuthenticated && isOnline && autoSync) {
+      console.log('[Auto-Sync] Sistem siap, mencoba sync background...');
+      const timer = setTimeout(() => {
+        triggerAutoSync();
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [isAuthenticated, isOnline, autoSync, triggerAutoSync]);
 
   useEffect(() => {
     const handleOnline = () => {
