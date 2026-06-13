@@ -417,42 +417,46 @@ export default function App() {
 
   // ── Data loading ───────────────────────────────────────────────────────────
 
-  const refreshData = useCallback(async () => {
-    try {
-      const [d, h, names] = await Promise.all([
-        SessionRepository.getDrafts(),
-        SessionRepository.getHistory(),
-        SessionRepository.getClientNames(),
-      ]);
-      setDrafts(d);
-      setHistory(h);
-      setClientSuggestions(names);
-    } catch (err: any) {
-      if (err?.name === 'QuotaExceededError' || err?.inner?.name === 'QuotaExceededError') {
-        alert('⚠️ Penyimpanan perangkat hampir penuh!\n\nHapus draft lama atau sync ke Google Drive terlebih dahulu.');
-      } else {
-        console.error('[App] refreshData error:', err);
+const refreshData = useCallback(async () => {
+  try {
+    const [d, h, names] = await Promise.all([
+      SessionRepository.getDrafts(),
+      SessionRepository.getHistory(),
+      SessionRepository.getClientNames(),
+    ]);
+
+    // 🔥 NEW: Cek deleted-log dari Drive dan bersihkan data yang sudah dihapus
+    if (isAuthenticated) {
+      try {
+        const apiBase = getApiBaseUrl();
+        const res = await fetch(`${apiBase}/api/pull-inspections`);
+        const data = await res.json();
+        const deletedIds = data.deletedIds ?? [];
+        
+        // Hapus dari IndexedDB data yang sudah dihapus di Drive
+        for (const deletedId of deletedIds) {
+          await SessionRepository.delete(deletedId).catch(() => {});
+        }
+      } catch (e) {
+        console.warn('[refreshData] Gagal cek deleted-log:', e);
       }
     }
-  }, []);
 
-  const setupRole = useCallback(async (email: string, name: string) => {
-    await RoleRepository.seedIfEmpty(email, name);
-    setRoleChecked(true);
-  }, []);
-
-  const doPullInspections = useCallback(async () => {
-    try {
-      const result = await pullInspectionsFromDrive();
-      if (result.pulled > 0) {
-        await refreshData();
-        setPullStatus(`✅ ${result.pulled} data baru dari Drive`);
-        setTimeout(() => setPullStatus(null), 4000);
-      }
-    } catch (err) {
-      console.warn('[App] pullInspectionsFromDrive error:', err);
+    // Re-fetch setelah cleanup
+    const d2 = await SessionRepository.getDrafts();
+    const h2 = await SessionRepository.getHistory();
+    
+    setDrafts(d2);
+    setHistory(h2);
+    setClientSuggestions(names);
+  } catch (err: any) {
+    if (err?.name === 'QuotaExceededError' || err?.inner?.name === 'QuotaExceededError') {
+      alert('⚠️ Penyimpanan perangkat hampir penuh!\n\nHapus draft lama atau sync ke Google Drive terlebih dahulu.');
+    } else {
+      console.error('[App] refreshData error:', err);
     }
-  }, [refreshData]);
+  }
+}, [isAuthenticated]);
 
   // ── Auth on mount ──────────────────────────────────────────────────────────
 
@@ -907,39 +911,41 @@ const triggerAutoSync = useCallback(async () => {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Hapus data ini? Tindakan tidak bisa dibatalkan.')) return;
+const handleDelete = async (id: string) => {
+  if (!confirm('Hapus data ini? Tindakan tidak bisa dibatalkan.')) return;
 
-    const session = await SessionRepository.getById(id);
-    if (!session) return;
+  const session = await SessionRepository.getById(id);
+  if (!session) return;
 
-    // 🔥 LANGSUNG HILANGIN DARI LAYAR (Optimistic UI)
-    // Biar user ngerasa hapusnya instan tanpa nunggu internet selesai
-    setHistory(prev => prev.filter(item => item.id !== id));
-
+  try {
+    // 1. Hapus dari Drive dulu (kalau synced)
     if (session.status === 'synced') {
-      try {
-        const apiBase = getApiBaseUrl();
-        const res = await fetch(`${apiBase}/api/delete-inspection`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            folderId: session.driveFolderId,
-            sessionId: session.id,
-            userEmail: currentUserEmail 
-          }),
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err?.error || `HTTP ${res.status}`);
-        }
-      } catch (err: any) {
-        alert(`⚠️ Gagal hapus dari Drive: ${err.message}\nData dikembalikan ke menu.`);
-        // 🔄 ROLLBACK: Kalau gagal hapus di cloud, tampilin lagi datanya di HP
-        await refreshData(); 
-        return;
+      const apiBase = getApiBaseUrl();
+      const res = await fetch(`${apiBase}/api/delete-inspection`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          folderId: session.driveFolderId,
+          sessionId: session.id,
+          userEmail: currentUserEmail 
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error || `HTTP ${res.status}`);
       }
     }
+
+    // 2. Hapus dari DB lokal
+    await SessionRepository.delete(id);
+
+    // 3. Hapus dari state PALING AKHIR (kalau semua sukses baru hilang dari UI)
+    setHistory(prev => prev.filter(item => item.id !== id));
+
+  } catch (err: any) {
+    alert(`⚠️ Gagal hapus: ${err.message}`);
+  }
+};
 
     // Kalau cloud sukses (atau data emang masih draft), baru hapus permanen di DB HP
     await SessionRepository.delete(id);
