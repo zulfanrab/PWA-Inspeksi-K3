@@ -8,10 +8,9 @@ import { db, type InspectionSession, type InspectionPhoto } from '../db/db';
 import { getApiBaseUrl } from '../config';
 
 export interface UploadProgress {
-  current: number;
+  percentage: number;
+  loaded: number;
   total: number;
-  fileName: string;
-  phase: 'folder' | 'data' | 'photo';
 }
 
 type ProgressCallback = (progress: UploadProgress) => void;
@@ -128,10 +127,9 @@ export const uploadToDrive = async (
     // ── PHASE 1: Upload JSON & Bikin Folder ──
     if (!folderId) {
       onProgress?.({
-        current: 0,
+        percentage: 0,
+        loaded: 0,
         total: totalSteps,
-        fileName: 'Menyiapkan folder...',
-        phase: 'folder',
       });
 
       await db.inspection_sessions.update(session.id, {
@@ -180,10 +178,9 @@ export const uploadToDrive = async (
       const photo = photosToUpload[i];
       
       onProgress?.({
-        current: i + 1,
+        percentage: 0,
+        loaded: 0,
         total: totalSteps,
-        fileName: `Foto ${i + 1} dari ${totalPhotos}...`,
-        phase: 'photo',
       });
 
       const apiBase = getApiBaseUrl();
@@ -219,10 +216,9 @@ export const uploadToDrive = async (
 
     // ── PHASE 3: Selesai Semua ──
     onProgress?.({
-      current: totalSteps,
+      percentage: 100,
+      loaded: totalSteps,
       total: totalSteps,
-      fileName: 'Selesai!',
-      phase: 'photo',
     });
 
     await db.inspection_sessions.update(session.id, {
