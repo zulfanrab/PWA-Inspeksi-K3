@@ -1,4 +1,5 @@
 // src/components/FormView.tsx
+import { Document3DLoading } from './Document3DLoading';
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import type { InspectionPhoto } from '../db/db';
@@ -252,24 +253,26 @@ export function FormView({
         </div>
       </div>
 
-      {/* Progress Bar */}
-      {uploadingId === editingId && uploadProgress && (
-        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 animate-in fade-in slide-in-from-bottom-2">
-          <div className="flex justify-between items-end mb-2">
-            <div>
-              <p className="text-xs font-bold text-emerald-800">Sedang Mengupload...</p>
-              <p className="text-[10px] text-emerald-600">Jangan tutup aplikasi!</p>
-            </div>
-            <span className="text-sm font-black text-emerald-700">{uploadProgress.percentage}%</span>
-          </div>
-          <div className="h-2 w-full bg-emerald-100 rounded-full overflow-hidden">
-            <div 
-              className="h-full bg-emerald-500 transition-all duration-300 ease-out" 
-              style={{ width: `${uploadProgress.percentage}%` }} 
-            />
-          </div>
-        </div>
-      )}
+{/* Progress Bar 3D */}
+{uploadingId === editingId && uploadProgress && (
+  <div className="mt-4 p-4 bg-blue-50 rounded-xl border border-blue-200 animate-in fade-in slide-in-from-bottom-2">
+    <Document3DLoading />
+    
+    <div className="mt-4 space-y-2">
+      <div className="flex justify-between text-xs font-bold text-gray-600">
+        {/* PENTING: pake .loaded, jangan .current */}
+        <span>Foto {uploadProgress.loaded} dari {uploadProgress.total}</span>
+        <span>{Math.round(uploadProgress.percentage)}%</span>
+      </div>
+      <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+        <div
+          className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+          style={{ width: `${uploadProgress.percentage}%` }}
+        />
+      </div>
+    </div>
+  </div>
+)}
 
       {/* Action Buttons */}
       <div className="sticky bottom-0 bg-slate-50/95 backdrop-blur pt-3 pb-2 -mx-4 px-4 border-t border-gray-200 flex gap-3">

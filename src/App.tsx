@@ -405,7 +405,7 @@ export default function App() {
 
   const [isSaving, setIsSaving] = useState(false);
   const [uploadingId, setUploadingId] = useState<string | null>(null);
-  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
+ const [uploadProgress, setUploadProgress] = useState<{ percentage: number; loaded: number; total: number } | null>(null);
   const [tokenError, setTokenError] = useState<string | null>(null);
   const [pullStatus, setPullStatus] = useState<string | null>(null);
   const [darkMode, setDarkMode] = useState(() => {
