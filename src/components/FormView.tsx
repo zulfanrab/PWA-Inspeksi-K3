@@ -23,6 +23,7 @@ interface ObjectMeta {
   icon: ReactNode;
 }
 
+// 1. Ganti interface FormViewProps
 interface FormViewProps {
   editingId: string | null;
   uploadingId: string | null;
@@ -40,7 +41,6 @@ interface FormViewProps {
   newPhotos: string[];
   totalPhotos: number;
   isSaving: boolean;
-
   onClientNameChange: (val: string) => void;
   onClientNameFocus: () => void;
   onClientSuggestionSelect: (name: string) => void;
