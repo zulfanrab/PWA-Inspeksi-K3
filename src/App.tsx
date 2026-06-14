@@ -12,6 +12,7 @@
 // FIXED (PR #4): Compress foto ke max 1MB sebelum disimpan ke IndexedDB
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { flushSync } from 'react-dom';
 import {
   SessionRepository,
   RoleRepository,
@@ -572,7 +573,7 @@ const triggerAutoSync = useCallback(async () => {
       try {
         console.log(`[BulkSync] Mengupload draft: ${draft.id}`);
         setUploadingId(draft.id);
-        const { folderId } = await uploadToDrive(draft, draft.photos, (p) => setUploadProgress(p), null);
+        const { folderId } = await uploadToDrive(draft, draft.photos, (p) => flushSync(() => setUploadProgress(p)), null);
         await SessionRepository.markSynced(draft.id, folderId);
       } catch (err: unknown) {
         console.error(`[BulkSync] Gagal upload draft ${draft.id}:`, err);
@@ -886,7 +887,7 @@ const triggerAutoSync = useCallback(async () => {
       const session = await SessionRepository.getById(id);
       if (!session) throw new Error('Sesi tidak ditemukan');
       // Sync dari SyncHub = draft baru, kirim semua foto (onlyNewPhotos = null)
-      const { folderId } = await uploadToDrive(session, session.photos, (progress) => setUploadProgress(progress), null);
+      const { folderId } = await uploadToDrive(session, session.photos, (progress) => flushSync(() => setUploadProgress(progress)), null);
       await SessionRepository.markSynced(id, folderId);
       await refreshData();
       setUploadProgress(null);
