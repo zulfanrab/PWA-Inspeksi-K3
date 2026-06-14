@@ -795,8 +795,14 @@ const triggerAutoSync = useCallback(async () => {
         }
 
         if (isOnline) {
-          try {
-            setUploadingId(editingId);
+  // 🔥 FIX: Set uploadingId DULU, baru await yang lain
+  setUploadingId(editingId);
+  setUploadProgress({ percentage: 0, loaded: 0, total: newPhotos.length });
+  
+  // Yield ke event loop biar React sempat render
+  await new Promise(resolve => setTimeout(resolve, 50));
+  
+  try {
 
             // Ambil session yang sudah diupdate dari IndexedDB
             const updatedSession = await SessionRepository.getById(editingId);
