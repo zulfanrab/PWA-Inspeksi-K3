@@ -111,7 +111,11 @@ export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skip
 
     // ✅ MIRROR DRIVE: hapus lokal yang tidak ada di Drive
     // HANYA hapus sesi yang sudah fully_synced — jangan sentuh draft/pending milik device ini
-    const driveIds = new Set(inspections.map((r: any) => r.id));
+    const driveIds = new Set(
+  inspections
+    .filter((r: any) => !deletedIds.includes(r.id))
+    .map((r: any) => r.id)
+);
     const localSynced = await db.inspection_sessions.where('status').equals('synced').toArray();
     for (const local of localSynced) {
       if (!driveIds.has(local.id)) {
