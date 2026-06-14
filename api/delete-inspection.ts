@@ -116,6 +116,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           console.warn('Gagal baca file saat pencarian delete:', e);
         }
       }
+      // Tetap tulis tombstone meski file tidak ditemukan di Drive
+      await appendTombstone(drive, sessionId);
       return res.status(200).json({ success: true, message: 'Sudah tidak ada di Drive' });
     }
 
