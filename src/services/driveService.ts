@@ -174,17 +174,57 @@ export const uploadToDrive = async (
     // Kalau sebelumnya gagal di tengah jalan (partial_failed), kita lanjutin dari index terakhir
     const startIdx = session.uploadStatus === 'partial_failed' ? (session.photosUploaded || 0) : 0;
 
-    for (let i = startIdx; i < totalPhotos; i++) {
-      const photo = photosToUpload[i];
-      
-      onProgress?.({
-        percentage: 0,
-        loaded: 0,
-        total: totalSteps,
-      });
+for (let i = startIdx; i < totalPhotos; i++) {
+  const photo = photosToUpload[i];
+  
+  // Panggil progress SEBELUM fetch (tapi belum di-render)
+  onProgress?.({
+    percentage: Math.round((i / totalPhotos) * 100),
+    loaded: i,
+    total: totalPhotos,
+  });
 
-      const apiBase = getApiBaseUrl();
-      const photoRes = await fetch(`${apiBase}/api/upload-photo`, {
+  // KUNCI FIX: Kasih React time untuk render
+  await new Promise(resolve => setTimeout(resolve, 10));
+
+  const apiBase = getApiBaseUrl();
+  const photoRes = await fetch(`${apiBase}/api/upload-photo`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      folderId: folderId,
+      photoBase64: photo.dataUrl,
+      photoIndex: i
+    }),
+  });
+
+  if (!photoRes.ok) {
+    const errData = await photoRes.json().catch(() => ({}));
+    throw new Error(errData?.error || `Gagal upload foto ke-${i + 1}`);
+  }
+
+  const photoData = await photoRes.json().catch(() => ({}));
+  if (photoData.fileId && photo.id) {
+    await db.inspection_photos.update(photo.id, {
+      driveFileId: photoData.fileId,
+      fileName: photoData.fileName,
+    });
+  }
+
+  await db.inspection_sessions.update(session.id, {
+    photosUploaded: i + 1
+  });
+
+  // Panggil progress SETELAH foto berhasil
+  onProgress?.({
+    percentage: Math.round(((i + 1) / totalPhotos) * 100),
+    loaded: i + 1,
+    total: totalPhotos,
+  });
+
+  // LAGI: Kasih React time untuk render
+  await new Promise(resolve => setTimeout(resolve, 10));
+}
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
