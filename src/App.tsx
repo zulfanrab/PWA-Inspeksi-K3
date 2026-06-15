@@ -822,7 +822,7 @@ const triggerAutoSync = useCallback(async () => {
               const { folderId } = await uploadToDrive(
                 updatedSession,
                 updatedSession.photos,
-                (p) => setUploadProgress(p),
+                (p) => flushSync(() => setUploadProgress(p)),  // ← tambah flushSync
                 onlyNewPhotoObjects
               );
 
@@ -915,7 +915,7 @@ const triggerAutoSync = useCallback(async () => {
       if (!session) throw new Error('Data tidak ditemukan');
       // Re-sync dari History = kirim semua foto (onlyNewPhotos = null)
       // api/upload.ts akan countExistingPhotos dan skip yang sudah ada
-      const { folderId } = await uploadToDrive(session, session.photos, (progress) => setUploadProgress(progress), null);
+      const { folderId } = await uploadToDrive(session, session.photos, (progress) => flushSync(() => setUploadProgress(progress)), null);
       await SessionRepository.markSynced(id, folderId);
       setUploadProgress(null);
       alert('✅ Data berhasil diupload ulang ke Drive!');
