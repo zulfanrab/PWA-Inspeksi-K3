@@ -840,8 +840,10 @@ const triggerAutoSync = useCallback(async () => {
               alert('⚠️ Data tersimpan tapi gagal upload ke Drive. Sync manual dari Sync Hub.');
             }
           } finally {
+            console.log(`[BulkSync] Item ${draft.id} selesai, clearing uploadingId...`);
             setUploadingId(null);
             setUploadProgress(null);
+            await new Promise(resolve => setTimeout(resolve, 200));
           }
         } else {
           // Offline → tetap draft, user sync manual nanti
