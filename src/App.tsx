@@ -571,10 +571,12 @@ const triggerAutoSync = useCallback(async () => {
     // 3. Upload satu per satu secara berurutan agar aman
     for (const draft of currentDrafts) {
       try {
-        console.log(`[BulkSync] Mengupload draft: ${draft.id}`);
         setUploadingId(draft.id);
+        setUploadProgress(null);
         const { folderId } = await uploadToDrive(draft, draft.photos, (p) => flushSync(() => setUploadProgress(p)), null);
         await SessionRepository.markSynced(draft.id, folderId);
+        setUploadingId(null);  // ← CLEAR PER-ITEM setelah markSynced
+        setUploadProgress(null);
       } catch (err: unknown) {
         console.error(`[BulkSync] Gagal upload draft ${draft.id}:`, err);
         if (err instanceof TokenExpiredError) {
@@ -585,8 +587,6 @@ const triggerAutoSync = useCallback(async () => {
       }
     }
     
-    setUploadingId(null);
-    setUploadProgress(null);
     await refreshData();
     console.log('[BulkSync] Proses upload massal selesai');
     
