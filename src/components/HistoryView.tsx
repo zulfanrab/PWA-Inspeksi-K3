@@ -198,20 +198,29 @@ function HistoryCard({
   const [showGallery, setShowGallery] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
 
-  const handleDownloadPDF = async () => {
-    setPdfLoading(true);
-    try {
-      const unitName = item.unitData?.namaUnit || 'Unit';
-      const clientSlug = item.clientName.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 20);
-      const dateSlug = new Date(item.createdAt).toISOString().slice(0, 10);
-      const fileName = `Laporan_${item.objectType}_${unitName}_${clientSlug}_${dateSlug}`.replace(/\s+/g, '_');
-      await exportToPDF(item, fileName);
-    } catch (err: any) {
-      alert('Gagal export PDF: ' + err.message);
-    } finally {
-      setPdfLoading(false);
+const handleDownloadPDF = async () => {
+  const pdfWindow = window.open('', '_blank');
+  if (pdfWindow) {
+    pdfWindow.document.write('Memproses PDF Laporan Inspeksi... Mohon tunggu.');
+  }
+
+  setPdfLoading(true);
+  try {
+    const unitName = item.unitData?.namaUnit || 'Unit';
+    const clientSlug = item.clientName.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 20);
+    const dateSlug = new Date(item.createdAt).toISOString().slice(0, 10);
+    const fileName = `Laporan_${item.objectType}_${unitName}_${clientSlug}_${dateSlug}`.replace(/\s+/g, '_');
+    const pdfUrl = await exportToPDF(item, fileName);
+    if (pdfWindow) {
+      pdfWindow.location.href = pdfUrl;
     }
-  };
+  } catch (err: any) {
+    if (pdfWindow) pdfWindow.close();
+    alert('Gagal export PDF: ' + err.message);
+  } finally {
+    setPdfLoading(false);
+  }
+};
   const handleDownloadWord = async () => {
   setPdfLoading(true);
   try {

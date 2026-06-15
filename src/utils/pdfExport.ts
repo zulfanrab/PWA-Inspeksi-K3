@@ -340,7 +340,7 @@ function _drawPhotoPlaceholder(
 export const exportToPDF = async (
   item: any,
   fileName: string
-): Promise<void> => {
+): Promise<string> => {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
@@ -410,11 +410,11 @@ export const exportToPDF = async (
   doc.setFillColor(15, 23, 42);
   doc.rect(0, 38, pageW, 10, 'F');
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.5);
+  doc.setFontSize(7);
   doc.setTextColor(...COLOR.white);
   const objType = item.objectType || '-';
   doc.text(`Jenis Inspeksi: ${objType}`, margin, 45);
-  doc.text('Status: Selesai & Tersinkronisasi ✓', pageW - margin, 45, { align: 'right' });
+  doc.text('Status: Tersinkronisasi ✓', pageW - margin, 45, { align: 'right' });
 
   y = 56;
 
@@ -578,5 +578,6 @@ export const exportToPDF = async (
     doc.text(`Halaman ${p} / ${totalPages}`, pageW - margin, pageH - 4, { align: 'right' });
   }
 
-  doc.save(`${fileName}.pdf`);
+  const blob = doc.output('blob') as Blob;
+return URL.createObjectURL(blob);
 };
