@@ -551,34 +551,46 @@ useEffect(() => {
   // ── Auto sync ──────────────────────────────────────────────────────────────
 
 const triggerAutoSync = useCallback(async () => {
-    // 1. Cek status login (sekarang selalu membaca status terbaru)
     if (!isAuthenticated) {
       console.log('[BulkSync] Batal: Belum terautentikasi (belum login)');
       return;
     }
     
-    // 2. Cek koneksi
     if (!navigator.onLine) {
       console.log('[BulkSync] Batal: Offline');
       return;
     }
     
+    // Fetch state awal untuk di-looping
     const currentDrafts = await SessionRepository.getDrafts();
     if (currentDrafts.length === 0) return;
     
     console.log(`[BulkSync] Memulai upload massal untuk ${currentDrafts.length} draft...`);
     
-    // 3. Upload satu per satu secara berurutan agar aman
     for (const draft of currentDrafts) {
       try {
         setUploadingId(draft.id);
         setUploadProgress(null);
+        
         const { folderId } = await uploadToDrive(draft, draft.photos, (p) => flushSync(() => setUploadProgress(p)), null);
+        
+        // Tandai sukses di DB
         await SessionRepository.markSynced(draft.id, folderId);
-        setUploadingId(null);  // ← CLEAR PER-ITEM setelah markSynced
+        
+        // Clear status uploading
+        setUploadingId(null);  
         setUploadProgress(null);
+
+        // 🔥 FIX: Panggil refreshData() DI SINI (di dalam loop)
+        // Memaksa state 'drafts' update & re-render, item langsung ilang dari UI
+        await refreshData(); 
+        
       } catch (err: unknown) {
         console.error(`[BulkSync] Gagal upload draft ${draft.id}:`, err);
+        // Reset id kalau error biar UI gak nyangkut
+        setUploadingId(null); 
+        setUploadProgress(null);
+        
         if (err instanceof TokenExpiredError) {
           setIsAuthenticated(false);
           setTokenError((err as Error).message);
@@ -587,6 +599,7 @@ const triggerAutoSync = useCallback(async () => {
       }
     }
     
+    // Opsional: jaga-jaga panggil lagi setelah loop selesai total
     await refreshData();
     console.log('[BulkSync] Proses upload massal selesai');
     
