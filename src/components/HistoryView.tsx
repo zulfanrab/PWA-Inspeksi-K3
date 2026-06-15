@@ -6,7 +6,9 @@
 import { useState, useMemo } from 'react';
 import type { InspectionSession, InspectionPhoto } from '../db/db';
 import { exportToPDF } from '../utils/pdfExport';
+import { exportToWord } from '../utils/wordExport';
 import type { UploadProgress } from '../services/driveService';
+
 
 type SessionWithPhotos = InspectionSession & { photos: InspectionPhoto[] };
 
@@ -194,6 +196,7 @@ function HistoryCard({
   const dateStr = formatDate(item.updatedAt || item.createdAt);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [showGallery, setShowGallery] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
 
   const handleDownloadPDF = async () => {
     setPdfLoading(true);
@@ -209,6 +212,20 @@ function HistoryCard({
       setPdfLoading(false);
     }
   };
+  const handleDownloadWord = async () => {
+  setPdfLoading(true);
+  try {
+    const unitName = item.unitData?.namaUnit || 'Unit';
+    const clientSlug = item.clientName.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 20);
+    const dateSlug = new Date(item.createdAt).toISOString().slice(0, 10);
+    const fileName = `Laporan_${item.objectType}_${unitName}_${clientSlug}_${dateSlug}`.replace(/\s+/g, '_');
+    await exportToWord(item, fileName);
+  } catch (err: any) {
+    alert('Gagal export Word: ' + err.message);
+  } finally {
+    setPdfLoading(false);
+  }
+};
 
   return (
     <div className="bg-white border border-gray-200 shadow-sm rounded-xl p-4 space-y-3">
@@ -340,13 +357,27 @@ function HistoryCard({
           🖼️ Galeri
         </button>
 
-        <button
-          onClick={handleDownloadPDF}
-          disabled={pdfLoading || isUploading}
-          className="py-2.5 flex items-center justify-center gap-1.5 bg-slate-700 hover:bg-slate-800 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-lg transition-all"
-        >
-          {pdfLoading ? <><Spinner />PDF...</> : <>📄 PDF</>}
-        </button>
+<div className="relative">
+  <button
+    onClick={() => setShowExportMenu(v => !v)}
+    disabled={pdfLoading || isUploading}
+    className="py-2.5 px-3 flex items-center justify-center gap-1.5 bg-slate-700 hover:bg-slate-800 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-lg transition-all"
+  >
+    {pdfLoading ? <><Spinner />Export...</> : <>📤 Export ▾</>}
+  </button>
+  {showExportMenu && (
+    <div className="absolute bottom-full mb-1 right-0 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden z-10 min-w-[120px]">
+      <button
+        onClick={() => { setShowExportMenu(false); handleDownloadPDF(); }}
+        className="w-full text-left px-4 py-2.5 text-xs font-bold text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+      >📄 PDF</button>
+      <button
+        onClick={() => { setShowExportMenu(false); handleDownloadWord(); }}
+        className="w-full text-left px-4 py-2.5 text-xs font-bold text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+      >📝 Word</button>
+    </div>
+  )}
+</div>
       </div>
 
       {showGallery && (
