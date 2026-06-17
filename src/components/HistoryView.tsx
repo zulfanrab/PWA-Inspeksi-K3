@@ -1,14 +1,9 @@
 // src/components/HistoryView.tsx
-// FIXED: Ganti tombol Upload Ulang → Edit & Update (langsung ke form edit)
-// FIXED: Tombol Download PDF tetap ada
-// NEW: Tombol Sync diganti jadi Photo Gallery dengan select multi + download
-
 import { useState, useMemo } from 'react';
 import type { InspectionSession, InspectionPhoto } from '../db/db';
 import { exportToPDF } from '../utils/pdfExport';
 import { exportToWord } from '../utils/wordExport';
 import type { UploadProgress } from '../services/driveService';
-
 
 type SessionWithPhotos = InspectionSession & { photos: InspectionPhoto[] };
 
@@ -46,7 +41,6 @@ export function HistoryView({
   history,
   onEdit,
   onDelete,
-  onReSync,
   uploadingId,
   uploadProgress,
   currentUserEmail,
@@ -81,7 +75,7 @@ export function HistoryView({
   };
 
   const cardProps = (item: SessionWithPhotos) => ({
-    item, onEdit, onDelete, onReSync,
+    item, onEdit, onDelete,
     isUploading: uploadingId === item.id,
     progress: uploadingId === item.id ? uploadProgress : null,
     currentUserEmail,
@@ -187,7 +181,6 @@ function HistoryCard({
   item: SessionWithPhotos;
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
-  onReSync: (id: string) => void;
   isUploading: boolean;
   progress: UploadProgress | null;
   currentUserEmail: string;
@@ -198,43 +191,44 @@ function HistoryCard({
   const [showGallery, setShowGallery] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
 
-const handleDownloadPDF = async () => {
-  const pdfWindow = window.open('', '_blank');
-  if (pdfWindow) {
-    pdfWindow.document.write('Memproses PDF Laporan Inspeksi... Mohon tunggu.');
-  }
-
-  setPdfLoading(true);
-  try {
-    const unitName = item.unitData?.namaUnit || 'Unit';
-    const clientSlug = item.clientName.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 20);
-    const dateSlug = new Date(item.createdAt).toISOString().slice(0, 10);
-    const fileName = `Laporan_${item.objectType}_${unitName}_${clientSlug}_${dateSlug}`.replace(/\s+/g, '_');
-    const pdfUrl = await exportToPDF(item, fileName);
+  const handleDownloadPDF = async () => {
+    const pdfWindow = window.open('', '_blank');
     if (pdfWindow) {
-      pdfWindow.location.href = pdfUrl;
+      pdfWindow.document.write('Memproses PDF Laporan Inspeksi... Mohon tunggu.');
     }
-  } catch (err: any) {
-    if (pdfWindow) pdfWindow.close();
-    alert('Gagal export PDF: ' + err.message);
-  } finally {
-    setPdfLoading(false);
-  }
-};
+
+    setPdfLoading(true);
+    try {
+      const unitName = item.unitData?.namaUnit || 'Unit';
+      const clientSlug = item.clientName.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 20);
+      const dateSlug = new Date(item.createdAt).toISOString().slice(0, 10);
+      const fileName = `Laporan_${item.objectType}_${unitName}_${clientSlug}_${dateSlug}`.replace(/\s+/g, '_');
+      const pdfUrl = await exportToPDF(item, fileName);
+      if (pdfWindow) {
+        pdfWindow.location.href = pdfUrl;
+      }
+    } catch (err: any) {
+      if (pdfWindow) pdfWindow.close();
+      alert('Gagal export PDF: ' + err.message);
+    } finally {
+      setPdfLoading(false);
+    }
+  };
+
   const handleDownloadWord = async () => {
-  setPdfLoading(true);
-  try {
-    const unitName = item.unitData?.namaUnit || 'Unit';
-    const clientSlug = item.clientName.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 20);
-    const dateSlug = new Date(item.createdAt).toISOString().slice(0, 10);
-    const fileName = `Laporan_${item.objectType}_${unitName}_${clientSlug}_${dateSlug}`.replace(/\s+/g, '_');
-    await exportToWord(item, fileName);
-  } catch (err: any) {
-    alert('Gagal export Word: ' + err.message);
-  } finally {
-    setPdfLoading(false);
-  }
-};
+    setPdfLoading(true);
+    try {
+      const unitName = item.unitData?.namaUnit || 'Unit';
+      const clientSlug = item.clientName.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 20);
+      const dateSlug = new Date(item.createdAt).toISOString().slice(0, 10);
+      const fileName = `Laporan_${item.objectType}_${unitName}_${clientSlug}_${dateSlug}`.replace(/\s+/g, '_');
+      await exportToWord(item, fileName);
+    } catch (err: any) {
+      alert('Gagal export Word: ' + err.message);
+    } finally {
+      setPdfLoading(false);
+    }
+  };
 
   return (
     <div className="bg-white border border-gray-200 shadow-sm rounded-xl p-4 space-y-3">
@@ -256,7 +250,9 @@ const handleDownloadPDF = async () => {
               disabled={isUploading}
               className="w-7 h-7 rounded-lg bg-red-50 text-red-500 hover:bg-red-100 flex items-center justify-center border border-red-100 transition-all text-sm disabled:opacity-40"
               title="Hapus"
-            >🗑️</button>
+            >
+              🗑️
+            </button>
           )}
         </div>
       </div>
@@ -328,7 +324,7 @@ const handleDownloadPDF = async () => {
         )}
       </div>
 
-{/* Progress bar */}
+      {/* Progress bar */}
       {isUploading && progress && (
         <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 space-y-2">
           <div className="flex items-center justify-between">
@@ -355,7 +351,14 @@ const handleDownloadPDF = async () => {
           disabled={isUploading}
           className="py-2.5 flex items-center justify-center gap-1.5 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-lg transition-all"
         >
-          {isUploading ? <><Spinner />Uploading...</> : <>✏️ Edit</>}
+          {isUploading ? (
+            <>
+              <Spinner />
+              Uploading...
+            </>
+          ) : (
+            <>✏️ Edit</>
+          )}
         </button>
 
         <button
@@ -366,27 +369,44 @@ const handleDownloadPDF = async () => {
           🖼️ Galeri
         </button>
 
-<div className="relative">
-  <button
-    onClick={() => setShowExportMenu(v => !v)}
-    disabled={pdfLoading || isUploading}
-    className="py-2.5 px-3 flex items-center justify-center gap-1.5 bg-slate-700 hover:bg-slate-800 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-lg transition-all"
-  >
-    {pdfLoading ? <><Spinner />Export...</> : <>📤 Export ▾</>}
-  </button>
-  {showExportMenu && (
-    <div className="absolute bottom-full mb-1 right-0 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden z-10 min-w-[120px]">
-      <button
-        onClick={() => { setShowExportMenu(false); handleDownloadPDF(); }}
-        className="w-full text-left px-4 py-2.5 text-xs font-bold text-gray-700 hover:bg-gray-50 flex items-center gap-2"
-      >📄 PDF</button>
-      <button
-        onClick={() => { setShowExportMenu(false); handleDownloadWord(); }}
-        className="w-full text-left px-4 py-2.5 text-xs font-bold text-gray-700 hover:bg-gray-50 flex items-center gap-2"
-      >📝 Word</button>
-    </div>
-  )}
-</div>
+        <div className="relative">
+          <button
+            onClick={() => setShowExportMenu((v) => !v)}
+            disabled={pdfLoading || isUploading}
+            className="w-full py-2.5 flex items-center justify-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-lg transition-all"
+          >
+            {pdfLoading ? (
+              <>
+                <Spinner />
+                Export...
+              </>
+            ) : (
+              <>📤 Export ▾</>
+            )}
+          </button>
+          {showExportMenu && (
+            <div className="absolute bottom-full mb-1 right-0 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden z-10 min-w-[120px]">
+              <button
+                onClick={() => {
+                  setShowExportMenu(false);
+                  handleDownloadPDF();
+                }}
+                className="w-full text-left px-4 py-2.5 text-xs font-bold text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+              >
+                📄 PDF
+              </button>
+              <button
+                onClick={() => {
+                  setShowExportMenu(false);
+                  handleDownloadWord();
+                }}
+                className="w-full text-left px-4 py-2.5 text-xs font-bold text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+              >
+                📝 Word
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {showGallery && (
@@ -396,6 +416,157 @@ const handleDownloadPDF = async () => {
           onClose={() => setShowGallery(false)}
         />
       )}
+    </div>
+  );
+}
+
+// ==========================================
+// LIGHTBOX VIEWER — with smooth zoom
+// ==========================================
+
+function LightboxViewer({
+  photo,
+  index,
+  total,
+  onPrev,
+  onNext,
+  onClose,
+}: {
+  photo: string;
+  index: number;
+  total: number;
+  onPrev: () => void;
+  onNext: () => void;
+  onClose: () => void;
+}) {
+  const [zoom, setZoom] = useState(1);
+
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    setZoom((prev) =>
+      Math.max(0.5, Math.min(3, prev + (e.deltaY > 0 ? -0.2 : 0.2)))
+    );
+  };
+
+  const handleDoubleClick = () => {
+    setZoom((prev) => (prev === 1 ? 2 : 1));
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'ArrowLeft') onPrev();
+    if (e.key === 'ArrowRight') onNext();
+    if (e.key === 'Escape') onClose();
+  };
+
+  return (
+    <div
+      className="absolute inset-0 z-10 bg-black/95 flex flex-col items-center justify-center"
+      onClick={onClose}
+      onWheel={handleWheel}
+      onKeyDown={handleKeyDown}
+      tabIndex={0}
+    >
+      {/* Foto dengan zoom smooth */}
+      <div className="flex-1 flex items-center justify-center w-full" onClick={(e) => e.stopPropagation()}>
+        <img
+          src={photo}
+          alt={`Foto ${index + 1}`}
+          className="rounded"
+          style={{
+            transform: `scale(${zoom})`,
+            transition: 'transform 0.2s ease-out',
+            maxWidth: '90vw',
+            maxHeight: '70vh',
+            objectFit: 'contain',
+          }}
+          onDoubleClick={handleDoubleClick}
+          onError={(e) => {
+            (e.target as HTMLImageElement).style.display = 'none';
+          }}
+        />
+      </div>
+
+      {/* Controls bottom */}
+      <div className="flex items-center justify-center gap-2 mt-3 pb-4 flex-wrap px-2">
+        {/* Zoom controls */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setZoom((prev) => Math.max(0.5, prev - 0.2));
+          }}
+          className="px-2.5 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs font-bold rounded-lg transition-all"
+          title="Zoom out (-)  atau scroll mouse"
+        >
+          🔍−
+        </button>
+
+        <span className="text-white text-xs font-bold min-w-[50px] text-center">
+          {Math.round(zoom * 100)}%
+        </span>
+
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setZoom((prev) => Math.min(3, prev + 0.2));
+          }}
+          className="px-2.5 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs font-bold rounded-lg transition-all"
+          title="Zoom in (+) atau scroll mouse"
+        >
+          🔍+
+        </button>
+
+        <div className="w-px h-5 bg-gray-600"></div>
+
+        {/* Navigation */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onPrev();
+            setZoom(1);
+          }}
+          className="px-2.5 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs font-bold rounded-lg transition-all"
+          title="Prev (← Arrow)"
+          disabled={index === 0}
+        >
+          ← Prev
+        </button>
+
+        <span className="text-white text-xs font-bold min-w-[40px] text-center">
+          {index + 1} / {total}
+        </span>
+
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onNext();
+            setZoom(1);
+          }}
+          className="px-2.5 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs font-bold rounded-lg transition-all"
+          title="Next (→ Arrow)"
+          disabled={index === total - 1}
+        >
+          Next →
+        </button>
+
+        <div className="w-px h-5 bg-gray-600"></div>
+
+        {/* Close */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onClose();
+          }}
+          className="px-2.5 py-1.5 bg-red-700 hover:bg-red-600 text-white text-xs font-bold rounded-lg transition-all"
+          title="Close (ESC)"
+        >
+          ✕ Close
+        </button>
+      </div>
+
+      {/* Hint text */}
+      <div className="text-[10px] text-gray-400 pb-2">
+        🖱️ Scroll zoom  |  ↔️ Arrows navigate  |  ESC close  |  2x tap zoom toggle
+      </div>
     </div>
   );
 }
@@ -423,7 +594,7 @@ function PhotoGalleryModal({
   };
 
   const toggleSelect = (idx: number) => {
-    setSelected(prev => {
+    setSelected((prev) => {
       const next = new Set(prev);
       next.has(idx) ? next.delete(idx) : next.add(idx);
       return next;
@@ -444,7 +615,7 @@ function PhotoGalleryModal({
     for (const idx of Array.from(selected)) {
       const src = getSrc(photos[idx]);
       if (!src) continue;
-      await new Promise(r => setTimeout(r, 300));
+      await new Promise((r) => setTimeout(r, 300));
       downloadPhoto(src, idx);
     }
   };
@@ -453,10 +624,15 @@ function PhotoGalleryModal({
     <div
       className="fixed inset-0 z-50 bg-black/80 flex flex-col"
       style={{ paddingTop: 'env(safe-area-inset-top)' }}
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 bg-gray-900 flex-shrink-0" style={{ minHeight: 56 }}>
+      <div
+        className="flex items-center justify-between px-4 py-3 bg-gray-900 flex-shrink-0"
+        style={{ minHeight: 56 }}
+      >
         <div>
           <p className="text-white text-sm font-bold">🖼️ {unitName}</p>
           <p className="text-gray-400 text-[10px]">{photos.length} foto</p>
@@ -466,13 +642,13 @@ function PhotoGalleryModal({
             <>
               <button
                 onClick={downloadSelected}
-                className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg"
+                className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg transition-all"
               >
-                ⬇️ Download {selected.size} foto
+                ⬇️ Download {selected.size}
               </button>
               <button
                 onClick={clearSelect}
-                className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs font-bold rounded-lg"
+                className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs font-bold rounded-lg transition-all"
               >
                 Batal
               </button>
@@ -480,21 +656,23 @@ function PhotoGalleryModal({
           ) : (
             <button
               onClick={selectAll}
-              className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs font-bold rounded-lg"
+              className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs font-bold rounded-lg transition-all"
             >
               Pilih semua
             </button>
           )}
           <button
             onClick={onClose}
-            className="w-8 h-8 flex items-center justify-center bg-gray-700 hover:bg-gray-600 text-white rounded-lg text-sm font-bold"
-          >✕</button>
+            className="w-8 h-8 flex items-center justify-center bg-red-700 hover:bg-red-600 text-white rounded-lg text-sm font-bold transition-all"
+          >
+            ✕
+          </button>
         </div>
       </div>
 
       {/* Grid foto */}
       <div className="flex-1 overflow-y-auto p-3">
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-5">
           {photos.map((photo, idx) => {
             const src = getSrc(photo);
             if (!src) return null;
@@ -502,7 +680,7 @@ function PhotoGalleryModal({
             return (
               <div
                 key={idx}
-                className="relative rounded-lg overflow-hidden border-2 transition-all cursor-pointer"
+                className="relative rounded-lg overflow-hidden border-2 transition-all cursor-pointer group"
                 style={{
                   aspectRatio: '1',
                   borderColor: isSelected ? '#10B981' : 'transparent',
@@ -511,23 +689,39 @@ function PhotoGalleryModal({
                 <img
                   src={src}
                   alt={`Foto ${idx + 1}`}
-                  className="w-full h-full object-cover"
+                  className="w-full h-full object-cover group-hover:brightness-75 transition-all"
                   onClick={() => setLightbox(idx)}
-                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).style.display = 'none';
+                  }}
                 />
+
                 {/* Checkbox */}
                 <button
-                  onClick={(e) => { e.stopPropagation(); toggleSelect(idx); }}
-                  className="absolute top-1.5 left-1.5 w-5 h-5 rounded-full border-2 border-white flex items-center justify-center text-[10px] font-bold"
-                  style={{ background: isSelected ? '#10B981' : 'rgba(0,0,0,0.4)' }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleSelect(idx);
+                  }}
+                  className="absolute top-1.5 left-1.5 w-5 h-5 rounded-full border-2 border-white flex items-center justify-center text-[10px] font-bold transition-all"
+                  style={{
+                    background: isSelected ? '#10B981' : 'rgba(0,0,0,0.4)',
+                  }}
                 >
                   {isSelected ? '✓' : ''}
                 </button>
+
                 {/* Download single */}
                 <button
-                  onClick={(e) => { e.stopPropagation(); downloadPhoto(src, idx); }}
-                  className="absolute bottom-1.5 right-1.5 w-6 h-6 rounded-lg bg-black/50 hover:bg-black/80 text-white flex items-center justify-center text-[10px]"
-                >⬇️</button>
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    downloadPhoto(src, idx);
+                  }}
+                  className="absolute bottom-1.5 right-1.5 w-6 h-6 rounded-lg bg-black/50 hover:bg-emerald-500 text-white flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition-all"
+                >
+                  ⬇️
+                </button>
+
+                {/* Nomor foto */}
                 <span className="absolute bottom-1.5 left-1.5 text-[9px] text-white font-bold bg-black/40 px-1 rounded">
                   {String(idx + 1).padStart(2, '0')}
                 </span>
@@ -537,36 +731,16 @@ function PhotoGalleryModal({
         </div>
       </div>
 
-      {/* Lightbox */}
+      {/* Lightbox overlay */}
       {lightbox !== null && (
-        <div
-          className="absolute inset-0 z-10 bg-black/95 flex flex-col items-center justify-center"
-          onClick={() => setLightbox(null)}
-        >
-          <img
-            src={getSrc(photos[lightbox]) || ''}
-            alt={`Foto ${lightbox + 1}`}
-            className="max-w-full max-h-[80vh] object-contain rounded"
-            onClick={(e) => e.stopPropagation()}
-          />
-          <div className="flex items-center gap-4 mt-4">
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setLightbox(i => (i !== null && i > 0 ? i - 1 : i));
-              }}
-              className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white text-xs font-bold rounded-lg"
-            >← Prev</button>
-            <span className="text-white text-xs font-bold">{lightbox + 1} / {photos.length}</span>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setLightbox(i => (i !== null && i < photos.length - 1 ? i + 1 : i));
-              }}
-              className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white text-xs font-bold rounded-lg"
-            >Next →</button>
-          </div>
-        </div>
+        <LightboxViewer
+          photo={getSrc(photos[lightbox]) || ''}
+          index={lightbox}
+          total={photos.length}
+          onPrev={() => setLightbox((i) => (i !== null && i > 0 ? i - 1 : i))}
+          onNext={() => setLightbox((i) => (i !== null && i < photos.length - 1 ? i + 1 : i))}
+          onClose={() => setLightbox(null)}
+        />
       )}
     </div>
   );
@@ -579,8 +753,19 @@ function PhotoGalleryModal({
 function Spinner() {
   return (
     <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+      <circle
+        className="opacity-25"
+        cx="12"
+        cy="12"
+        r="10"
+        stroke="currentColor"
+        strokeWidth="4"
+      />
+      <path
+        className="opacity-75"
+        fill="currentColor"
+        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+      />
     </svg>
   );
 }
