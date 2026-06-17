@@ -25,7 +25,7 @@ import {
   saveToken,
   clearToken,
   TokenExpiredError,
- isTokenExpiringSoon,
+  isTokenExpiringSoon,
   trySilentRefresh,
   type UploadProgress,
   deletePhotoFromDrive,
@@ -94,13 +94,13 @@ const SPECIFIC_FIELDS: Record<string, FieldDef[]> = {
   ],
   PUBT: [
     { name: 'jenisPUBT',         label: 'Jenis Pesawat Uap/Bejana',  type: 'select', options: ['Boiler Pipa Api','Boiler Pipa Air','Bejana Tekan','Tangki Refrigerasi','Autoclave','Heat Exchanger','Pressure Vessel','Air Receiver','Lainnya'] },
-    { name: 'volume',            label: 'Volume',                     type: 'number', unit: 'Liter' },
-    { name: 'tekananKerjaMaks',  label: 'Tekanan Kerja Maksimum',     type: 'number', unit: 'Bar' },
-    { name: 'temperaturKerja',   label: 'Temperatur Kerja',           type: 'number', unit: '°C' },
-    { name: 'mediaIsi',          label: 'Media Isi',                  type: 'select', options: ['Steam / Uap Air','Air Bertekanan','Gas Nitrogen','Gas CO2','Freon/Refrigerant','Oli Hidraulik','BBM / Avtur','LPG / LNG','Lainnya'] },
-    { name: 'kapasitasProduksi', label: 'Kapasitas Produksi',         type: 'number', unit: 'kg/jam' },
-    { name: 'nomorNDT',          label: 'Nomor NDT Terakhir',         type: 'text',   placeholder: 'Nomor sertifikat NDT' },
-    { name: 'tanggalNDT',        label: 'Tanggal NDT Terakhir',       type: 'text',   placeholder: 'YYYY-MM-DD' },
+    { name: 'volume',            label: 'Volume',                    type: 'number', unit: 'Liter' },
+    { name: 'tekananKerjaMaks',  label: 'Tekanan Kerja Maksimum',    type: 'number', unit: 'Bar' },
+    { name: 'temperaturKerja',   label: 'Temperatur Kerja',          type: 'number', unit: '°C' },
+    { name: 'mediaIsi',          label: 'Media Isi',                 type: 'select', options: ['Steam / Uap Air','Air Bertekanan','Gas Nitrogen','Gas CO2','Freon/Refrigerant','Oli Hidraulik','BBM / Avtur','LPG / LNG','Lainnya'] },
+    { name: 'kapasitasProduksi', label: 'Kapasitas Produksi',        type: 'number', unit: 'kg/jam' },
+    { name: 'nomorNDT',          label: 'Nomor NDT Terakhir',        type: 'text',   placeholder: 'Nomor sertifikat NDT' },
+    { name: 'tanggalNDT',        label: 'Tanggal NDT Terakhir',      type: 'text',   placeholder: 'YYYY-MM-DD' },
   ],
   PTP: [
     { name: 'jenisPTP',        label: 'Jenis Pesawat Tenaga',  type: 'select', options: ['Motor Listrik','Generator / Genset','Kompresor Udara','Kompresor Gas','Pompa Sentrifugal','Pompa Reciprocating','Mesin Produksi','Turbin','Lainnya'] },
@@ -406,7 +406,7 @@ export default function App() {
 
   const [isSaving, setIsSaving] = useState(false);
   const [uploadingId, setUploadingId] = useState<string | null>(null);
- const [uploadProgress, setUploadProgress] = useState<{ percentage: number; loaded: number; total: number } | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<{ percentage: number; loaded: number; total: number } | null>(null);
   const [tokenError, setTokenError] = useState<string | null>(null);
   const [pullStatus, setPullStatus] = useState<string | null>(null);
   const [darkMode, setDarkMode] = useState(() => {
@@ -524,9 +524,9 @@ const doPullInspections = useCallback(async () => {
     pullTemplatesFromDrive().catch(console.warn);
     setTimeout(() => doPullInspections(), 2000);
 
- }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
- useEffect(() => {
+  useEffect(() => {
     if (darkMode) {
       document.documentElement.classList.add('dark');
     } else {
@@ -1083,12 +1083,14 @@ const handleDelete = async (id: string) => {
             </div>
             <div>
               <Divider label="Inspeksi cepat" />
+              {/* UPGRADE UI WARNA TEKS DARI TEMPLATE UNIT */}
               <button onClick={handleStartInspection} style={{ width: '100%', marginTop: 8, background: T.emerald900, border: 'none', borderRadius: 16, padding: '16px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', textAlign: 'left', position: 'relative', overflow: 'hidden', WebkitTapHighlightColor: 'transparent' }}>
                 <div style={{ position: 'absolute', right: -20, top: -20, width: 100, height: 100, borderRadius: '50%', background: 'rgba(16,185,129,0.15)', pointerEvents: 'none' }} />
                 <div style={{ width: 44, height: 44, borderRadius: 12, background: 'rgba(255,255,255,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.emeraldBorder, flexShrink: 0, position: 'relative', zIndex: 1 }}>{ICONS.factory}</div>
                 <div style={{ flex: 1, position: 'relative', zIndex: 1 }}>
-                  <p style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>Dari Template Unit</p>
-                  <p style={{ fontSize: 11, color: T.emeraldText, marginTop: 2 }}>Pilih klien → unit → form otomatis terisi</p>
+                  <p style={{ fontSize: 13, fontWeight: 700, color: '#ffffff' }}>Dari Template Unit</p>
+                  {/* FIX: MENGUNCI WARNA TEKS MENJADI CERAH (PUTIH TRANSPARAN 75%) AGAR SELALU TERBACA DI BACKGROUND HIJAU TUA */}
+                  <p style={{ fontSize: 11, color: 'rgba(255, 255, 255, 0.75)', marginTop: 2 }}>Pilih klien → unit → form otomatis terisi</p>
                 </div>
                 <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 18, position: 'relative', zIndex: 1 }}>›</span>
               </button>
