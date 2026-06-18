@@ -49,14 +49,16 @@ export function HistoryView({
   const [openClients, setOpenClients] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
 
-  const filtered = history.filter(item => {
+  const filtered = useMemo(() => {
     const q = searchQuery.toLowerCase();
-    return (
-      item.clientName.toLowerCase().includes(q) ||
-      item.unitData?.namaUnit?.toLowerCase().includes(q) ||
-      item.objectType.toLowerCase().includes(q)
-    );
-  });
+    return history.filter((item) => {
+      return (
+        item.clientName.toLowerCase().includes(q) ||
+        item.unitData?.namaUnit?.toLowerCase().includes(q) ||
+        item.objectType.toLowerCase().includes(q)
+      );
+    });
+  }, [history, searchQuery]);
 
   const recent = useMemo(
     () => [...filtered].sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt)).slice(0, 5),
@@ -74,7 +76,7 @@ export function HistoryView({
       map.set(key, list.sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt)));
     }
     return map;
-  }, [history]);
+  }, [filtered]);
 
   const toggleClient = (name: string) => {
     setOpenClients((prev) => {
@@ -109,24 +111,26 @@ export function HistoryView({
           Data yang sudah tersinkronisasi ke Google Drive
         </p>
       </div>
-      {/* ← TAMBAH SEARCH INPUT DI SINI */}
-<div className="relative">
-  <input
-    type="text"
-    placeholder="🔍 Cari klien, unit, atau jenis inspeksi..."
-    value={searchQuery}
-    onChange={(e) => setSearchQuery(e.target.value)}
-    className="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm text-gray-900 placeholder-gray-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none transition-all"
-  />
-  {searchQuery && (
-    <button
-      onClick={() => setSearchQuery('')}
-      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-    >
-      ✕
-    </button>
-  )}
-</div>
+
+      {/* Search Input */}
+      <div className="relative">
+        <input
+          type="text"
+          placeholder="🔍 Cari klien, unit, atau jenis inspeksi..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm text-gray-900 placeholder-gray-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none transition-all"
+        />
+        {searchQuery && (
+          <button
+            onClick={() => setSearchQuery('')}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+          >
+            ✕
+          </button>
+        )}
+      </div>
+
       {/* Tab */}
       <div className="flex gap-2 bg-gray-100 p-1 rounded-xl">
         <button
@@ -153,40 +157,48 @@ export function HistoryView({
 
       {activeTab === 'recent' && (
         <div className="space-y-3">
-          {recent.map((item) => (
-            <HistoryCard key={item.id} {...cardProps(item)} />
-          ))}
+          {recent.length === 0 ? (
+            <p className="text-xs text-gray-400 text-center py-6">Tidak ada hasil untuk "{searchQuery}"</p>
+          ) : (
+            recent.map((item) => (
+              <HistoryCard key={item.id} {...cardProps(item)} />
+            ))
+          )}
         </div>
       )}
 
       {activeTab === 'byClient' && (
         <div className="space-y-2">
-          {[...byClient.entries()].map(([clientName, items]) => {
-            const isOpen = openClients.has(clientName);
-            return (
-              <div key={clientName} className="border border-gray-200 rounded-xl overflow-hidden">
-                <button
-                  onClick={() => toggleClient(clientName)}
-                  className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-bold text-gray-800">{clientName}</span>
-                    <span className="px-2 py-0.5 bg-blue-50 text-blue-600 border border-blue-100 rounded-full text-[10px] font-bold">
-                      {items.length} inspeksi
-                    </span>
-                  </div>
-                  <span className="text-gray-400 text-xs">{isOpen ? '▲' : '▼'}</span>
-                </button>
-                {isOpen && (
-                  <div className="p-3 space-y-3 bg-white">
-                    {items.map((item) => (
-                      <HistoryCard key={item.id} {...cardProps(item)} />
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+          {byClient.size === 0 ? (
+            <p className="text-xs text-gray-400 text-center py-6">Tidak ada hasil untuk "{searchQuery}"</p>
+          ) : (
+            [...byClient.entries()].map(([clientName, items]) => {
+              const isOpen = openClients.has(clientName);
+              return (
+                <div key={clientName} className="border border-gray-200 rounded-xl overflow-hidden">
+                  <button
+                    onClick={() => toggleClient(clientName)}
+                    className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-bold text-gray-800">{clientName}</span>
+                      <span className="px-2 py-0.5 bg-blue-50 text-blue-600 border border-blue-100 rounded-full text-[10px] font-bold">
+                        {items.length} inspeksi
+                      </span>
+                    </div>
+                    <span className="text-gray-400 text-xs">{isOpen ? '▲' : '▼'}</span>
+                  </button>
+                  {isOpen && (
+                    <div className="p-3 space-y-3 bg-white">
+                      {items.map((item) => (
+                        <HistoryCard key={item.id} {...cardProps(item)} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
         </div>
       )}
     </div>
@@ -393,7 +405,7 @@ function HistoryCard({
           disabled={isUploading || item.photos.length === 0}
           className="py-2.5 flex items-center justify-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-lg transition-all"
         >
-          🎞️ Galeri 
+          📸 Galeri
         </button>
 
         <div className="relative">
@@ -448,7 +460,7 @@ function HistoryCard({
 }
 
 // ==========================================
-// LIGHTBOX VIEWER — with smooth zoom
+// LIGHTBOX VIEWER — smooth zoom + mobile pinch + download
 // ==========================================
 
 function LightboxViewer({
@@ -469,6 +481,7 @@ function LightboxViewer({
   unitName?: string;
 }) {
   const [zoom, setZoom] = useState(1);
+  const touchStartRef = useRef(0);
 
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
@@ -476,29 +489,6 @@ function LightboxViewer({
       Math.max(0.5, Math.min(3, prev + (e.deltaY > 0 ? -0.2 : 0.2)))
     );
   };
-
-  const handleTouchStart = useRef(0);
-
-const handleTouchMove = (e: React.TouchEvent) => {
-  if (e.touches.length !== 2) return;
-  const touch1 = e.touches[0];
-  const touch2 = e.touches[1];
-  const distance = Math.hypot(
-    touch2.clientX - touch1.clientX,
-    touch2.clientY - touch1.clientY
-  );
-  if (handleTouchStart.current === 0) {
-    handleTouchStart.current = distance;
-  } else {
-    const diff = distance - handleTouchStart.current;
-    if (diff > 10) setZoom((prev) => Math.min(3, prev + 0.1));
-    if (diff < -10) setZoom((prev) => Math.max(0.5, prev - 0.1));
-  }
-};
-
-const handleTouchEnd = () => {
-  handleTouchStart.current = 0;
-};
 
   const handleDoubleClick = () => {
     setZoom((prev) => (prev === 1 ? 2 : 1));
@@ -510,8 +500,7 @@ const handleTouchEnd = () => {
     if (e.key === 'Escape') onClose();
   };
 
-  const touchStartRef = useRef(0);
-
+  // Pinch-to-zoom untuk mobile (2 jari)
   const handleTouchMove = (e: React.TouchEvent) => {
     if (e.touches.length !== 2) return;
     const touch1 = e.touches[0];
@@ -533,10 +522,12 @@ const handleTouchEnd = () => {
     touchStartRef.current = 0;
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'ArrowLeft') onPrev();
-    if (e.key === 'ArrowRight') onNext();
-    if (e.key === 'Escape') onClose();
+  const handleDownload = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const a = document.createElement('a');
+    a.href = photo;
+    a.download = `${unitName || 'Foto'}_${String(index + 1).padStart(2, '0')}.jpg`;
+    a.click();
   };
 
   return (
@@ -578,7 +569,7 @@ const handleTouchEnd = () => {
             setZoom((prev) => Math.max(0.5, prev - 0.2));
           }}
           className="px-2.5 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs font-bold rounded-lg transition-all"
-          title="Zoom out (-)  atau scroll mouse"
+          title="Zoom out (-) atau scroll mouse / pinch"
         >
           🔍−
         </button>
@@ -593,7 +584,7 @@ const handleTouchEnd = () => {
             setZoom((prev) => Math.min(3, prev + 0.2));
           }}
           className="px-2.5 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs font-bold rounded-lg transition-all"
-          title="Zoom in (+) atau scroll mouse"
+          title="Zoom in (+) atau scroll mouse / pinch"
         >
           🔍+
         </button>
@@ -607,9 +598,9 @@ const handleTouchEnd = () => {
             onPrev();
             setZoom(1);
           }}
-          className="px-2.5 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs font-bold rounded-lg transition-all"
-          title="Prev (← Arrow)"
           disabled={index === 0}
+          className="px-2.5 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-40 text-white text-xs font-bold rounded-lg transition-all"
+          title="Prev (← Arrow)"
         >
           ← Prev
         </button>
@@ -624,30 +615,25 @@ const handleTouchEnd = () => {
             onNext();
             setZoom(1);
           }}
-          className="px-2.5 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs font-bold rounded-lg transition-all"
-          title="Next (→ Arrow)"
           disabled={index === total - 1}
+          className="px-2.5 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-40 text-white text-xs font-bold rounded-lg transition-all"
+          title="Next (→ Arrow)"
         >
           Next →
         </button>
 
         <div className="w-px h-5 bg-gray-600"></div>
 
-        {/* Close */}
-<button
-          onClick={(e) => {
-            e.stopPropagation();
-            const a = document.createElement('a');
-            a.href = photo;
-            a.download = `${unitName || 'Foto'}_${String(index + 1).padStart(2, '0')}.jpg`;
-            a.click();
-          }}
+        {/* Download foto ini */}
+        <button
+          onClick={handleDownload}
           className="px-2.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg transition-all"
           title="Download foto ini"
         >
           ⬇️ Download
         </button>
 
+        {/* Close */}
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -661,8 +647,8 @@ const handleTouchEnd = () => {
       </div>
 
       {/* Hint text */}
-      <div className="text-[10px] text-gray-400 pb-2">
-        🖱️ Scroll zoom  |  ↔️ Arrows navigate  |  ESC close  |  2x tap zoom toggle
+      <div className="text-[10px] text-gray-400 pb-2 text-center px-2">
+        🖱️ Scroll / pinch zoom &nbsp;|&nbsp; ↔️ Arrows navigate &nbsp;|&nbsp; ESC close &nbsp;|&nbsp; 2x tap zoom toggle
       </div>
     </div>
   );
@@ -731,7 +717,7 @@ function PhotoGalleryModal({
         style={{ minHeight: 56 }}
       >
         <div>
-          <p className="text-white text-sm font-bold">🖼️ {unitName}</p>
+          <p className="text-white text-sm font-bold">📸 {unitName}</p>
           <p className="text-gray-400 text-[10px]">{photos.length} foto</p>
         </div>
         <div className="flex items-center gap-2">
@@ -838,8 +824,6 @@ function PhotoGalleryModal({
           onPrev={() => setLightbox((i) => (i !== null && i > 0 ? i - 1 : i))}
           onNext={() => setLightbox((i) => (i !== null && i < photos.length - 1 ? i + 1 : i))}
           onClose={() => setLightbox(null)}
-          onTouchMove={handleTouchMove}
-          onTouchEnd={handleTouchEnd}
         />
       )}
     </div>
