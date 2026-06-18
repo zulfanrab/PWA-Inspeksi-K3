@@ -1,5 +1,5 @@
 // src/components/HistoryView.tsx
-import { useState, useMemo } from 'react';
+import { useState, useRef, useMemo } from 'react';
 import type { InspectionSession, InspectionPhoto } from '../db/db';
 import { exportToPDF } from '../utils/pdfExport';
 import { exportToWord } from '../utils/wordExport';
@@ -47,15 +47,25 @@ export function HistoryView({
 }: HistoryViewProps) {
   const [activeTab, setActiveTab] = useState<'recent' | 'byClient'>('recent');
   const [openClients, setOpenClients] = useState<Set<string>>(new Set());
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const filtered = history.filter(item => {
+    const q = searchQuery.toLowerCase();
+    return (
+      item.clientName.toLowerCase().includes(q) ||
+      item.unitData?.namaUnit?.toLowerCase().includes(q) ||
+      item.objectType.toLowerCase().includes(q)
+    );
+  });
 
   const recent = useMemo(
-    () => [...history].sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt)).slice(0, 5),
-    [history]
+    () => [...filtered].sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt)).slice(0, 5),
+    [filtered]
   );
 
   const byClient = useMemo(() => {
     const map = new Map<string, SessionWithPhotos[]>();
-    for (const item of history) {
+    for (const item of filtered) {
       const list = map.get(item.clientName) ?? [];
       list.push(item);
       map.set(item.clientName, list);
@@ -99,7 +109,24 @@ export function HistoryView({
           Data yang sudah tersinkronisasi ke Google Drive
         </p>
       </div>
-
+      {/* ← TAMBAH SEARCH INPUT DI SINI */}
+<div className="relative">
+  <input
+    type="text"
+    placeholder="🔍 Cari klien, unit, atau jenis inspeksi..."
+    value={searchQuery}
+    onChange={(e) => setSearchQuery(e.target.value)}
+    className="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm text-gray-900 placeholder-gray-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none transition-all"
+  />
+  {searchQuery && (
+    <button
+      onClick={() => setSearchQuery('')}
+      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+    >
+      ✕
+    </button>
+  )}
+</div>
       {/* Tab */}
       <div className="flex gap-2 bg-gray-100 p-1 rounded-xl">
         <button
@@ -366,7 +393,7 @@ function HistoryCard({
           disabled={isUploading || item.photos.length === 0}
           className="py-2.5 flex items-center justify-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-lg transition-all"
         >
-          🖼️ Galeri
+          🎞️ Galeri 
         </button>
 
         <div className="relative">
@@ -431,6 +458,7 @@ function LightboxViewer({
   onPrev,
   onNext,
   onClose,
+  unitName,
 }: {
   photo: string;
   index: number;
@@ -438,6 +466,7 @@ function LightboxViewer({
   onPrev: () => void;
   onNext: () => void;
   onClose: () => void;
+  unitName?: string;
 }) {
   const [zoom, setZoom] = useState(1);
 
@@ -448,8 +477,60 @@ function LightboxViewer({
     );
   };
 
+  const handleTouchStart = useRef(0);
+
+const handleTouchMove = (e: React.TouchEvent) => {
+  if (e.touches.length !== 2) return;
+  const touch1 = e.touches[0];
+  const touch2 = e.touches[1];
+  const distance = Math.hypot(
+    touch2.clientX - touch1.clientX,
+    touch2.clientY - touch1.clientY
+  );
+  if (handleTouchStart.current === 0) {
+    handleTouchStart.current = distance;
+  } else {
+    const diff = distance - handleTouchStart.current;
+    if (diff > 10) setZoom((prev) => Math.min(3, prev + 0.1));
+    if (diff < -10) setZoom((prev) => Math.max(0.5, prev - 0.1));
+  }
+};
+
+const handleTouchEnd = () => {
+  handleTouchStart.current = 0;
+};
+
   const handleDoubleClick = () => {
     setZoom((prev) => (prev === 1 ? 2 : 1));
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'ArrowLeft') onPrev();
+    if (e.key === 'ArrowRight') onNext();
+    if (e.key === 'Escape') onClose();
+  };
+
+  const touchStartRef = useRef(0);
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (e.touches.length !== 2) return;
+    const touch1 = e.touches[0];
+    const touch2 = e.touches[1];
+    const distance = Math.hypot(
+      touch2.clientX - touch1.clientX,
+      touch2.clientY - touch1.clientY
+    );
+    if (touchStartRef.current === 0) {
+      touchStartRef.current = distance;
+    } else {
+      const diff = distance - touchStartRef.current;
+      if (diff > 10) setZoom((prev) => Math.min(3, prev + 0.1));
+      if (diff < -10) setZoom((prev) => Math.max(0.5, prev - 0.1));
+    }
+  };
+
+  const handleTouchEnd = () => {
+    touchStartRef.current = 0;
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -464,6 +545,8 @@ function LightboxViewer({
       onClick={onClose}
       onWheel={handleWheel}
       onKeyDown={handleKeyDown}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
       tabIndex={0}
     >
       {/* Foto dengan zoom smooth */}
@@ -551,6 +634,20 @@ function LightboxViewer({
         <div className="w-px h-5 bg-gray-600"></div>
 
         {/* Close */}
+<button
+          onClick={(e) => {
+            e.stopPropagation();
+            const a = document.createElement('a');
+            a.href = photo;
+            a.download = `${unitName || 'Foto'}_${String(index + 1).padStart(2, '0')}.jpg`;
+            a.click();
+          }}
+          className="px-2.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg transition-all"
+          title="Download foto ini"
+        >
+          ⬇️ Download
+        </button>
+
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -737,9 +834,12 @@ function PhotoGalleryModal({
           photo={getSrc(photos[lightbox]) || ''}
           index={lightbox}
           total={photos.length}
+          unitName={unitName}
           onPrev={() => setLightbox((i) => (i !== null && i > 0 ? i - 1 : i))}
           onNext={() => setLightbox((i) => (i !== null && i < photos.length - 1 ? i + 1 : i))}
           onClose={() => setLightbox(null)}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
         />
       )}
     </div>
