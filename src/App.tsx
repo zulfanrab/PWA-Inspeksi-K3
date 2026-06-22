@@ -203,10 +203,19 @@ function buildOAuthUrl() {
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
-function validateForm(clientName: string): string[] {
+function validateForm(clientName: string, formData: Record<string, string>): string[] {
   const errors: string[] = [];
   if (!clientName.trim()) errors.push('Nama Perusahaan Klien');
+  if (!formData.tanggal_inspeksi?.trim()) errors.push('Tanggal Inspeksi');
+  if (!formData.sifat_pemeriksaan?.trim()) errors.push('Sifat Pemeriksaan');
   return errors;
+}
+
+function defaultFormFields(): Record<string, string> {
+  return {
+    tanggal_inspeksi: new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Jakarta' }),
+    sifat_pemeriksaan: 'Baru',
+  };
 }
 
 async function fetchUserInfo(token: string): Promise<{ email: string; name: string } | null> {
@@ -397,7 +406,7 @@ export default function App() {
   const [activeObject, setActiveObject] = useState('');
   const [clientName, setClientName] = useState('');
   const [showClientDropdown, setShowClientDropdown] = useState(false);
-  const [formData, setFormData] = useState<Record<string, string>>({});
+  const [formData, setFormData] = useState<Record<string, string>>(defaultFormFields());
   const [existingPhotos, setExistingPhotos] = useState<InspectionPhoto[]>([]);
   const [newPhotos, setNewPhotos] = useState<string[]>([]);
   const [deletedPhotoIds, setDeletedPhotoIds] = useState<string[]>([]);
@@ -672,7 +681,7 @@ const triggerAutoSync = useCallback(async () => {
     setEditingId(null);
     setActiveObject('');
     setClientName('');
-    setFormData({});
+    setFormData(defaultFormFields());
     setExistingPhotos([]);
     setNewPhotos([]);
     setDeletedPhotoIds([]);
@@ -699,7 +708,7 @@ const triggerAutoSync = useCallback(async () => {
     resetForm();
     setActiveObject(picked.unit.objectType);
     setClientName(picked.client.name);
-    setFormData({ ...picked.unit.unitData });
+    setFormData({ ...defaultFormFields(), ...picked.unit.unitData });
     setFromTemplateClientId(picked.client.id);
     setFromTemplateUnitId(picked.unit.id);
     setFormMode('create');
@@ -727,7 +736,12 @@ const triggerAutoSync = useCallback(async () => {
     setEditingId(sessionId);
     setActiveObject(session.objectType);
     setClientName(session.clientName);
-    setFormData(session.unitData);
+    setFormData({
+      ...defaultFormFields(),
+      ...session.unitData,
+      tanggal_inspeksi: session.unitData?.tanggal_inspeksi || defaultFormFields().tanggal_inspeksi,
+      sifat_pemeriksaan: session.unitData?.sifat_pemeriksaan || defaultFormFields().sifat_pemeriksaan,
+    });
     setExistingPhotos(session.photos);
     setNewPhotos([]);
     setDeletedPhotoIds([]);
@@ -770,7 +784,7 @@ const triggerAutoSync = useCallback(async () => {
   //   bukan semua session.photos. Foto lama sudah ada di Drive.
 
   const handleSaveForm = async () => {
-    const errors = validateForm(clientName);
+    const errors = validateForm(clientName, formData);
     if (errors.length > 0) {
       alert(`⚠️ Field wajib belum diisi:\n${errors.map((e) => `• ${e}`).join('\n')}`);
       return;

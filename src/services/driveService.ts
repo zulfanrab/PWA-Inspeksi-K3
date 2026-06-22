@@ -5,6 +5,7 @@
 // - Bisa melanjutkan upload yang terputus (resume)
 
 import { db, type InspectionSession, type InspectionPhoto } from '../db/db';
+import { getTanggalInspeksi, getSifatPemeriksaan } from '../types';
 import { getApiBaseUrl } from '../config';
 
 export interface UploadProgress {
@@ -149,6 +150,8 @@ export const uploadToDrive = async (
             objectType: session.objectType,
             createdAt: session.createdAt,
             updatedAt: session.updatedAt,
+            tanggal_inspeksi: getTanggalInspeksi(session),
+            sifat_pemeriksaan: getSifatPemeriksaan(session) ?? null,
             unitData: session.unitData,
             totalPhotos: totalPhotos,
             inspectorEmail: session.inspectorEmail ?? null,

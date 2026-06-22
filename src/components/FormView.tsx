@@ -3,6 +3,9 @@ import { Document3DLoading } from './Document3DLoading';
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import type { InspectionPhoto } from '../db/db';
+import type { SifatPemeriksaan } from '../types';
+
+const todayISO = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Jakarta' });
 
 export type FieldType = 'text' | 'number' | 'select' | 'textarea';
 export type FormMode = 'create' | 'edit';
@@ -134,6 +137,45 @@ export function FormView({
               ))}
           </div>
         )}
+      </div>
+
+      {/* Tanggal & Sifat Pemeriksaan — sebelum data teknis */}
+      <div className="space-y-5 bg-white p-5 rounded-3xl border border-gray-100 shadow-sm">
+        <SectionDivider label="Penjadwalan Inspeksi" />
+        <div>
+          <label className="block text-[11px] font-bold uppercase tracking-widest text-emerald-700 mb-2">
+            Tanggal Inspeksi <span className="text-red-500">*</span>
+          </label>
+          <input
+            required
+            type="date"
+            value={formData.tanggal_inspeksi || todayISO()}
+            onChange={(e) => onFieldChange('tanggal_inspeksi', e.target.value)}
+            className="w-full bg-white border border-emerald-200 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/20 rounded-2xl px-4 py-3.5 text-sm text-gray-900 outline-none transition-all duration-300 shadow-sm"
+          />
+          <p className="text-[10px] text-gray-400 mt-1.5">Ubah ke tanggal asli untuk data arsip/backlog tahun lalu.</p>
+        </div>
+        <div>
+          <label className="block text-[11px] font-bold uppercase tracking-widest text-emerald-700 mb-2">
+            Sifat Pemeriksaan <span className="text-red-500">*</span>
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            {(['Baru', 'Berkala'] as SifatPemeriksaan[]).map((opt) => (
+              <button
+                key={opt}
+                type="button"
+                onClick={() => onFieldChange('sifat_pemeriksaan', opt)}
+                className={`py-3 rounded-2xl border text-sm font-bold transition-all active:scale-[0.98] ${
+                  (formData.sifat_pemeriksaan || 'Baru') === opt
+                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-md'
+                    : 'bg-gray-50 text-gray-600 border-gray-200 hover:border-emerald-200'
+                }`}
+              >
+                {opt === 'Baru' ? '🆕 Baru' : '🔄 Berkala'}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* Common Fields */}

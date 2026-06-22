@@ -1,6 +1,7 @@
 // src/components/HistoryView.tsx
 import { useState, useRef, useMemo } from 'react';
 import type { InspectionSession, InspectionPhoto } from '../db/db';
+import { getInspectionYear, getSifatPemeriksaan, getTanggalInspeksi } from '../types';
 import { exportToPDF } from '../utils/pdfExport';
 import { exportToWord } from '../utils/wordExport';
 import type { UploadProgress } from '../services/driveService';
@@ -48,17 +49,32 @@ export function HistoryView({
   const [activeTab, setActiveTab] = useState<'recent' | 'byClient'>('recent');
   const [openClients, setOpenClients] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
+  const [filterYear, setFilterYear] = useState<string>('Semua');
+  const [filterSifat, setFilterSifat] = useState<'Semua' | 'Baru' | 'Berkala'>('Semua');
+
+  const availableYears = useMemo(() => {
+    const years = new Set(history.map((item) => getInspectionYear(item)));
+    return ['Semua', ...Array.from(years).sort((a, b) => b.localeCompare(a))];
+  }, [history]);
 
   const filtered = useMemo(() => {
     const q = searchQuery.toLowerCase();
     return history.filter((item) => {
-      return (
+      const matchesSearch =
         item.clientName.toLowerCase().includes(q) ||
         item.unitData?.namaUnit?.toLowerCase().includes(q) ||
-        item.objectType.toLowerCase().includes(q)
-      );
+        item.objectType.toLowerCase().includes(q);
+
+      const matchesYear =
+        filterYear === 'Semua' || getInspectionYear(item) === filterYear;
+
+      const sifat = getSifatPemeriksaan(item);
+      const matchesSifat =
+        filterSifat === 'Semua' || sifat === filterSifat;
+
+      return matchesSearch && matchesYear && matchesSifat;
     });
-  }, [history, searchQuery]);
+  }, [history, searchQuery, filterYear, filterSifat]);
 
   const recent = useMemo(
     () => [...filtered].sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt)).slice(0, 5),
@@ -129,6 +145,38 @@ export function HistoryView({
             ✕
           </button>
         )}
+      </div>
+
+      {/* Filter Tahun & Sifat */}
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">
+            Filter Tahun
+          </label>
+          <select
+            value={filterYear}
+            onChange={(e) => setFilterYear(e.target.value)}
+            className="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-sm text-gray-900 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
+          >
+            {availableYears.map((year) => (
+              <option key={year} value={year}>{year === 'Semua' ? 'Semua Tahun' : year}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">
+            Filter Sifat
+          </label>
+          <select
+            value={filterSifat}
+            onChange={(e) => setFilterSifat(e.target.value as 'Semua' | 'Baru' | 'Berkala')}
+            className="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-sm text-gray-900 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
+          >
+            <option value="Semua">Semua Sifat</option>
+            <option value="Baru">Baru</option>
+            <option value="Berkala">Berkala</option>
+          </select>
+        </div>
       </div>
 
       {/* Tab */}
@@ -225,6 +273,8 @@ function HistoryCard({
   currentUserEmail: string;
 }) {
   const meta = OBJECT_TYPES.find((o) => o.key === item.objectType);
+  const tanggalInspeksi = getTanggalInspeksi(item);
+  const sifatPemeriksaan = getSifatPemeriksaan(item);
   const dateStr = formatDate(item.updatedAt || item.createdAt);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [showGallery, setShowGallery] = useState(false);
@@ -240,7 +290,7 @@ function HistoryCard({
     try {
       const unitName = item.unitData?.namaUnit || 'Unit';
       const clientSlug = item.clientName.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 20);
-      const dateSlug = new Date(item.createdAt).toISOString().slice(0, 10);
+      const dateSlug = tanggalInspeksi;
       const fileName = `Laporan_${item.objectType}_${unitName}_${clientSlug}_${dateSlug}`.replace(/\s+/g, '_');
       const pdfUrl = await exportToPDF(item, fileName);
       if (pdfWindow) {
@@ -259,7 +309,7 @@ function HistoryCard({
     try {
       const unitName = item.unitData?.namaUnit || 'Unit';
       const clientSlug = item.clientName.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 20);
-      const dateSlug = new Date(item.createdAt).toISOString().slice(0, 10);
+      const dateSlug = tanggalInspeksi;
       const fileName = `Laporan_${item.objectType}_${unitName}_${clientSlug}_${dateSlug}`.replace(/\s+/g, '_');
       await exportToWord(item, fileName);
     } catch (err: any) {
@@ -303,6 +353,18 @@ function HistoryCard({
         </span>
         <span className="px-2 py-0.5 bg-green-50 text-green-600 border border-green-100 rounded-full text-[10px] font-bold">
           ✅ Synced
+        </span>
+        {sifatPemeriksaan && (
+          <span className={`px-2 py-0.5 border rounded-full text-[10px] font-bold ${
+            sifatPemeriksaan === 'Baru'
+              ? 'bg-violet-50 text-violet-600 border-violet-100'
+              : 'bg-amber-50 text-amber-700 border-amber-100'
+          }`}>
+            {sifatPemeriksaan === 'Baru' ? '🆕 Baru' : '🔄 Berkala'}
+          </span>
+        )}
+        <span className="px-2 py-0.5 bg-slate-50 text-slate-600 border border-slate-100 rounded-full text-[10px] font-bold">
+          📅 {tanggalInspeksi}
         </span>
         <span className="px-2 py-0.5 bg-blue-50 text-blue-600 border border-blue-100 rounded-full text-[10px] font-bold">
           📷 {item.photos.length} foto

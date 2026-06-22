@@ -13,6 +13,8 @@ type DriveClient = ReturnType<typeof getDriveClient>;
 interface UnitData {
   namaUnit?: string;
   nomorSeri?: string;
+  tanggal_inspeksi?: string;
+  sifat_pemeriksaan?: 'Baru' | 'Berkala';
   [key: string]: unknown;
 }
 
@@ -20,11 +22,27 @@ interface InspectionSession {
   id: string;
   clientName: string;
   objectType: string;
-  createdAt: string;
-  updatedAt?: string;
+  createdAt: string | number;
+  updatedAt?: string | number;
   unitData?: UnitData;
   totalPhotos?: number;
   inspectorEmail?: string;
+  tanggal_inspeksi?: string;
+  sifat_pemeriksaan?: 'Baru' | 'Berkala';
+}
+
+/** Resolusi tanggal folder Drive dari payload (bukan Date.now / upload time) */
+function resolveInspectionDateStr(session: InspectionSession): string {
+  const raw =
+    (typeof session.tanggal_inspeksi === 'string' ? session.tanggal_inspeksi.trim() : '') ||
+    (typeof session.unitData?.tanggal_inspeksi === 'string'
+      ? session.unitData.tanggal_inspeksi.trim()
+      : '');
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+
+  const fallback = session.createdAt ?? Date.now();
+  return new Date(fallback).toLocaleDateString('sv-SE', { timeZone: 'Asia/Jakarta' });
 }
 
 interface UploadRequestBody {
@@ -225,10 +243,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const clientFolderId = await getOrCreateFolder(drive, session.clientName, rootFolderId);
 
-      // Format tanggal YYYY-MM-DD pakai locale 'sv-SE' (ISO-like, konsisten cross-timezone)
-      const dateStr = new Date(session.createdAt).toLocaleDateString('sv-SE', {
-        timeZone: 'Asia/Jakarta',
-      });
+      // Folder tanggal dari tanggal_inspeksi payload (bukan waktu upload)
+      const dateStr = resolveInspectionDateStr(session);
       const dateFolderId = await getOrCreateFolder(drive, dateStr, clientFolderId);
 
       const typeFolderName = OBJECT_TYPE_LABELS[session.objectType] ?? session.objectType;
@@ -242,6 +258,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // ── Upload Metadata JSON ──────────────────────────────────────────────────
+    const tanggalInspeksi = resolveInspectionDateStr(session);
+    const sifatPemeriksaan =
+      session.sifat_pemeriksaan ?? session.unitData?.sifat_pemeriksaan ?? null;
+
     const dataPayload = JSON.stringify(
       {
         id: session.id,
@@ -249,7 +269,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         objectType: session.objectType,
         createdAt: session.createdAt,
         updatedAt: session.updatedAt ?? new Date().toISOString(),
-        unitData: session.unitData ?? {},
+        tanggal_inspeksi: tanggalInspeksi,
+        sifat_pemeriksaan: sifatPemeriksaan,
+        unitData: {
+          ...(session.unitData ?? {}),
+          tanggal_inspeksi: tanggalInspeksi,
+          ...(sifatPemeriksaan ? { sifat_pemeriksaan: sifatPemeriksaan } : {}),
+        },
         totalPhotos: session.totalPhotos ?? 0,
         inspectorEmail: session.inspectorEmail ?? null,
       },

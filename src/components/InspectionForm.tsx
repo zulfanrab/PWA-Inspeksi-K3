@@ -1,5 +1,8 @@
 // src/components/InspectionForm.tsx
 import { useState, useRef } from 'react';
+import type { SifatPemeriksaan } from '../types';
+
+const todayISO = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Jakarta' });
 
 // ==========================================
 // MESIN KOMPRESOR FOTO (1080px, Kualitas 60%)
@@ -63,7 +66,10 @@ interface FormProps {
 }
 
 export default function InspectionForm({ activeObject, activeClient, onSave, templateFields }: FormProps) {
-  const [formData, setFormData] = useState<Record<string, any>>({});
+  const [formData, setFormData] = useState<Record<string, any>>({
+    tanggal_inspeksi: todayISO(),
+    sifat_pemeriksaan: 'Baru' as SifatPemeriksaan,
+  });
   const [photos, setPhotos] = useState<string[]>([]);
   const [isCompressing, setIsCompressing] = useState(false); // State biar tombol ganti tulisan pas loading
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -95,6 +101,51 @@ export default function InspectionForm({ activeObject, activeClient, onSave, tem
         <span className="text-[10px] font-bold uppercase bg-white/20 px-2 py-1 rounded">{activeObject}</span>
         <h2 className="text-xl font-black mt-2">Form Data Unit</h2>
         <p className="text-xs text-white/70">{activeClient?.name}</p>
+      </div>
+
+      {/* Tanggal & Sifat Pemeriksaan — sebelum data teknis */}
+      <div className="space-y-4 pb-2 border-b border-gray-100">
+        <div>
+          <label className="block text-[11px] font-bold text-gray-500 uppercase mb-1">
+            Tanggal Inspeksi <span className="text-red-500">*</span>
+          </label>
+          <input
+            required
+            type="date"
+            value={formData.tanggal_inspeksi || todayISO()}
+            onChange={(e) => setFormData({ ...formData, tanggal_inspeksi: e.target.value })}
+            className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm"
+          />
+          <p className="text-[10px] text-gray-400 mt-1">Ubah ke tanggal asli untuk data arsip/backlog tahun lalu.</p>
+        </div>
+
+        <div>
+          <label className="block text-[11px] font-bold text-gray-500 uppercase mb-2">
+            Sifat Pemeriksaan <span className="text-red-500">*</span>
+          </label>
+          <div className="flex gap-3">
+            {(['Baru', 'Berkala'] as SifatPemeriksaan[]).map((opt) => (
+              <label
+                key={opt}
+                className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-bold cursor-pointer transition-all ${
+                  formData.sifat_pemeriksaan === opt
+                    ? 'bg-[#064E3B] text-white border-[#064E3B]'
+                    : 'bg-gray-50 text-gray-600 border-gray-200 hover:border-[#10B981]/40'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="sifat_pemeriksaan"
+                  value={opt}
+                  checked={formData.sifat_pemeriksaan === opt}
+                  onChange={() => setFormData({ ...formData, sifat_pemeriksaan: opt })}
+                  className="sr-only"
+                />
+                {opt}
+              </label>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* Input Umum */}
