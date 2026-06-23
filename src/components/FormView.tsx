@@ -392,7 +392,6 @@ export function FormField({ field, value, onChange, accent = false }: { field: F
         {field.required && <span className="text-red-500 ml-1.5">*</span>}
         {field.unit && <span className="ml-1.5 normal-case font-medium opacity-60">({field.unit})</span>}
       </label>
-
       {field.type === 'select' ? (
         <select
           value={value}

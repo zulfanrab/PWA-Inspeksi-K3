@@ -40,8 +40,8 @@ import { SyncHub } from './components/SyncHub';
 import { HistoryView } from './components/HistoryView';
 import { AdminPanel } from './components/AdminPanel';
 import { ClientPicker, type PickedUnit } from './components/ClientPicker';
+import { DesktopLayout, DesktopStatCard, DesktopObjCard } from './components/DesktopLayout';
 import { useResponsive } from './hooks/useResponsive';
-import { uploadProfilePhoto, getProfilePhoto } from './services/profilePhotoService';
 
 // ─── TYPES ───────────────────────────────────────────────────────────────────
 
@@ -427,35 +427,6 @@ export default function App() {
   const T = getTokens(darkMode);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
-  const profilePhotoInputRef = useRef<HTMLInputElement>(null);
-
-  // Profile photo state
-  const [profilePhotoUrl, setProfilePhotoUrl] = useState<string | null>(null);
-
-  // Load profile photo on mount and when user changes
-  useEffect(() => {
-    if (currentUserEmail) {
-      const photo = getProfilePhoto(currentUserEmail);
-      setProfilePhotoUrl(photo?.dataUrl || null);
-    }
-  }, [currentUserEmail]);
-
-  // Handle profile photo upload
-  const handleProfilePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !currentUserEmail) return;
-
-    const result = await uploadProfilePhoto(currentUserEmail, file);
-    if (result.success && result.dataUrl) {
-      setProfilePhotoUrl(result.dataUrl);
-    } else {
-      alert(result.message);
-    }
-    // Reset input
-    if (profilePhotoInputRef.current) {
-      profilePhotoInputRef.current.value = '';
-    }
-  };
 
   // ── Data loading ───────────────────────────────────────────────────────────
 
@@ -1040,265 +1011,275 @@ const handleDelete = async (id: string) => {
   const roleBadge = currentUserEmail ? getRoleBadge(currentUserEmail) : 'Ahli K3';
   const isOwner = currentUserEmail === OWNER_EMAIL;
 
-  // ── RENDER ────────────────────────────────────────────────────────────────
-
-  return (
-    <div style={{ minHeight: '100vh', background: T.bg, fontFamily: 'system-ui, -apple-system, sans-serif', color: T.textPrimary }}>
-
-      <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={handlePhotos} style={{ display: 'none' }} aria-hidden="true" />
-      <input ref={galleryInputRef} type="file" accept="image/*" multiple onChange={handlePhotos} style={{ display: 'none' }} aria-hidden="true" />
-      <input ref={profilePhotoInputRef} type="file" accept="image/*" onChange={handleProfilePhotoChange} style={{ display: 'none' }} aria-hidden="true" />
-
-      {/* DESKTOP SIDEBAR - Only show on desktop */}
-      {isDesktop && (
-        <aside style={{ position: 'fixed', left: 0, top: 0, bottom: 0, width: 260, background: darkMode ? '#0F172A' : '#FFFFFF', borderRight: `1px solid ${T.border}`, display: 'flex', flexDirection: 'column', zIndex: 50 }}>
-          {/* Logo */}
-          <div style={{ padding: 20, borderBottom: `1px solid ${T.border}` }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <img src="/icons/icon-192.png" alt="ARP" style={{ width: 36, height: 36, borderRadius: 10, objectFit: 'cover' }} />
-              <div>
-                <h1 style={{ fontSize: 15, fontWeight: 700, color: T.textPrimary }}>
-                  Aksara <span style={{ color: '#10B981' }}>Inspect</span>
-                </h1>
-                <p style={{ fontSize: 10, color: T.textSecondary, marginTop: 2 }}>PWA Inspeksi K3</p>
-              </div>
-            </div>
-          </div>
-
-          {/* User Profile - Only when authenticated */}
-          {isAuthenticated && currentUserName && (
-            <div style={{ padding: 16, borderBottom: `1px solid ${T.border}` }}>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
-                {/* Profile Photo with Upload Button */}
-                <div style={{ position: 'relative' }}>
-                  <div style={{ width: 60, height: 60, borderRadius: '50%', background: T.emeraldLight, border: `2px solid ${T.emeraldBorder}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 800, color: T.emeraldText, overflow: 'hidden' }}>
-                    {profilePhotoUrl ? (
-                      <img src={profilePhotoUrl} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                    ) : (
-                      userInitial
-                    )}
-                  </div>
-                  <button 
-                    onClick={() => profilePhotoInputRef.current?.click()}
-                    style={{ 
-                      position: 'absolute', 
-                      bottom: 0, 
-                      right: 0, 
-                      width: 24, 
-                      height: 24, 
-                      borderRadius: '50%', 
-                      background: '#3B82F6', 
-                      border: `2px solid ${T.white}`, 
-                      display: 'flex', 
-                      alignItems: 'center', 
-                      justifyContent: 'center', 
-                      cursor: 'pointer',
-                      fontSize: 12,
-                      color: '#FFFFFF'
-                    }}
-                    title="Upload photo profile"
-                  >
-                    📷
-                  </button>
-                </div>
-                
-                {/* User Info */}
-                <div style={{ textAlign: 'center', width: '100%' }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: T.textPrimary, marginBottom: 2 }}>
-                    {currentUserName}
-                  </div>
-                  <div style={{ fontSize: 11, color: T.textSecondary, marginBottom: 8, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {currentUserEmail}
-                  </div>
-                  
-                  {/* Role Badge Only - Clean design */}
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <span style={{ 
-                      fontSize: 12, 
-                      fontWeight: 700, 
-                      padding: '6px 14px', 
-                      borderRadius: 20, 
-                      background: isOwner ? '#EDE9FE' : T.emeraldLight, 
-                      color: isOwner ? '#5B21B6' : T.emeraldText, 
-                      border: `1px solid ${isOwner ? '#C4B5FD' : T.emeraldBorder}`,
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 6
-                    }}>
-                      {ICONS.hardHat}{roleBadge}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Navigation */}
-          <nav style={{ flex: 1, padding: 16 }}>
-            <p style={{ fontSize: 11, fontWeight: 600, color: T.textSecondary, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12, paddingLeft: 12 }}>Menu</p>
-            {[
-              { id: 'HOME', icon: ICONS.home, label: 'Beranda' },
-              { id: 'HISTORY', icon: ICONS.clipboard, label: 'Riwayat' },
-              { id: 'SYNC_HUB', icon: ICONS.cloudUp, label: 'Sinkronisasi', badge: drafts.length },
-              { id: 'ADMIN', icon: ICONS.shield, label: 'Admin Panel' },
-            ].map((item) => (
-              <button
-                key={item.id}
-                onClick={() => setView(item.id as View)}
-                style={{
-                  width: '100%', display: 'flex', alignItems: 'center', gap: 12,
-                  padding: '12px 14px', borderRadius: 10, border: 'none', cursor: 'pointer',
-                  background: view === item.id ? (darkMode ? '#1E3A5F' : '#EFF6FF') : 'transparent',
-                  color: view === item.id ? '#3B82F6' : T.textSecondary,
-                  fontSize: 13, fontWeight: view === item.id ? 600 : 500,
-                  transition: 'all 0.15s', marginBottom: 4, textAlign: 'left'
-                }}
-              >
-                <span style={{ fontSize: 18, opacity: 0.8 }}>{item.icon}</span>
-                <span style={{ flex: 1 }}>{item.label}</span>
-                {item.badge && item.badge > 0 && (
-                  <span style={{ background: '#F59E0B', color: '#fff', fontSize: 10, fontWeight: 700, borderRadius: 10, padding: '2px 8px' }}>
-                    {item.badge}
-                  </span>
-                )}
-              </button>
-            ))}
-          </nav>
-
-          {/* Quick Action */}
-          <div style={{ padding: 16, borderTop: `1px solid ${T.border}` }}>
+  // ── DESKTOP SIDEBAR CONTENT ──────────────────────────────────────────────────
+  const sidebarContent = (
+    <div style={{ padding: '0 12px' }}>
+      {/* Navigation Menu */}
+      <div style={{ marginBottom: 20 }}>
+        <h3 style={{ fontSize: 12, fontWeight: 600, color: darkMode ? '#94A3B8' : '#64748B', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8, paddingLeft: 12 }}>
+          Navigasi
+        </h3>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {[
+            { id: 'HOME', icon: ICONS.home, label: 'Beranda' },
+            { id: 'HISTORY', icon: ICONS.clipboard, label: 'Riwayat' },
+            { id: 'SYNC_HUB', icon: ICONS.cloudUp, label: 'Sinkronisasi', badge: drafts.length > 0 ? drafts.length : undefined },
+            { id: 'ADMIN', icon: ICONS.shield, label: 'Admin Panel' },
+          ].map((item) => (
             <button
-              onClick={handleStartInspection}
-              style={{ width: '100%', background: '#10B981', color: '#fff', border: 'none', borderRadius: 12, padding: '14px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
+              key={item.id}
+              onClick={() => setView(item.id as View)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '10px 12px',
+                background: view === item.id ? (darkMode ? '#1E40AF' : '#DBEAFE') : 'transparent',
+                border: 'none',
+                borderRadius: 8,
+                cursor: 'pointer',
+                color: view === item.id ? (darkMode ? '#BFDBFE' : '#1E40AF') : (darkMode ? '#CBD5E1' : '#64748B'),
+                fontSize: 13,
+                fontWeight: view === item.id ? 600 : 500,
+                transition: 'all 0.2s'
+              }}
             >
-              {ICONS.camera}
-              Mulai Inspeksi
+              <span style={{ opacity: 0.8, fontSize: 16 }}>{item.icon}</span>
+              <span style={{ flex: 1, textAlign: 'left' }}>{item.label}</span>
+              {item.badge && (
+                <span style={{
+                  background: '#F59E0B',
+                  color: '#FFFFFF',
+                  fontSize: 10,
+                  fontWeight: 700,
+                  borderRadius: 10,
+                  padding: '2px 6px',
+                  minWidth: 16,
+                  textAlign: 'center'
+                }}>
+                  {item.badge}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Quick Actions */}
+      <div>
+        <h3 style={{ fontSize: 12, fontWeight: 600, color: darkMode ? '#94A3B8' : '#64748B', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8, paddingLeft: 12 }}>
+          Aksi Cepat
+        </h3>
+        <div style={{ padding: '0 12px' }}>
+          <button
+            onClick={handleStartInspection}
+            style={{
+              width: '100%',
+              background: '#10B981',
+              color: '#FFFFFF',
+              border: 'none',
+              borderRadius: 12,
+              padding: '14px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+              cursor: 'pointer',
+              fontSize: 13,
+              fontWeight: 600,
+              transition: 'all 0.2s'
+            }}
+          >
+            {ICONS.camera}
+            Mulai Inspeksi
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // ── HEADER CONTENT ──────────────────────────────────────────────────────────
+  const headerContent = (
+    <>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+        <h2 style={{ fontSize: 16, fontWeight: 600, color: T.textPrimary }}>
+          {view === 'HOME' ? 'Dashboard' : 
+           view === 'HISTORY' ? 'Riwayat Inspeksi' :
+           view === 'SYNC_HUB' ? 'Sinkronisasi' :
+           view === 'ADMIN' ? 'Admin Panel' :
+           view === 'FORM' ? 'Form Inspeksi' :
+           view === 'PICK_UNIT' ? 'Pilih Unit' : 'Aksara Inspect'}
+        </h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px', borderRadius: 20, background: isOnline ? '#ECFDF5' : '#FEF2F2', border: `0.5px solid ${isOnline ? '#6EE7B7' : '#FCA5A5'}` }}>
+            <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: isOnline ? '#10B981' : '#EF4444' }} />
+            <span style={{ fontSize: 10, fontWeight: 600, color: isOnline ? '#065F46' : '#B91C1C' }}>{isOnline ? 'Online' : 'Offline'}</span>
+          </div>
+          {drafts.length > 0 && (
+            <button onClick={() => setView('SYNC_HUB')} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `0.5px solid ${T.amberBorder}`, background: T.amberLight, color: T.amber800 }}>
+              Sync
+              <span style={{ background: T.amber400, color: T.amber800, borderRadius: 10, padding: '1px 5px', fontSize: 10, fontWeight: 700 }}>{drafts.length}</span>
+            </button>
+          )}
+        </div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <button
+          onClick={() => setDarkMode(d => !d)}
+          style={{ width: 36, height: 36, borderRadius: 10, background: darkMode ? '#1E293B' : '#F1F5F9', border: `0.5px solid ${T.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 16 }}
+          title="Toggle dark mode"
+        >
+          {darkMode ? '☀️' : '🌙'}
+        </button>
+        {isAuthenticated ? (
+          <button onClick={handleLogout} title={currentUserEmail} style={{ padding: '8px 16px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: `1px solid ${T.redBorder}`, background: T.redLight, color: T.redText }}>Logout</button>
+        ) : (
+          <button onClick={handleLogin} style={{ padding: '8px 16px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: `1px solid ${T.border}`, background: T.white, color: T.textSecondary }}>Login Google</button>
+        )}
+      </div>
+    </>
+  );
+
+  // ── BOTTOM NAV (MOBILE ONLY) ────────────────────────────────────────────────
+  const bottomNav = showMobileNav && (
+    <nav style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 40, background: `${darkMode ? 'rgba(15,23,42,0.97)' : 'rgba(255,255,255,0.97)'}`, backdropFilter: 'blur(8px)', borderTop: `0.5px solid ${T.border}`, padding: '8px 12px', paddingBottom: `max(12px, env(safe-area-inset-bottom))`, maxWidth: 640, margin: '0 auto' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-around' }}>
+        {['HOME', 'HISTORY', 'SYNC_HUB', 'ADMIN'].map((v) => (
+          <NavTab
+            key={v}
+            icon={v === 'HOME' ? ICONS.home : v === 'HISTORY' ? ICONS.clipboard : v === 'SYNC_HUB' ? ICONS.cloudUp : ICONS.shield}
+            label={v === 'HOME' ? 'Beranda' : v === 'HISTORY' ? 'Riwayat' : v === 'SYNC_HUB' ? 'Sync' : 'Admin'}
+            active={view === v}
+            onClick={() => setView(v as View)}
+          />
+        ))}
+      </div>
+      <div style={{ position: 'absolute', bottom: 36, left: '50%', transform: 'translateX(-50%)', zIndex: 50 }}>
+        <button
+          type="button"
+          onClick={handleStartInspection}
+          aria-label="Mulai inspeksi baru"
+          style={{ width: 60, height: 60, borderRadius: '50%', background: '#10B981', color: '#FFFFFF', border: `4px solid ${darkMode ? '#0F172A' : '#FFFFFF'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)' }}
+        >
+          {ICONS.camera}
+        </button>
+      </div>
+    </nav>
+  );
+
+  // ── MAIN CONTENT ────────────────────────────────────────────────────────────
+  const mainContent = (
+    <>
+      {view === 'HOME' && (
+        <>
+          <div>
+            <h1 style={{ fontSize: isDesktop ? 20 : 16, fontWeight: 700, color: T.textPrimary, letterSpacing: '-0.3px' }}>
+              {firstName ? `Selamat datang, ${firstName}` : 'Beranda Inspeksi'}
+            </h1>
+            <p style={{ fontSize: isDesktop ? 14 : 11, color: T.textSecondary, marginTop: 2 }}>Mulai inspeksi baru atau pantau status lapangan</p>
+          </div>
+          {isDesktop ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', gap: 16, marginTop: 24 }}>
+              <DesktopStatCard label="Draft Tertunda" value={drafts.length} color="#F59E0B" />
+              <DesktopStatCard label="Sudah Disinkronkan" value={history.length} color="#10B981" />
+              <DesktopStatCard label="Total Inspeksi" value={drafts.length + history.length} color="#3B82F6" />
+              <DesktopStatCard label="Foto" value={existingPhotos.length + newPhotos.length} color="#8B5CF6" />
+            </div>
+          ) : (
+            <div style={{ display: 'flex', gap: 8 }}>
+              <StatCard label="Draft tertunda" value={drafts.length} color={T.amber600} dot={T.amber600} />
+              <StatCard label="Sudah disinkronkan" value={history.length} color={T.emerald500} dot={T.emerald500} />
+            </div>
+          )}
+          <div>
+            <Divider label="Inspeksi cepat" />
+            <button onClick={handleStartInspection} style={{ width: '100%', marginTop: 8, background: T.emerald900, border: 'none', borderRadius: isDesktop ? 12 : 16, padding: isDesktop ? '20px' : '16px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', textAlign: 'left', position: 'relative', overflow: 'hidden', WebkitTapHighlightColor: 'transparent' }}>
+              <div style={{ position: 'absolute', right: -20, top: -20, width: 100, height: 100, borderRadius: '50%', background: 'rgba(16,185,129,0.15)', pointerEvents: 'none' }} />
+              <div style={{ width: isDesktop ? 52 : 44, height: isDesktop ? 52 : 44, borderRadius: isDesktop ? 14 : 12, background: 'rgba(255,255,255,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.emeraldBorder, flexShrink: 0, position: 'relative', zIndex: 1 }}>{ICONS.factory}</div>
+              <div style={{ flex: 1, position: 'relative', zIndex: 1 }}>
+                <p style={{ fontSize: isDesktop ? 16 : 13, fontWeight: 700, color: '#ffffff' }}>Dari Template Unit</p>
+                <p style={{ fontSize: isDesktop ? 13 : 11, color: 'rgba(255, 255, 255, 0.75)', marginTop: 2 }}>Pilih klien → unit → form otomatis terisi</p>
+              </div>
+              <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: isDesktop ? 22 : 18, position: 'relative', zIndex: 1 }}>›</span>
             </button>
           </div>
-        </aside>
-      )}
-
-      {/* MOBILE HEADER or DESKTOP TOP HEADER */}
-      <header style={{ position: isDesktop ? 'sticky' : 'sticky', top: 0, zIndex: isDesktop ? 40 : 50, background: darkMode ? 'rgba(15,23,42,0.97)' : 'rgba(255,255,255,0.97)', backdropFilter: 'blur(8px)', borderBottom: `0.5px solid ${T.border}`, padding: isDesktop ? '0 24px' : '0 16px', paddingTop: isDesktop ? 16 : 'env(safe-area-inset-top)', height: isDesktop ? 64 : `calc(52px + env(safe-area-inset-top))`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', maxWidth: isDesktop ? 'none' : 640, marginLeft: isDesktop ? 260 : 'auto', marginRight: isDesktop ? 0 : 'auto' }}>
-        {isDesktop ? (
-          /* Desktop Header - Page Title */
-          <>
-            <h2 style={{ fontSize: 20, fontWeight: 600, color: T.textPrimary }}>
-              {view === 'HOME' ? 'Dashboard' : view === 'HISTORY' ? 'Riwayat Inspeksi' : view === 'SYNC_HUB' ? 'Sinkronisasi' : view === 'ADMIN' ? 'Admin Panel' : 'Aksara Inspect'}
-            </h2>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 20, background: isOnline ? '#ECFDF5' : '#FEF2F2', border: `1px solid ${isOnline ? '#6EE7B7' : '#FCA5A5'}` }}>
-                <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: isOnline ? '#10B981' : '#EF4444' }} />
-                <span style={{ fontSize: 12, fontWeight: 600, color: isOnline ? '#065F46' : '#B91C1C' }}>{isOnline ? 'Online' : 'Offline'}</span>
+          {drafts.length > 0 && (
+            <div style={{ background: T.amberLight, border: `0.5px solid ${T.amberBorder}`, borderRadius: 12, padding: '12px', display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{ width: 32, height: 32, borderRadius: 8, background: T.amberMid, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: T.amber600 }}>{ICONS.package}</div>
+              <div style={{ flex: 1 }}>
+                <p style={{ fontSize: 11, fontWeight: 700, color: T.amber800 }}>{drafts.length} draft belum di-sync</p>
+                <p style={{ fontSize: 10, color: T.amber700, marginTop: 1 }}>Hubungkan internet & upload ke Drive</p>
               </div>
-              <button onClick={() => setDarkMode(d => !d)} style={{ width: 36, height: 36, borderRadius: 10, background: darkMode ? '#1E293B' : '#F1F5F9', border: `1px solid ${T.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 16 }} title="Toggle dark mode">{darkMode ? '☀️' : '🌙'}</button>
-              {isAuthenticated ? <button onClick={handleLogout} style={{ padding: '8px 16px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: `1px solid ${T.redBorder}`, background: T.redLight, color: T.redText }}>Logout</button> : <button onClick={handleLogin} style={{ padding: '8px 16px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: `1px solid ${T.border}`, background: T.white, color: T.textSecondary }}>Login Google</button>}
-            </div>
-          </>
-        ) : (
-          /* Mobile Header - Logo */
-          <>
-            <button onClick={() => { resetForm(); setView('HOME'); }} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-              <img src="/icons/icon-192.png" alt="ARP" style={{ width: 30, height: 30, borderRadius: 9, objectFit: 'cover' }} />
-              <span style={{ fontSize: 13, fontWeight: 700, color: T.textPrimary, letterSpacing: '-0.3px' }}>
-                Aksara <span style={{ color: T.emerald500 }}>Inspect</span>
-              </span>
-            </button>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px', borderRadius: 20, background: isOnline ? '#ECFDF5' : '#FEF2F2', border: `0.5px solid ${isOnline ? '#6EE7B7' : '#FCA5A5'}` }}>
-                <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: isOnline ? '#10B981' : '#EF4444' }} />
-                <span style={{ fontSize: 10, fontWeight: 600, color: isOnline ? '#065F46' : '#B91C1C' }}>{isOnline ? 'Online' : 'Offline'}</span>
-              </div>
-              {drafts.length > 0 && (
-                <button onClick={() => setView('SYNC_HUB')} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `0.5px solid ${T.amberBorder}`, background: T.amberLight, color: T.amber800 }}>
-                  Sync <span style={{ background: T.amber400, color: T.amber800, borderRadius: 10, padding: '1px 5px', fontSize: 10, fontWeight: 700 }}>{drafts.length}</span>
-                </button>
-              )}
-              <button onClick={() => setDarkMode(d => !d)} style={{ width: 32, height: 32, borderRadius: 10, background: darkMode ? '#1E293B' : '#F1F5F9', border: `0.5px solid ${T.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 16 }} title="Toggle dark mode">{darkMode ? '☀️' : '🌙'}</button>
-              {isAuthenticated ? <button onClick={handleLogout} style={{ padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `0.5px solid ${T.redBorder}`, background: T.redLight, color: T.redText }}>Logout</button> : <button onClick={handleLogin} style={{ padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `0.5px solid ${T.border}`, background: T.white, color: T.textSecondary }}>Login Google</button>}
-            </div>
-          </>
-        )}
-      </header>
-
-      {/* Alerts & User Bar - Desktop has its own section, mobile inline */}
-      {!isDesktop && (
-        <>
-          {tokenError && !isAuthenticated && (
-            <div style={{ maxWidth: 640, margin: '10px auto 0', padding: '0 16px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: T.redLight, border: `0.5px solid ${T.redBorder}`, borderRadius: 10, padding: '10px 12px' }}>
-                <span style={{ fontSize: 14 }}>⚠️</span>
-                <p style={{ flex: 1, fontSize: 12, fontWeight: 500, color: T.redText }}>{tokenError}</p>
-                <button onClick={handleLogin} style={{ fontSize: 11, fontWeight: 700, color: T.redText, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>Login ulang</button>
-              </div>
+              <button onClick={() => setView('SYNC_HUB')} style={{ padding: '5px 10px', background: T.amber600, color: '#fff', borderRadius: 8, fontSize: 10, fontWeight: 700, border: 'none', cursor: 'pointer', flexShrink: 0 }}>Buka Sync</button>
             </div>
           )}
-
-          {pullStatus && (
-            <div style={{ maxWidth: 640, margin: '8px auto 0', padding: '0 16px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: T.emeraldLight, border: `0.5px solid ${T.emeraldBorder}`, borderRadius: 10, padding: '8px 12px' }}>
-                <p style={{ fontSize: 11, fontWeight: 600, color: T.emeraldText }}>{pullStatus}</p>
-              </div>
+          <div>
+            <Divider label="Atau pilih jenis manual" />
+            <div style={{ display: 'grid', gridTemplateColumns: isDesktop ? 'repeat(4, minmax(0,1fr))' : 'repeat(2, minmax(0,1fr))', gap: isDesktop ? 16 : 8, marginTop: 8 }}>
+              {OBJECT_TYPES.map((obj) => isDesktop ? (
+                <DesktopObjCard
+                  key={obj.key}
+                  icon={obj.icon}
+                  label={obj.label}
+                  description={obj.desc}
+                  onClick={() => handleSelectObject(obj.key)}
+                />
+              ) : (
+                <ObjCard key={obj.key} obj={obj} onClick={() => handleSelectObject(obj.key)} />
+              ))}
             </div>
-          )}
-
-          {isAuthenticated && currentUserName && (
-            <div style={{ maxWidth: 640, margin: '10px auto 0', padding: '0 16px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: T.white, border: `0.5px solid ${T.border}`, borderRadius: 12, padding: '8px 12px' }}>
-                <div style={{ width: 28, height: 28, borderRadius: '50%', background: T.emeraldLight, border: `1px solid ${T.emeraldBorder}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 800, color: T.emeraldText }}>{userInitial}</div>
-                <span style={{ fontSize: 12, fontWeight: 600, color: T.textPrimary }}>{currentUserName}</span>
-                <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 600, padding: '3px 8px', borderRadius: 20, background: isOwner ? '#EDE9FE' : T.emeraldLight, color: isOwner ? '#5B21B6' : T.emeraldText, border: `0.5px solid ${isOwner ? '#C4B5FD' : T.emeraldBorder}`, display: 'flex', alignItems: 'center', gap: 3 }}>
-                  {ICONS.hardHat}{roleBadge}
-                </span>
-              </div>
-            </div>
-          )}
+          </div>
         </>
       )}
 
+      {view === 'PICK_UNIT' && (
+        <ClientPicker onPick={handleUnitPicked} onManual={handleManualPick} onCancel={() => setView('HOME')} />
+      )}
+
+      {tokenError && !isAuthenticated && (
+        <div style={{ maxWidth: 640, margin: '10px auto 0', padding: '0 16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: T.redLight, border: `0.5px solid ${T.redBorder}`, borderRadius: 10, padding: '10px 12px' }}>
+            <span style={{ fontSize: 14 }}>⚠️</span>
+            <p style={{ flex: 1, fontSize: 12, fontWeight: 500, color: T.redText }}>{tokenError}</p>
+            <button onClick={handleLogin} style={{ fontSize: 11, fontWeight: 700, color: T.redText, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>Login ulang</button>
+          </div>
+        </div>
+      )}
+
+      {pullStatus && (
+        <div style={{ maxWidth: 640, margin: '8px auto 0', padding: '0 16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: T.emeraldLight, border: `0.5px solid ${T.emeraldBorder}`, borderRadius: 10, padding: '8px 12px' }}>
+            <p style={{ fontSize: 11, fontWeight: 600, color: T.emeraldText }}>{pullStatus}</p>
+          </div>
+        </div>
+      )}
+
+      {isAuthenticated && currentUserName && (
+        <div style={{ maxWidth: 640, margin: '10px auto 0', padding: '0 16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: T.white, border: `0.5px solid ${T.border}`, borderRadius: 12, padding: '8px 12px' }}>
+            <div style={{ width: 28, height: 28, borderRadius: '50%', background: T.emeraldLight, border: `1px solid ${T.emeraldBorder}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 800, color: T.emeraldText }}>{userInitial}</div>
+            <span style={{ fontSize: 12, fontWeight: 600, color: T.textPrimary }}>{currentUserName}</span>
+            <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 600, padding: '3px 8px', borderRadius: 20, background: isOwner ? '#EDE9FE' : T.emeraldLight, color: isOwner ? '#5B21B6' : T.emeraldText, border: `0.5px solid ${isOwner ? '#C4B5FD' : T.emeraldBorder}`, display: 'flex', alignItems: 'center', gap: 3 }}>
+              {ICONS.hardHat}{roleBadge}
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* MAIN */}
-      <main style={{ maxWidth: isDesktop ? 'none' : 640, margin: isDesktop ? '0 24px' : '0 auto', padding: isDesktop ? '24px 24px 32px' : '16px 16px 100px', marginLeft: isDesktop ? 260 : 'auto', display: 'flex', flexDirection: 'column', gap: isDesktop ? 24 : 16 }}>
+      <main style={{ maxWidth: 640, margin: '0 auto', padding: '16px 16px 100px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
         {view === 'HOME' && (
           <>
-            {/* Desktop Alerts */}
-            {isDesktop && (
-              <>
-                {tokenError && !isAuthenticated && (
-                  <div style={{ marginBottom: 16 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: T.redLight, border: `1px solid ${T.redBorder}`, borderRadius: 12, padding: '12px 16px', maxWidth: 600 }}>
-                      <span style={{ fontSize: 16 }}>⚠️</span>
-                      <p style={{ flex: 1, fontSize: 13, fontWeight: 500, color: T.redText }}>{tokenError}</p>
-                      <button onClick={handleLogin} style={{ fontSize: 12, fontWeight: 600, color: T.redText, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>Login ulang</button>
-                    </div>
-                  </div>
-                )}
-
-                {pullStatus && (
-                  <div style={{ marginBottom: 16 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: T.emeraldLight, border: `1px solid ${T.emeraldBorder}`, borderRadius: 12, padding: '12px 16px', maxWidth: 600 }}>
-                      <p style={{ fontSize: 13, fontWeight: 600, color: T.emeraldText }}>{pullStatus}</p>
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-
             <div>
-              <h1 style={{ fontSize: isDesktop ? 24 : 16, fontWeight: 700, color: T.textPrimary, letterSpacing: '-0.3px' }}>
+              <h1 style={{ fontSize: 16, fontWeight: 700, color: T.textPrimary, letterSpacing: '-0.3px' }}>
                 {firstName ? `Selamat datang, ${firstName}` : 'Beranda Inspeksi'}
               </h1>
-              <p style={{ fontSize: isDesktop ? 14 : 11, color: T.textSecondary, marginTop: isDesktop ? 4 : 2 }}>Mulai inspeksi baru atau pantau status lapangan</p>
+              <p style={{ fontSize: 11, color: T.textSecondary, marginTop: 2 }}>Mulai inspeksi baru atau pantau status lapangan</p>
             </div>
-            <div style={{ display: isDesktop ? 'grid' : 'flex', gridTemplateColumns: isDesktop ? 'repeat(4, 1fr)' : 'none', gap: isDesktop ? 16 : 8 }}>
+            <div style={{ display: 'flex', gap: 8 }}>
               <StatCard label="Draft tertunda" value={drafts.length} color={T.amber600} dot={T.amber600} />
               <StatCard label="Sudah disinkronkan" value={history.length} color={T.emerald500} dot={T.emerald500} />
-              {isDesktop && (
-                <>
-                  <StatCard label="Total Inspeksi" value={drafts.length + history.length} color="#3B82F6" dot="#3B82F6" />
-                  <StatCard label="Total Foto" value={existingPhotos.length + newPhotos.length} color="#8B5CF6" dot="#8B5CF6" />
-                </>
-              )}
             </div>
             <div>
               <Divider label="Inspeksi cepat" />
@@ -1326,10 +1307,8 @@ const handleDelete = async (id: string) => {
             )}
             <div>
               <Divider label="Atau pilih jenis manual" />
-              <div style={{ display: 'grid', gridTemplateColumns: isDesktop ? 'repeat(4, minmax(0,1fr))' : 'repeat(2, minmax(0,1fr))', gap: isDesktop ? 16 : 8, marginTop: isDesktop ? 12 : 8 }}>
-                {OBJECT_TYPES.map((obj) => (
-                  <ObjCard key={obj.key} obj={obj} onClick={() => handleSelectObject(obj.key)} />
-                ))}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 8, marginTop: 8 }}>
+                {OBJECT_TYPES.map((obj) => (<ObjCard key={obj.key} obj={obj} onClick={() => handleSelectObject(obj.key)} />))}
               </div>
             </div>
           </>
@@ -1396,25 +1375,113 @@ const handleDelete = async (id: string) => {
           <AdminPanel currentUserEmail={currentUserEmail} onClose={() => setView('HOME')} />
         )}
 
-      </main>
+      </>
+  );
 
-
-
-      {/* BOTTOM NAV + FAB - Only for Mobile */}
-      {!isDesktop && (view === 'HOME' || view === 'HISTORY' || view === 'SYNC_HUB' || view === 'ADMIN') && (
-        <nav style={{ position: 'fixed', bottom: 0, left: 0, right: 0, background: darkMode ? 'rgba(15,23,42,0.97)' : 'rgba(255,255,255,0.97)', backdropFilter: 'blur(8px)', borderTop: `0.5px solid ${T.border}`, padding: '8px 16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-around', maxWidth: 640, margin: '0 auto', zIndex: 40 }}>
-          <NavTab icon={ICONS.home} label="Beranda" active={view === 'HOME'} onClick={() => { resetForm(); setView('HOME'); }} />
-          <NavTab icon={ICONS.clipboard} label="Riwayat" active={view === 'HISTORY'} onClick={() => setView('HISTORY')} />
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
-            <button onClick={handleStartInspection} aria-label="Mulai inspeksi baru" style={{ width: 64, height: 64, borderRadius: '50%', background: 'rgba(16,185,129,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', cursor: 'pointer', marginTop: -32, WebkitTapHighlightColor: 'transparent', padding: 0 }}>
-              <div style={{ width: 52, height: 52, borderRadius: '50%', background: T.emerald500, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', border: '2.5px solid #fff', boxShadow: `0 0 0 1px ${T.emeraldBorder}` }}>{ICONS.camera}</div>
-            </button>
-            <span style={{ fontSize: 9, fontWeight: 700, color: T.emerald500, letterSpacing: '0.02em' }}>Inspeksi</span>
+  // ── ALERTS & USER BAR ────────────────────────────────────────────────────────
+  const alerts = (
+    <>
+      {tokenError && !isAuthenticated && (
+        <div style={{ maxWidth: isDesktop ? '100%' : 640, margin: isDesktop ? '0 0 16px 0' : '10px auto 0', padding: '0 16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: T.redLight, border: `0.5px solid ${T.redBorder}`, borderRadius: 10, padding: '10px 12px' }}>
+            <span style={{ fontSize: 14 }}>⚠️</span>
+            <p style={{ flex: 1, fontSize: 12, fontWeight: 500, color: T.redText }}>{tokenError}</p>
+            <button onClick={handleLogin} style={{ fontSize: 11, fontWeight: 700, color: T.redText, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>Login ulang</button>
           </div>
-          <NavTab icon={ICONS.cloudUp} label="Sync" active={view === 'SYNC_HUB'} onClick={() => setView('SYNC_HUB')} />
-          <NavTab icon={ICONS.shield} label="Admin" active={view === 'ADMIN'} onClick={() => setView('ADMIN')} />
-        </nav>
+        </div>
       )}
-    </div>
+
+      {pullStatus && (
+        <div style={{ maxWidth: isDesktop ? '100%' : 640, margin: isDesktop ? '0 0 16px 0' : '8px auto 0', padding: '0 16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: T.emeraldLight, border: `0.5px solid ${T.emeraldBorder}`, borderRadius: 10, padding: '8px 12px' }}>
+            <p style={{ fontSize: 11, fontWeight: 600, color: T.emeraldText }}>{pullStatus}</p>
+          </div>
+        </div>
+      )}
+
+      {isAuthenticated && currentUserName && (
+        <div style={{ maxWidth: isDesktop ? '100%' : 640, margin: isDesktop ? '0 0 24px 0' : '10px auto 0', padding: '0 16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: T.white, border: `0.5px solid ${T.border}`, borderRadius: 12, padding: '8px 12px' }}>
+            <div style={{ width: 28, height: 28, borderRadius: '50%', background: T.emeraldLight, border: `1px solid ${T.emeraldBorder}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 800, color: T.emeraldText }}>{userInitial}</div>
+            <span style={{ fontSize: 12, fontWeight: 600, color: T.textPrimary }}>{currentUserName}</span>
+            <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 600, padding: '3px 8px', borderRadius: 20, background: isOwner ? '#EDE9FE' : T.emeraldLight, color: isOwner ? '#5B21B6' : T.emeraldText, border: `0.5px solid ${isOwner ? '#C4B5FD' : T.emeraldBorder}`, display: 'flex', alignItems: 'center', gap: 3 }}>
+              {ICONS.hardHat}{roleBadge}
+            </span>
+          </div>
+        </div>
+      )}
+    </>
+  );
+
+  // ── RENDER ────────────────────────────────────────────────────────────────
+  const T = getTokens(darkMode);
+
+  return (
+    <>
+      <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={handlePhotos} style={{ display: 'none' }} aria-hidden="true" />
+      <input ref={galleryInputRef} type="file" accept="image/*" multiple onChange={handlePhotos} style={{ display: 'none' }} aria-hidden="true" />
+
+      {isDesktop ? (
+        // DESKTOP LAYOUT
+        <DesktopLayout
+          sidebar={sidebarContent}
+          mainContent={mainContent}
+          header={headerContent}
+          alerts={alerts}
+          userBar={null}
+          bottomNav={bottomNav}
+          darkMode={darkMode}
+          isOnline={isOnline}
+        />
+      ) : (
+        // MOBILE LAYOUT
+        <div style={{ minHeight: '100vh', background: T.bg, fontFamily: 'system-ui, -apple-system, sans-serif', color: T.textPrimary }}>
+          {/* NAVBAR */}
+          <header style={{ position: 'sticky', top: 0, zIndex: 50, background: darkMode ? 'rgba(15,23,42,0.97)' : 'rgba(255,255,255,0.97)', backdropFilter: 'blur(8px)', borderBottom: `0.5px solid ${T.border}`, padding: '0 16px', paddingTop: 'env(safe-area-inset-top)', height: `calc(52px + env(safe-area-inset-top))`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', maxWidth: 640, margin: '0 auto' }}>
+            <button onClick={() => { resetForm(); setView('HOME'); }} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+              <img src="/icons/icon-192.png" alt="ARP" style={{ width: 30, height: 30, borderRadius: 9, objectFit: 'cover' }} />
+              <span style={{ fontSize: 13, fontWeight: 700, color: T.textPrimary, letterSpacing: '-0.3px' }}>
+                Aksara <span style={{ color: T.emerald500 }}>Inspect</span>
+              </span>
+            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px', borderRadius: 20, background: isOnline ? '#ECFDF5' : '#FEF2F2', border: `0.5px solid ${isOnline ? '#6EE7B7' : '#FCA5A5'}` }}>
+                <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: isOnline ? '#10B981' : '#EF4444' }} />
+                <span style={{ fontSize: 10, fontWeight: 600, color: isOnline ? '#065F46' : '#B91C1C' }}>{isOnline ? 'Online' : 'Offline'}</span>
+              </div>
+              {drafts.length > 0 && (
+                <button onClick={() => setView('SYNC_HUB')} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `0.5px solid ${T.amberBorder}`, background: T.amberLight, color: T.amber800 }}>
+                  Sync
+                  <span style={{ background: T.amber400, color: T.amber800, borderRadius: 10, padding: '1px 5px', fontSize: 10, fontWeight: 700 }}>{drafts.length}</span>
+                </button>
+              )}
+              <button
+                onClick={() => setDarkMode(d => !d)}
+                style={{ width: 32, height: 32, borderRadius: 10, background: darkMode ? '#1E293B' : '#F1F5F9', border: `0.5px solid ${T.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 16 }}
+                title="Toggle dark mode"
+              >
+                {darkMode ? '☀️' : '🌙'}
+              </button>
+              {isAuthenticated ? (
+                <button onClick={handleLogout} title={currentUserEmail} style={{ padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `0.5px solid ${T.redBorder}`, background: T.redLight, color: T.redText }}>Logout</button>
+              ) : (
+                <button onClick={handleLogin} style={{ padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `0.5px solid ${T.border}`, background: T.white, color: T.textSecondary }}>Login Google</button>
+              )}
+            </div>
+          </header>
+
+          {/* Alerts & User Bar */}
+          {alerts}
+
+          {/* Main Content */}
+          <main style={{ maxWidth: 640, margin: '0 auto', padding: '16px 16px 100px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {mainContent}
+          </main>
+
+          {/* Bottom Navigation */}
+          {bottomNav}
+        </div>
+      )}
+    </>
   );
 }
