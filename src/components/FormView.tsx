@@ -1,5 +1,6 @@
 // src/components/FormView.tsx
 import { Document3DLoading } from './Document3DLoading';
+import { CustomCamera } from './CustomCamera';
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import type { InspectionPhoto } from '../db/db';
@@ -87,6 +88,7 @@ export function FormView({
 }: FormViewProps) {
   const isEdit = formMode === 'edit';
   const [showOptional, setShowOptional] = useState(false);
+  const [showCustomCamera, setShowCustomCamera] = useState(false);
 
   const REQUIRED_COMMON = ['namaUnit', 'nomorSeri'];
   const requiredFields = commonFields.filter(f => REQUIRED_COMMON.includes(f.name));
@@ -291,7 +293,7 @@ export function FormView({
 
         <div className="grid grid-cols-2 gap-3 pt-2">
           <button
-            onClick={onCameraClick}
+            onClick={() => setShowCustomCamera(true)}
             className="py-3.5 border-2 border-dashed border-emerald-300 rounded-2xl text-emerald-700 text-sm font-bold bg-emerald-50/50 hover:bg-emerald-100 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
           >
             <span className="text-lg">📷</span> Kamera
@@ -304,6 +306,16 @@ export function FormView({
           </button>
         </div>
       </div>
+
+      {/* Custom Camera Overlay */}
+      {showCustomCamera && (
+        <CustomCamera
+          onCapture={(dataUrl) => {
+            onCameraClick();
+          }}
+          onClose={() => setShowCustomCamera(false)}
+        />
+      )}
 
       {/* Progress Bar 3D */}
       {uploadingId === editingId && uploadProgress && (
