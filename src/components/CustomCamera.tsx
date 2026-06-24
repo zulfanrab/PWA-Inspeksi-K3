@@ -10,7 +10,6 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const mountedRef = useRef(true);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -22,34 +21,65 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
   const [facing, setFacing] = useState<'environment' | 'user'>('environment');
   const [photos, setPhotos] = useState<string[]>([]);
 
-  const startStream = useCallback(async (mode: string) => {
-    try {
-      setLoading(true);
-      setError(null);
+  // ─── SINGLE USE EFFECT UNTUK KAMERA (FIX RACE CONDITION) ──────────────────
+  useEffect(() => {
+    let mounted = true;
+
+    const initStream = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+
+        // Matikan stream lama jika ada
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(t => t.stop());
+        }
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false,
+        });
+
+        if (!mounted) {
+          stream.getTracks().forEach(t => t.stop());
+          return;
+        }
+
+        streamRef.current = stream;
+
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          // Tangani promise play() dengan benar untuk mencegah error Aborted
+          const playPromise = videoRef.current.play();
+          if (playPromise !== undefined) {
+            playPromise.catch(err => {
+              if (err.name !== 'AbortError') {
+                console.error('Video play error:', err);
+              }
+            });
+          }
+        }
+        setLoading(false);
+      } catch (e: any) {
+        if (mounted) {
+          setError(e.message || 'Gagal akses kamera');
+          setLoading(false);
+        }
+      }
+    };
+
+    initStream();
+
+    // Pastikan pembersihan stream hanya terjadi saat komponen benar-benar unmount / facing berubah
+    return () => {
+      mounted = false;
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(t => t.stop());
-        streamRef.current = null;
       }
-      const s = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: mode as any, width: 1280, height: 720 },
-        audio: false,
-      });
-      if (!mountedRef.current) { s.getTracks().forEach(t => t.stop()); return; }
-      streamRef.current = s;
-      if (videoRef.current) {
-        videoRef.current.srcObject = s;
-        await videoRef.current.play();
-      }
-      setLoading(false);
-    } catch (e: any) {
-      if (mountedRef.current) {
-        setError(e.message || 'Gagal akses kamera');
-        setLoading(false);
-      }
-    }
-  }, []);
+    };
+  }, [facing]); // HANYA ADA SATU USE EFFECT UNTUK KAMERA!
 
-  // Reverse geocoding via Nominatim
+  // ─── GPS + REVERSE GEOCODING ──────────────────────────────────────────────
   const fetchLocationName = useCallback(async (lat: number, lng: number) => {
     setLocationLoading(true);
     try {
@@ -72,14 +102,9 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
     }
   }, []);
 
-  // Single lifecycle: init camera + GPS (cleanup on unmount only)
   useEffect(() => {
-    mountedRef.current = true;
-    startStream(facing);
-
     navigator.geolocation.getCurrentPosition(
       p => {
-        if (!mountedRef.current) return;
         const pos = { lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy };
         setGps(pos);
         fetchLocationName(pos.lat, pos.lng);
@@ -87,22 +112,9 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
       () => {},
       { enableHighAccuracy: true, timeout: 8000 }
     );
+  }, [fetchLocationName]);
 
-    return () => {
-      mountedRef.current = false;
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(t => t.stop());
-        streamRef.current = null;
-      }
-    };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Handle camera switch — separate effect, but only runs when facing changes AND component is still mounted
-  useEffect(() => {
-    if (!mountedRef.current) return;
-    startStream(facing);
-  }, [facing, startStream]);
-
+  // ─── CAPTURE ──────────────────────────────────────────────────────────────
   const capture = async () => {
     const v = videoRef.current, c = canvasRef.current;
     if (!v || !c || capturing) return;
@@ -191,6 +203,7 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
     onClose();
   };
 
+  // ─── UI RENDER ────────────────────────────────────────────────────────────
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#000', zIndex: 9999, display: 'flex', flexDirection: 'column' }}>
       <canvas ref={canvasRef} style={{ display: 'none' }} />
@@ -221,7 +234,7 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
           <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#111', color: '#EF4444', padding: 20 }}>
             <div style={{ fontSize: 40, marginBottom: 12 }}>⚠️</div>
             <div style={{ fontSize: 14, marginBottom: 12 }}>{error}</div>
-            <button onClick={() => startStream(facing)} style={{ background: '#3B82F6', border: 'none', borderRadius: 8, padding: '10px 20px', color: '#fff', cursor: 'pointer' }}>
+            <button onClick={() => setFacing(f => f)} style={{ background: '#3B82F6', border: 'none', borderRadius: 8, padding: '10px 20px', color: '#fff', cursor: 'pointer' }}>
               Coba Lagi
             </button>
           </div>
