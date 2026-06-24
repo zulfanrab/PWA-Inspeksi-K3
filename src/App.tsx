@@ -1364,7 +1364,10 @@ const handleDelete = async (id: string) => {
             onClientNameFocus={() => setShowClientDropdown(true)}
             onClientSuggestionSelect={(name) => { setClientName(name); setShowClientDropdown(false); }}
             onFieldChange={handleFieldChange}
-            onCameraClick={() => cameraInputRef.current?.click()}
+            onAddPhoto={async (dataUrl) => {
+              const compressed = await compressPhoto(dataUrl);
+              setNewPhotos((prev) => [...prev, compressed]);
+            }}
             onGalleryClick={() => galleryInputRef.current?.click()}
             onRemoveExistingPhoto={removeExistingPhoto}
             onRemoveNewPhoto={removeNewPhoto}

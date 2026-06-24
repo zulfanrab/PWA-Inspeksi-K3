@@ -50,7 +50,7 @@ interface FormViewProps {
   onClientNameFocus: () => void;
   onClientSuggestionSelect: (name: string) => void;
   onFieldChange: (name: string, value: string) => void;
-  onCameraClick: () => void;
+  onAddPhoto: (dataUrl: string) => void;
   onGalleryClick: () => void;
   onRemoveExistingPhoto: (id: string) => void;
   onRemoveNewPhoto: (idx: number) => void;
@@ -79,7 +79,7 @@ export function FormView({
   onClientNameFocus,
   onClientSuggestionSelect,
   onFieldChange,
-  onCameraClick,
+  onAddPhoto,
   onGalleryClick,
   onRemoveExistingPhoto,
   onRemoveNewPhoto,
@@ -311,7 +311,8 @@ export function FormView({
       {showCustomCamera && (
         <CustomCamera
           onCapture={(dataUrl) => {
-            onCameraClick();
+            onAddPhoto(dataUrl);
+            setShowCustomCamera(false);
           }}
           onClose={() => setShowCustomCamera(false)}
         />
