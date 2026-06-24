@@ -522,7 +522,7 @@ function HistoryCard({
 }
 
 // ==========================================
-// LIGHTBOX VIEWER — smooth zoom + mobile swipe/pinch + share + download
+// LIGHTBOX VIEWER — smooth zoom + mobile/desktop swipe/pinch + share + download
 // ==========================================
 
 function LightboxViewer({
@@ -558,7 +558,7 @@ function LightboxViewer({
   const goToPrev = () => { resetView(); onPrev(); };
   const goToNext = () => { resetView(); onNext(); };
 
-  // ─── DESKTOP EVENTS ───
+  // ─── DESKTOP WHEEL & KEYBOARD ───
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
     setZoom((prev) => Math.max(0.5, Math.min(3, prev + (e.deltaY > 0 ? -0.2 : 0.2))));
@@ -574,7 +574,7 @@ function LightboxViewer({
     if (e.key === 'Escape') onClose();
   };
 
-  // ─── MOBILE TOUCH EVENTS (Swipe & Pinch) ───
+  // ─── MOBILE TOUCH EVENTS ───
   const onTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length === 1) {
       dragStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
@@ -622,6 +622,38 @@ function LightboxViewer({
     }
   };
 
+  // ─── DESKTOP MOUSE EVENTS (Buat Klik & Tarik) ───
+  const onMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault(); // Mencegah image ke-drag bawaan browser
+    dragStart.current = { x: e.clientX, y: e.clientY };
+    lastOffset.current = offset;
+    setDragging(true);
+  };
+
+  const onMouseMove = (e: React.MouseEvent) => {
+    if (!dragging || !dragStart.current) return;
+    if (zoom > 1) {
+      setOffset({
+        x: lastOffset.current.x + (e.clientX - dragStart.current.x),
+        y: lastOffset.current.y + (e.clientY - dragStart.current.y),
+      });
+    }
+  };
+
+  const onMouseUpOrLeave = (e: React.MouseEvent) => {
+    if (!dragging) return;
+    setDragging(false);
+
+    if (zoom <= 1 && dragStart.current) {
+      const dx = e.clientX - dragStart.current.x;
+      if (Math.abs(dx) > 50) {
+        if (dx < 0 && index < total - 1) goToNext();
+        if (dx > 0 && index > 0) goToPrev();
+      }
+    }
+    dragStart.current = null;
+  };
+
   // ─── SHARE & DOWNLOAD LOGIC ───
   const handleDownload = (e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
@@ -645,12 +677,9 @@ function LightboxViewer({
           text: `Dokumentasi: ${unitName || 'Unit'}`
         });
       } else {
-        // Fallback kalau browser gak support share API
         handleDownload();
       }
-    } catch (err) { 
-      // user cancelled atau error
-    }
+    } catch (err) { }
   };
 
   return (
@@ -661,19 +690,23 @@ function LightboxViewer({
       onKeyDown={handleKeyDown}
       tabIndex={0}
     >
-      {/* Area Foto dengan touchAction: 'none' */}
+      {/* Area Foto - Sekarang support sentuh HP dan klik Mouse */}
       <div 
         className="flex-1 flex items-center justify-center w-full relative overflow-hidden" 
         onClick={(e) => e.stopPropagation()}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
+        onMouseDown={onMouseDown}
+        onMouseMove={onMouseMove}
+        onMouseUp={onMouseUpOrLeave}
+        onMouseLeave={onMouseUpOrLeave}
         style={{ touchAction: 'none', cursor: dragging ? 'grabbing' : 'grab' }}
       >
         <img
           src={photo}
           alt={`Foto ${index + 1}`}
-          className="rounded shadow-2xl"
+          className="rounded shadow-2xl pointer-events-none" // pointer-events-none penting biar gambar ga "kecabut" pas di-drag di PC
           style={{
             transform: `scale(${zoom}) translate(${offset.x / zoom}px, ${offset.y / zoom}px)`,
             transition: dragging ? 'none' : 'transform 0.2s ease-out',
@@ -703,73 +736,21 @@ function LightboxViewer({
 
       {/* Controls bottom */}
       <div className="flex items-center justify-center gap-2 mt-3 pb-6 flex-wrap px-2" onClick={(e) => e.stopPropagation()}>
-        {/* Zoom controls */}
-        <button
-          onClick={() => setZoom((prev) => Math.max(0.5, prev - 0.2))}
-          className="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-white text-xs font-bold rounded-lg transition-all"
-        >
-          🔍−
-        </button>
-
-        <span className="text-white text-xs font-bold min-w-[45px] text-center">
-          {Math.round(zoom * 100)}%
-        </span>
-
-        <button
-          onClick={() => setZoom((prev) => Math.min(4, prev + 0.2))}
-          className="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-white text-xs font-bold rounded-lg transition-all"
-        >
-          🔍+
-        </button>
+        <button onClick={() => setZoom((prev) => Math.max(0.5, prev - 0.2))} className="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-white text-xs font-bold rounded-lg transition-all">🔍−</button>
+        <span className="text-white text-xs font-bold min-w-[45px] text-center">{Math.round(zoom * 100)}%</span>
+        <button onClick={() => setZoom((prev) => Math.min(4, prev + 0.2))} className="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-white text-xs font-bold rounded-lg transition-all">🔍+</button>
 
         <div className="w-px h-5 bg-gray-700 mx-1"></div>
 
-        {/* Navigation */}
-        <button
-          onClick={goToPrev}
-          disabled={index === 0}
-          className="px-3 py-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-30 text-white text-xs font-bold rounded-lg transition-all"
-        >
-          ← Prev
-        </button>
-
-        <span className="text-white text-xs font-bold min-w-[50px] text-center bg-gray-800 py-2 rounded-lg">
-          {index + 1} / {total}
-        </span>
-
-        <button
-          onClick={goToNext}
-          disabled={index === total - 1}
-          className="px-3 py-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-30 text-white text-xs font-bold rounded-lg transition-all"
-        >
-          Next →
-        </button>
+        <button onClick={goToPrev} disabled={index === 0} className="px-3 py-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-30 text-white text-xs font-bold rounded-lg transition-all">← Prev</button>
+        <span className="text-white text-xs font-bold min-w-[50px] text-center bg-gray-800 py-2 rounded-lg">{index + 1} / {total}</span>
+        <button onClick={goToNext} disabled={index === total - 1} className="px-3 py-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-30 text-white text-xs font-bold rounded-lg transition-all">Next →</button>
 
         <div className="w-px h-5 bg-gray-700 mx-1"></div>
 
-        {/* Share & Download & Close */}
-        <button
-          onClick={handleShare}
-          className="px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-all"
-          title="Bagikan foto ini"
-        >
-          ⬆️ Share
-        </button>
-
-        <button
-          onClick={handleDownload}
-          className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg transition-all"
-          title="Download foto ini"
-        >
-          ⬇️
-        </button>
-
-        <button
-          onClick={onClose}
-          className="px-3 py-2 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded-lg transition-all"
-        >
-          ✕
-        </button>
+        <button onClick={handleShare} className="px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-all" title="Bagikan foto ini">⬆️ Share</button>
+        <button onClick={handleDownload} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg transition-all" title="Download foto ini">⬇️</button>
+        <button onClick={onClose} className="px-3 py-2 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded-lg transition-all">✕</button>
       </div>
     </div>
   );
