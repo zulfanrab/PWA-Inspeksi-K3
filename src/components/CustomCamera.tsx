@@ -72,8 +72,8 @@ async function reverseGeocode(lat: number, lng: number): Promise<LocationDetail>
 }
 
 // ─── WATERMARK RENDERER ───────────────────────────────────────────────────────
-// Semua ukuran relatif terhadap resolusi canvas → proporsional di semua device.
 // Posisi: pojok kiri bawah. Style: profesional survey lapangan.
+// Semua ukuran relatif terhadap H canvas → proporsional portrait & landscape.
 async function drawWatermark(
   ctx: CanvasRenderingContext2D,
   W: number,
@@ -81,73 +81,75 @@ async function drawWatermark(
   gps: GpsData | null,
   loc: LocationDetail
 ) {
-  // ── Sistem unit: berbasis tinggi canvas agar proporsional portrait & landscape
-  const unit     = Math.max(1, H / 80);   // ~1.35% tinggi foto
-  const FONT_XS  = unit * 1.05;
-  const FONT_SM  = unit * 1.25;
-  const FONT_MD  = unit * 1.55;
-  const FONT_LG  = unit * 2.0;
-  const PAD_X    = unit * 2.0;
-  const PAD_Y    = unit * 1.8;
-  const ROW_H    = FONT_MD * 1.75;
-  const LOGO_SZ  = FONT_LG * 1.6;
-  const MARGIN   = unit * 2.0;
-  const STRIPE_W = unit * 0.7;
+  // ── Token ukuran — satu sumber kebenaran
+  const unit      = Math.max(1, H / 90);  // baseline: ~1.1% tinggi foto
+  const F_LABEL   = unit * 1.0;           // label abu kecil (TANGGAL / JAM / dll)
+  const F_VALUE   = unit * 1.4;           // nilai utama tiap baris
+  const F_TITLE   = unit * 1.4;           // judul app — SAMA dengan F_VALUE biar tidak norak
+  const F_SUB     = unit * 0.95;          // sub-label di bawah judul
+  const PAD_X     = unit * 2.2;
+  const PAD_Y     = unit * 1.8;
+  const ROW_H     = F_VALUE * 2.4;        // tinggi per baris (label + value)
+  const LOGO_SZ   = F_TITLE * 2.2;
+  const MARGIN    = unit * 2.2;
+  const STRIPE_W  = unit * 0.65;
+  const ICON_COL  = F_VALUE * 1.55;       // lebar kolom emoji (tetap, tidak campur dengan teks)
 
-  const sf = (size: number, bold = false) => {
-    ctx.font = `${bold ? 'bold ' : ''}${size}px 'SF Pro Text','Segoe UI',system-ui,sans-serif`;
+  const FONT = (size: number, bold = false) => {
+    ctx.font = `${bold ? '600 ' : ''}${size}px 'SF Pro Text','Segoe UI',system-ui,sans-serif`;
   };
 
-  // ── Timestamp
-  const now = new Date();
-  const dateStr = now.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
-  const timeStr = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  // ── Data
+  const now      = new Date();
+  const dateStr  = now.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
+  const timeStr  = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const coordStr = gps ? `${gps.lat.toFixed(6)}, ${gps.lng.toFixed(6)}` : null;
   const accStr   = gps ? `±${Math.round(gps.acc)} m` : null;
 
-  // ── Hitung lebar baris terpanjang untuk menentukan boxW
-  const textLines = [
-    `${dateStr}  ${timeStr}`,
-    coordStr || 'GPS tidak tersedia',
-    loc.poiName || '',
-    loc.areaName || '',
-    accStr || '',
-  ].filter(Boolean);
+  // ── Struktur baris: setiap baris punya label kecil di atas + value di bawah
+  // Tanggal dan jam = 2 baris terpisah, tidak inline
+  type Row = { icon: string; label: string; value: string; valueColor: string };
+  const rows: Row[] = [];
 
-  sf(FONT_MD);
-  const maxTxtW = Math.max(...textLines.map(t => ctx.measureText(t).width));
+  rows.push({ icon: '📅', label: 'TANGGAL', value: dateStr,  valueColor: '#E2E8F0' });
+  rows.push({ icon: '🕐', label: 'WAKTU',   value: timeStr,  valueColor: '#E2E8F0' });
 
-  sf(FONT_LG, true);
-  const titleW = ctx.measureText('AKSARA INSPECT').width;
+  if (gps && coordStr) {
+    rows.push({ icon: '📍', label: 'KOORDINAT', value: coordStr, valueColor: '#34D399' });
+    rows.push({ icon: '  ', label: 'AKURASI',   value: accStr!,  valueColor: '#94A3B8' });
+  } else {
+    rows.push({ icon: '📍', label: 'GPS', value: 'Tidak tersedia', valueColor: '#F59E0B' });
+  }
 
-  const ICON_OFFSET = FONT_MD * 1.6; // lebar kolom emoji
+  if (loc.poiName)  rows.push({ icon: '🏢', label: 'LOKASI',  value: loc.poiName,  valueColor: '#93C5FD' });
+  if (loc.areaName) rows.push({ icon: '🗺', label: 'WILAYAH', value: loc.areaName, valueColor: '#6EE7B7' });
+
+  // ── Hitung lebar box dari konten terpanjang
+  FONT(F_VALUE, true);
+  const maxValW = Math.max(...rows.map(r => ctx.measureText(r.value).width));
+  FONT(F_TITLE, true);
+  const titleLineW = LOGO_SZ + unit * 1.5 + ctx.measureText('AKSARA INSPECT').width;
+
   const boxW = Math.min(
-    W * 0.65,          // max 65% lebar foto
-    Math.max(maxTxtW + ICON_OFFSET, titleW + LOGO_SZ + PAD_X) + PAD_X * 2 + STRIPE_W
+    W * 0.60,
+    Math.max(maxValW + ICON_COL, titleLineW) + PAD_X * 2 + STRIPE_W
   );
 
   // ── Hitung tinggi box
-  // Baris: header (logo+title), divider, datetime, coord/gps, poi?, area?, akurasi
-  let nRows = 3; // datetime + coord + akurasi
-  if (loc.poiName)  nRows++;
-  if (loc.areaName) nRows++;
+  const HEADER_H  = LOGO_SZ + PAD_Y * 0.6;
+  const DIVIDER_H = unit * 1.6;
+  const boxH      = PAD_Y * 2 + HEADER_H + DIVIDER_H + rows.length * ROW_H;
 
-  const HEADER_H  = LOGO_SZ + PAD_Y * 0.5;
-  const DIVIDER_H = unit * 1.4;
-  const boxH = PAD_Y * 2 + HEADER_H + DIVIDER_H + nRows * ROW_H;
-
-  // ── Posisi: kiri bawah
+  // ── Posisi kiri bawah
   const bx = MARGIN;
   const by = H - MARGIN - boxH;
 
-  // ── Shadow
+  // ── Background
   ctx.save();
-  ctx.shadowColor   = 'rgba(0,0,0,0.55)';
+  ctx.shadowColor   = 'rgba(0,0,0,0.6)';
   ctx.shadowBlur    = unit * 4;
   ctx.shadowOffsetY = unit * 1.5;
-
-  // Background — opacity rendah, lebih transparan
-  ctx.fillStyle = 'rgba(8, 14, 24, 0.62)';
+  ctx.fillStyle     = 'rgba(8, 14, 24, 0.60)';
   rrect(ctx, bx, by, boxW, boxH, unit * 1.0);
   ctx.fill();
   ctx.restore();
@@ -157,19 +159,17 @@ async function drawWatermark(
   rrect(ctx, bx, by, STRIPE_W, boxH, { tl: unit, bl: unit, tr: 0, br: 0 });
   ctx.fill();
 
-  // Border tipis
-  ctx.strokeStyle = 'rgba(16,185,129,0.28)';
-  ctx.lineWidth   = Math.max(0.5, unit * 0.1);
+  // Border
+  ctx.strokeStyle = 'rgba(16,185,129,0.25)';
+  ctx.lineWidth   = Math.max(0.5, unit * 0.09);
   rrect(ctx, bx, by, boxW, boxH, unit * 1.0);
   ctx.stroke();
 
-  // ── Gambar isi
-  const cx = bx + STRIPE_W + PAD_X;  // X awal konten (setelah stripe)
-  let cy = by + PAD_Y;
+  // ── Konten
+  const cx = bx + STRIPE_W + PAD_X;
+  let cy   = by + PAD_Y;
 
-  // — Header: Logo + Nama App
-  // Logo
-  let logoOk = false;
+  // — Header: logo + nama app (judul sama size dengan value, tidak oversized)
   try {
     const img = new Image();
     img.crossOrigin = 'anonymous';
@@ -179,90 +179,63 @@ async function drawWatermark(
       img.src = '/icons/icon-192.png';
       setTimeout(fail, 700);
     });
-    ctx.drawImage(img, cx, cy, LOGO_SZ, LOGO_SZ);
-    logoOk = true;
+    ctx.drawImage(img, cx, cy + (LOGO_SZ - LOGO_SZ) / 2, LOGO_SZ, LOGO_SZ);
   } catch {
+    // Fallback kotak hijau dengan huruf A
     ctx.fillStyle = '#10B981';
     rrect(ctx, cx, cy, LOGO_SZ, LOGO_SZ, unit * 0.5);
     ctx.fill();
-    sf(LOGO_SZ * 0.55, true);
+    FONT(LOGO_SZ * 0.58, true);
     ctx.fillStyle = '#fff';
-    ctx.fillText('A', cx + LOGO_SZ * 0.28, cy + LOGO_SZ * 0.72);
+    ctx.fillText('A', cx + LOGO_SZ * 0.26, cy + LOGO_SZ * 0.73);
   }
 
-  // Teks di samping logo
-  const tx = cx + LOGO_SZ + PAD_X * 0.7;
-  sf(FONT_LG, true);
+  const tx = cx + LOGO_SZ + unit * 1.5;
+
+  // Nama app — bold, tapi ukuran = F_TITLE (sama dengan F_VALUE, tidak besar-besaran)
+  FONT(F_TITLE, true);
   ctx.fillStyle = '#10B981';
-  ctx.fillText('AKSARA', tx, cy + FONT_LG);
+  ctx.fillText('AKSARA', tx, cy + F_TITLE * 1.0);
   const aksaraW = ctx.measureText('AKSARA').width;
   ctx.fillStyle = '#FFFFFF';
-  ctx.fillText(' INSPECT', tx + aksaraW, cy + FONT_LG);
+  ctx.fillText(' INSPECT', tx + aksaraW, cy + F_TITLE * 1.0);
 
-  sf(FONT_XS);
-  ctx.fillStyle = 'rgba(148,163,184,0.75)';
-  ctx.fillText('Survey Field Documentation  v1.0', tx, cy + FONT_LG + FONT_XS * 1.5);
+  // Sub-label kecil
+  FONT(F_SUB);
+  ctx.fillStyle = 'rgba(100,116,139,0.85)';
+  ctx.fillText('Survey Field Documentation', tx, cy + F_TITLE * 1.0 + F_SUB * 1.7);
 
   cy += HEADER_H;
 
   // — Divider
-  cy += DIVIDER_H * 0.3;
-  ctx.strokeStyle = 'rgba(148,163,184,0.18)';
+  ctx.strokeStyle = 'rgba(148,163,184,0.15)';
   ctx.lineWidth   = Math.max(0.4, unit * 0.07);
   ctx.beginPath();
-  ctx.moveTo(cx, cy);
-  ctx.lineTo(bx + boxW - PAD_X, cy);
+  ctx.moveTo(cx, cy + DIVIDER_H * 0.5);
+  ctx.lineTo(bx + boxW - PAD_X * 0.5, cy + DIVIDER_H * 0.5);
   ctx.stroke();
-  cy += DIVIDER_H * 0.7;
+  cy += DIVIDER_H;
 
-  // ── Helper untuk baris isi
-  const drawRow = (
-    emoji: string,
-    value: string,
-    valColor: string,
-    subVal?: string,
-    subColor?: string
-  ) => {
+  // — Baris data: label kecil abu di atas, value bold di bawah
+  for (const row of rows) {
+    const baseX = cx + ICON_COL;
+
     // Emoji
-    sf(FONT_MD);
-    ctx.fillStyle = 'rgba(148,163,184,0.9)';
-    ctx.fillText(emoji, cx, cy + FONT_MD);
+    FONT(F_VALUE);
+    ctx.fillStyle = 'rgba(148,163,184,0.85)';
+    ctx.fillText(row.icon, cx, cy + F_LABEL + F_VALUE * 0.85);
+
+    // Label kecil
+    FONT(F_LABEL);
+    ctx.fillStyle = 'rgba(100,116,139,0.8)';
+    ctx.fillText(row.label, baseX, cy + F_LABEL);
 
     // Value
-    sf(FONT_MD, true);
-    ctx.fillStyle = valColor;
-    ctx.fillText(value, cx + ICON_OFFSET, cy + FONT_MD);
-
-    // Sub-value (inline kanan)
-    if (subVal) {
-      sf(FONT_SM);
-      ctx.fillStyle = subColor || 'rgba(148,163,184,0.7)';
-      const mainW = ctx.measureText(value).width;
-      sf(FONT_SM);
-      ctx.fillText('  ' + subVal, cx + ICON_OFFSET + mainW, cy + FONT_MD);
-    }
+    FONT(F_VALUE, true);
+    ctx.fillStyle = row.valueColor;
+    ctx.fillText(row.value, baseX, cy + F_LABEL + F_VALUE * 1.05);
 
     cy += ROW_H;
-  };
-
-  // — Baris datetime
-  drawRow('🕐', `${dateStr}`, '#E2E8F0', timeStr, 'rgba(148,163,184,0.7)');
-
-  // — Baris koordinat GPS atau no-GPS
-  if (gps && coordStr) {
-    drawRow('📍', coordStr, '#34D399', accStr || '', 'rgba(148,163,184,0.6)');
-  } else {
-    drawRow('📍', 'GPS tidak tersedia', '#F59E0B');
-  }
-
-  // — Nama POI (gedung / tempat spesifik)
-  if (loc.poiName) {
-    drawRow('🏢', loc.poiName, '#93C5FD');
-  }
-
-  // — Nama area (kota, provinsi)
-  if (loc.areaName) {
-    drawRow('🗺', loc.areaName, '#6EE7B7');
   }
 }
 
