@@ -522,7 +522,7 @@ function HistoryCard({
 }
 
 // ==========================================
-// LIGHTBOX VIEWER — smooth zoom + mobile swipe/pinch + download
+// LIGHTBOX VIEWER — smooth zoom + mobile swipe/pinch + share + download
 // ==========================================
 
 function LightboxViewer({
@@ -596,7 +596,6 @@ function LightboxViewer({
       const newScale = Math.max(0.5, Math.min(4, lastScale.current * (dist / lastDist.current)));
       setZoom(newScale);
     } else if (e.touches.length === 1 && dragStart.current) {
-      // Hanya geser foto kalau lagi di-zoom
       if (zoom > 1) {
         setOffset({
           x: lastOffset.current.x + (e.touches[0].clientX - dragStart.current.x),
@@ -610,12 +609,11 @@ function LightboxViewer({
     setDragging(false);
     lastDist.current = null;
 
-    // Logic Swipe Kiri/Kanan buat ganti foto (jalan kalau zoom normal)
     if (zoom <= 1 && dragStart.current && e.changedTouches.length === 1) {
       const dx = e.changedTouches[0].clientX - dragStart.current.x;
       if (Math.abs(dx) > 50) {
-        if (dx < 0 && index < total - 1) goToNext(); // Swipe kiri -> Next
-        if (dx > 0 && index > 0) goToPrev();         // Swipe kanan -> Prev
+        if (dx < 0 && index < total - 1) goToNext();
+        if (dx > 0 && index > 0) goToPrev();
       }
     }
 
@@ -624,12 +622,35 @@ function LightboxViewer({
     }
   };
 
-  const handleDownload = (e: React.MouseEvent) => {
-    e.stopPropagation();
+  // ─── SHARE & DOWNLOAD LOGIC ───
+  const handleDownload = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
     const a = document.createElement('a');
     a.href = photo;
-    a.download = `${unitName || 'Foto'}_${String(index + 1).padStart(2, '0')}.jpg`;
+    a.download = `${unitName?.replace(/\s+/g, '_') || 'Foto'}_${String(index + 1).padStart(2, '0')}.jpg`;
     a.click();
+  };
+
+  const handleShare = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      const blob = await (await fetch(photo)).blob();
+      const filename = `${unitName?.replace(/\s+/g, '_') || 'Foto'}_${String(index + 1).padStart(2, '0')}.jpg`;
+      const file = new File([blob], filename, { type: 'image/jpeg' });
+      
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ 
+          files: [file], 
+          title: 'Aksara Inspect Photo',
+          text: `Dokumentasi: ${unitName || 'Unit'}`
+        });
+      } else {
+        // Fallback kalau browser gak support share API
+        handleDownload();
+      }
+    } catch (err) { 
+      // user cancelled atau error
+    }
   };
 
   return (
@@ -640,9 +661,7 @@ function LightboxViewer({
       onKeyDown={handleKeyDown}
       tabIndex={0}
     >
-      {/* Area Foto dengan touchAction: 'none' 
-        Ini kunci utamanya biar browser gak narik-narik layar pas lu nge-swipe!
-      */}
+      {/* Area Foto dengan touchAction: 'none' */}
       <div 
         className="flex-1 flex items-center justify-center w-full relative overflow-hidden" 
         onClick={(e) => e.stopPropagation()}
@@ -669,7 +688,7 @@ function LightboxViewer({
           onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
         />
         
-        {/* Panah Hint (Biar user tau bisa swipe/klik next) */}
+        {/* Panah Hint */}
         {index > 0 && (
           <div className="absolute left-4 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-black/50 text-white flex items-center justify-center pointer-events-none opacity-40">
             ‹
@@ -728,10 +747,19 @@ function LightboxViewer({
 
         <div className="w-px h-5 bg-gray-700 mx-1"></div>
 
-        {/* Download & Close */}
+        {/* Share & Download & Close */}
+        <button
+          onClick={handleShare}
+          className="px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-all"
+          title="Bagikan foto ini"
+        >
+          ⬆️ Share
+        </button>
+
         <button
           onClick={handleDownload}
           className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg transition-all"
+          title="Download foto ini"
         >
           ⬇️
         </button>
