@@ -522,7 +522,7 @@ function HistoryCard({
 }
 
 // ==========================================
-// LIGHTBOX VIEWER — smooth zoom + mobile pinch + download
+// LIGHTBOX VIEWER — smooth zoom + mobile swipe/pinch + download
 // ==========================================
 
 function LightboxViewer({
@@ -543,45 +543,85 @@ function LightboxViewer({
   unitName?: string;
 }) {
   const [zoom, setZoom] = useState(1);
-  const touchStartRef = useRef(0);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
 
+  const dragStart = useRef<{ x: number; y: number } | null>(null);
+  const lastOffset = useRef({ x: 0, y: 0 });
+
+  // Pinch zoom refs
+  const lastDist = useRef<number | null>(null);
+  const lastScale = useRef(1);
+
+  const resetView = () => { setZoom(1); setOffset({ x: 0, y: 0 }); };
+
+  const goToPrev = () => { resetView(); onPrev(); };
+  const goToNext = () => { resetView(); onNext(); };
+
+  // ─── DESKTOP EVENTS ───
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
-    setZoom((prev) =>
-      Math.max(0.5, Math.min(3, prev + (e.deltaY > 0 ? -0.2 : 0.2)))
-    );
+    setZoom((prev) => Math.max(0.5, Math.min(3, prev + (e.deltaY > 0 ? -0.2 : 0.2))));
   };
 
   const handleDoubleClick = () => {
-    setZoom((prev) => (prev === 1 ? 2 : 1));
+    zoom === 1 ? setZoom(2.5) : resetView();
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'ArrowLeft') onPrev();
-    if (e.key === 'ArrowRight') onNext();
+    if (e.key === 'ArrowLeft' && index > 0) goToPrev();
+    if (e.key === 'ArrowRight' && index < total - 1) goToNext();
     if (e.key === 'Escape') onClose();
   };
 
-  // Pinch-to-zoom untuk mobile (2 jari)
-  const handleTouchMove = (e: React.TouchEvent) => {
-    if (e.touches.length !== 2) return;
-    const touch1 = e.touches[0];
-    const touch2 = e.touches[1];
-    const distance = Math.hypot(
-      touch2.clientX - touch1.clientX,
-      touch2.clientY - touch1.clientY
-    );
-    if (touchStartRef.current === 0) {
-      touchStartRef.current = distance;
-    } else {
-      const diff = distance - touchStartRef.current;
-      if (diff > 10) setZoom((prev) => Math.min(3, prev + 0.1));
-      if (diff < -10) setZoom((prev) => Math.max(0.5, prev - 0.1));
+  // ─── MOBILE TOUCH EVENTS (Swipe & Pinch) ───
+  const onTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 1) {
+      dragStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      lastOffset.current = offset;
+      setDragging(true);
+    } else if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      lastDist.current = Math.hypot(dx, dy);
+      lastScale.current = zoom;
     }
   };
 
-  const handleTouchEnd = () => {
-    touchStartRef.current = 0;
+  const onTouchMove = (e: React.TouchEvent) => {
+    if (e.touches.length === 2 && lastDist.current) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.hypot(dx, dy);
+      const newScale = Math.max(0.5, Math.min(4, lastScale.current * (dist / lastDist.current)));
+      setZoom(newScale);
+    } else if (e.touches.length === 1 && dragStart.current) {
+      // Hanya geser foto kalau lagi di-zoom
+      if (zoom > 1) {
+        setOffset({
+          x: lastOffset.current.x + (e.touches[0].clientX - dragStart.current.x),
+          y: lastOffset.current.y + (e.touches[0].clientY - dragStart.current.y),
+        });
+      }
+    }
+  };
+
+  const onTouchEnd = (e: React.TouchEvent) => {
+    setDragging(false);
+    lastDist.current = null;
+
+    // Logic Swipe Kiri/Kanan buat ganti foto (jalan kalau zoom normal)
+    if (zoom <= 1 && dragStart.current && e.changedTouches.length === 1) {
+      const dx = e.changedTouches[0].clientX - dragStart.current.x;
+      if (Math.abs(dx) > 50) {
+        if (dx < 0 && index < total - 1) goToNext(); // Swipe kiri -> Next
+        if (dx > 0 && index > 0) goToPrev();         // Swipe kanan -> Prev
+      }
+    }
+
+    if (e.touches.length === 0) {
+      dragStart.current = null;
+    }
   };
 
   const handleDownload = (e: React.MouseEvent) => {
@@ -594,123 +634,114 @@ function LightboxViewer({
 
   return (
     <div
-      className="absolute inset-0 z-10 bg-black/95 flex flex-col items-center justify-center"
+      className="absolute inset-0 z-10 bg-black/95 flex flex-col items-center justify-center outline-none"
       onClick={onClose}
       onWheel={handleWheel}
       onKeyDown={handleKeyDown}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
       tabIndex={0}
     >
-      {/* Foto dengan zoom smooth */}
-      <div className="flex-1 flex items-center justify-center w-full" onClick={(e) => e.stopPropagation()}>
+      {/* Area Foto dengan touchAction: 'none' 
+        Ini kunci utamanya biar browser gak narik-narik layar pas lu nge-swipe!
+      */}
+      <div 
+        className="flex-1 flex items-center justify-center w-full relative overflow-hidden" 
+        onClick={(e) => e.stopPropagation()}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        style={{ touchAction: 'none', cursor: dragging ? 'grabbing' : 'grab' }}
+      >
         <img
           src={photo}
           alt={`Foto ${index + 1}`}
-          className="rounded"
+          className="rounded shadow-2xl"
           style={{
-            transform: `scale(${zoom})`,
-            transition: 'transform 0.2s ease-out',
+            transform: `scale(${zoom}) translate(${offset.x / zoom}px, ${offset.y / zoom}px)`,
+            transition: dragging ? 'none' : 'transform 0.2s ease-out',
             maxWidth: '90vw',
             maxHeight: '70vh',
             objectFit: 'contain',
+            userSelect: 'none',
+            WebkitUserSelect: 'none',
           }}
+          draggable={false}
           onDoubleClick={handleDoubleClick}
-          onError={(e) => {
-            (e.target as HTMLImageElement).style.display = 'none';
-          }}
+          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
         />
+        
+        {/* Panah Hint (Biar user tau bisa swipe/klik next) */}
+        {index > 0 && (
+          <div className="absolute left-4 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-black/50 text-white flex items-center justify-center pointer-events-none opacity-40">
+            ‹
+          </div>
+        )}
+        {index < total - 1 && (
+          <div className="absolute right-4 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-black/50 text-white flex items-center justify-center pointer-events-none opacity-40">
+            ›
+          </div>
+        )}
       </div>
 
       {/* Controls bottom */}
-      <div className="flex items-center justify-center gap-2 mt-3 pb-4 flex-wrap px-2">
+      <div className="flex items-center justify-center gap-2 mt-3 pb-6 flex-wrap px-2" onClick={(e) => e.stopPropagation()}>
         {/* Zoom controls */}
         <button
-          onClick={(e) => {
-            e.stopPropagation();
-            setZoom((prev) => Math.max(0.5, prev - 0.2));
-          }}
-          className="px-2.5 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs font-bold rounded-lg transition-all"
-          title="Zoom out (-) atau scroll mouse / pinch"
+          onClick={() => setZoom((prev) => Math.max(0.5, prev - 0.2))}
+          className="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-white text-xs font-bold rounded-lg transition-all"
         >
           🔍−
         </button>
 
-        <span className="text-white text-xs font-bold min-w-[50px] text-center">
+        <span className="text-white text-xs font-bold min-w-[45px] text-center">
           {Math.round(zoom * 100)}%
         </span>
 
         <button
-          onClick={(e) => {
-            e.stopPropagation();
-            setZoom((prev) => Math.min(3, prev + 0.2));
-          }}
-          className="px-2.5 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs font-bold rounded-lg transition-all"
-          title="Zoom in (+) atau scroll mouse / pinch"
+          onClick={() => setZoom((prev) => Math.min(4, prev + 0.2))}
+          className="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-white text-xs font-bold rounded-lg transition-all"
         >
           🔍+
         </button>
 
-        <div className="w-px h-5 bg-gray-600"></div>
+        <div className="w-px h-5 bg-gray-700 mx-1"></div>
 
         {/* Navigation */}
         <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onPrev();
-            setZoom(1);
-          }}
+          onClick={goToPrev}
           disabled={index === 0}
-          className="px-2.5 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-40 text-white text-xs font-bold rounded-lg transition-all"
-          title="Prev (← Arrow)"
+          className="px-3 py-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-30 text-white text-xs font-bold rounded-lg transition-all"
         >
           ← Prev
         </button>
 
-        <span className="text-white text-xs font-bold min-w-[40px] text-center">
+        <span className="text-white text-xs font-bold min-w-[50px] text-center bg-gray-800 py-2 rounded-lg">
           {index + 1} / {total}
         </span>
 
         <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onNext();
-            setZoom(1);
-          }}
+          onClick={goToNext}
           disabled={index === total - 1}
-          className="px-2.5 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-40 text-white text-xs font-bold rounded-lg transition-all"
-          title="Next (→ Arrow)"
+          className="px-3 py-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-30 text-white text-xs font-bold rounded-lg transition-all"
         >
           Next →
         </button>
 
-        <div className="w-px h-5 bg-gray-600"></div>
+        <div className="w-px h-5 bg-gray-700 mx-1"></div>
 
-        {/* Download foto ini */}
+        {/* Download & Close */}
         <button
           onClick={handleDownload}
-          className="px-2.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg transition-all"
-          title="Download foto ini"
+          className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg transition-all"
         >
-          ⬇️ Download
+          ⬇️
         </button>
 
-        {/* Close */}
         <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onClose();
-          }}
-          className="px-2.5 py-1.5 bg-red-700 hover:bg-red-600 text-white text-xs font-bold rounded-lg transition-all"
-          title="Close (ESC)"
+          onClick={onClose}
+          className="px-3 py-2 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded-lg transition-all"
         >
-          ✕ Close
+          ✕
         </button>
-      </div>
-
-      {/* Hint text */}
-      <div className="text-[10px] text-gray-400 pb-2 text-center px-2">
-        🖱️ Scroll / pinch zoom &nbsp;|&nbsp; ↔️ Arrows navigate &nbsp;|&nbsp; ESC close &nbsp;|&nbsp; 2x tap zoom toggle
       </div>
     </div>
   );

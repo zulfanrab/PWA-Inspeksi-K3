@@ -176,7 +176,7 @@ async function drawWatermark(
     await new Promise<void>((ok, fail) => {
       img.onload = () => ok();
       img.onerror = fail;
-      img.src = '/icons/icon-192.png';
+      img.src = '/icons/icon-512.png';
       setTimeout(fail, 700);
     });
     ctx.drawImage(img, cx, cy + (LOGO_SZ - LOGO_SZ) / 2, LOGO_SZ, LOGO_SZ);
@@ -296,6 +296,7 @@ function PhotoGallery({ photos, initialIndex, onClose, onDeleteOne, onDeleteAll 
     if (e.touches.length === 1) {
       dragStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
       lastOffset.current = offset;
+      setDragging(true);
     } else if (e.touches.length === 2) {
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
@@ -305,7 +306,6 @@ function PhotoGallery({ photos, initialIndex, onClose, onDeleteOne, onDeleteAll 
   };
 
   const onTouchMove = (e: React.TouchEvent) => {
-    e.preventDefault();
     if (e.touches.length === 2 && lastDist.current) {
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
@@ -323,14 +323,21 @@ function PhotoGallery({ photos, initialIndex, onClose, onDeleteOne, onDeleteAll 
   };
 
   const onTouchEnd = (e: React.TouchEvent) => {
+    setDragging(false);
     lastDist.current = null;
+    
+    // Logic Swipe Kiri/Kanan buat ganti foto (hanya jalan kalau foto lagi gak di-zoom)
     if (scale <= 1 && dragStart.current && e.changedTouches.length === 1) {
       const dx = e.changedTouches[0].clientX - dragStart.current.x;
       if (Math.abs(dx) > 50) {
         dx < 0 ? goTo(idx + 1) : goTo(idx - 1);
       }
     }
-    dragStart.current = null;
+    
+    // Jangan reset memori jari kalau masih ada jari yang nempel di layar
+    if (e.touches.length === 0) {
+      dragStart.current = null;
+    }
   };
 
   // Double tap to zoom
@@ -350,7 +357,6 @@ function PhotoGallery({ photos, initialIndex, onClose, onDeleteOne, onDeleteAll 
       if (navigator.share && navigator.canShare({ files: [file] })) {
         await navigator.share({ files: [file], title: 'Aksara Inspect Photo' });
       } else {
-        // Fallback: download
         const a = document.createElement('a');
         a.href = photos[idx];
         a.download = `aksara-inspect-${idx + 1}.jpg`;
@@ -379,12 +385,9 @@ function PhotoGallery({ photos, initialIndex, onClose, onDeleteOne, onDeleteAll 
       {/* Top bar galeri */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '12px 16px',
-        paddingTop: 'calc(12px + env(safe-area-inset-top))',
-        background: 'rgba(0,0,0,0.8)',
-        backdropFilter: 'blur(10px)',
-        borderBottom: '1px solid rgba(255,255,255,0.07)',
-        flexShrink: 0,
+        padding: '12px 16px', paddingTop: 'calc(12px + env(safe-area-inset-top))',
+        background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(10px)',
+        borderBottom: '1px solid rgba(255,255,255,0.07)', flexShrink: 0,
       }}>
         <button onClick={onClose} style={btnStyle('#475569')}>✕ Tutup</button>
         <span style={{ color: '#E2E8F0', fontSize: 13, fontWeight: 600 }}>
@@ -395,7 +398,11 @@ function PhotoGallery({ photos, initialIndex, onClose, onDeleteOne, onDeleteAll 
 
       {/* Area foto */}
       <div
-        style={{ flex: 1, overflow: 'hidden', position: 'relative', cursor: dragging ? 'grabbing' : 'grab' }}
+        style={{ 
+          flex: 1, overflow: 'hidden', position: 'relative', 
+          cursor: dragging ? 'grabbing' : 'grab',
+          touchAction: 'none' /* 🔥 INI OBAT MUJARABNYA: MATIIN SCROLL BAWAAN BROWSER 🔥 */
+        }}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
@@ -447,14 +454,11 @@ function PhotoGallery({ photos, initialIndex, onClose, onDeleteOne, onDeleteAll 
       {photos.length > 1 && (
         <div style={{
           display: 'flex', gap: 6, padding: '8px 12px', overflowX: 'auto',
-          background: 'rgba(0,0,0,0.7)', flexShrink: 0,
-          scrollbarWidth: 'none',
+          background: 'rgba(0,0,0,0.7)', flexShrink: 0, scrollbarWidth: 'none',
         }}>
           {photos.map((p, i) => (
             <img
-              key={i}
-              src={p}
-              onClick={() => goTo(i)}
+              key={i} src={p} onClick={() => goTo(i)}
               style={{
                 width: 52, height: 52, objectFit: 'cover', borderRadius: 6,
                 border: i === idx ? '2px solid #10B981' : '2px solid transparent',
@@ -468,12 +472,9 @@ function PhotoGallery({ photos, initialIndex, onClose, onDeleteOne, onDeleteAll 
 
       {/* Bottom bar aksi */}
       <div style={{
-        padding: '12px 16px',
-        paddingBottom: 'calc(12px + env(safe-area-inset-bottom))',
-        background: 'rgba(0,0,0,0.85)',
-        borderTop: '1px solid rgba(255,255,255,0.07)',
-        display: 'flex', gap: 10, justifyContent: 'center',
-        flexShrink: 0,
+        padding: '12px 16px', paddingBottom: 'calc(12px + env(safe-area-inset-bottom))',
+        background: 'rgba(0,0,0,0.85)', borderTop: '1px solid rgba(255,255,255,0.07)',
+        display: 'flex', gap: 10, justifyContent: 'center', flexShrink: 0,
       }}>
         {/* Hapus foto ini */}
         <button
@@ -496,10 +497,8 @@ function PhotoGallery({ photos, initialIndex, onClose, onDeleteOne, onDeleteAll 
         ) : (
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <span style={{ color: '#FCA5A5', fontSize: 12 }}>Yakin hapus semua?</span>
-            <button onClick={() => { onDeleteAll(); onClose(); }}
-              style={btnStyle('#DC2626', '#fff')}>Ya, Hapus</button>
-            <button onClick={() => setConfirmAll(false)}
-              style={btnStyle('rgba(255,255,255,0.1)', '#94A3B8')}>Batal</button>
+            <button onClick={() => { onDeleteAll(); onClose(); }} style={btnStyle('#DC2626', '#fff')}>Ya, Hapus</button>
+            <button onClick={() => setConfirmAll(false)} style={btnStyle('rgba(255,255,255,0.1)', '#94A3B8')}>Batal</button>
           </div>
         )}
       </div>
