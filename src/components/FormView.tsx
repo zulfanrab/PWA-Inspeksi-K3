@@ -310,8 +310,8 @@ export function FormView({
       {/* Custom Camera Overlay */}
       {showCustomCamera && (
         <CustomCamera
-          onCapture={(dataUrl) => {
-            onAddPhoto(dataUrl);
+          onCapture={(dataUrls) => {
+            dataUrls.forEach(url => onAddPhoto(url));
             setShowCustomCamera(false);
           }}
           onClose={() => setShowCustomCamera(false)}
