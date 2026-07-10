@@ -12,6 +12,7 @@ import {
 } from '../db/db';
 
 import { pushTemplatesToDrive } from '../services/syncService';
+import { UNIT_NAME_SUGGESTIONS } from '../config/suggestions';
 
 // ==========================================
 // FIELD DEFINITIONS (copy dari App.tsx agar AdminPanel mandiri)
@@ -639,6 +640,7 @@ function ClientManager({ currentUserEmail }: { currentUserEmail: string }) {
                 field={field}
                 value={unitData[field.name] || ''}
                 onChange={v => setUnitData(d => ({ ...d, [field.name]: v }))}
+                suggestions={field.name === 'namaUnit' ? UNIT_NAME_SUGGESTIONS[unitObjectType] : undefined}
               />
             ))}
 
@@ -957,13 +959,22 @@ function AdminField({ label, required, children }: { label: string; required?: b
   );
 }
 function AdminFormField({
-  field, value, onChange
+  field,
+  value,
+  onChange,
+  suggestions
 }: {
   field: FieldDef;
   value: string;
   onChange: (v: string) => void;
+  suggestions?: string[];
 }) {
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const inputCls = 'w-full bg-gray-50 border border-gray-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 rounded-xl px-4 py-3 text-sm text-gray-900 placeholder-gray-400 outline-none transition-all';
+
+  const filtered = suggestions
+    ? suggestions.filter((s) => s.toLowerCase().includes((value || '').toLowerCase()))
+    : [];
 
   return (
     <div>
@@ -990,13 +1001,37 @@ function AdminFormField({
           className={inputCls + ' resize-none'}
         />
       ) : (
-        <input
-          type={field.type}
-          value={value}
-          onChange={e => onChange(e.target.value)}
-          placeholder={field.placeholder}
-          className={inputCls}
-        />
+        <div className="relative">
+          <input
+            type={field.type}
+            value={value}
+            onChange={e => {
+              onChange(e.target.value);
+              setShowSuggestions(true);
+            }}
+            onFocus={() => setShowSuggestions(true)}
+            onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+            placeholder={field.placeholder}
+            className={inputCls}
+          />
+          {showSuggestions && filtered.length > 0 && (
+            <div className="absolute z-30 top-full mt-1.5 left-0 right-0 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden py-1 max-h-60 overflow-y-auto">
+              {filtered.slice(0, 8).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onMouseDown={() => {
+                    onChange(s);
+                    setShowSuggestions(false);
+                  }}
+                  className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-emerald-50 hover:text-emerald-800 transition-colors font-medium active:bg-emerald-100"
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

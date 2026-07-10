@@ -5,6 +5,7 @@ import { useState } from 'react';
 import type { ReactNode } from 'react';
 import type { InspectionPhoto } from '../db/db';
 import type { SifatPemeriksaan } from '../types';
+import { UNIT_NAME_SUGGESTIONS } from '../config/suggestions';
 
 const todayISO = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Jakarta' });
 
@@ -190,6 +191,7 @@ export function FormView({
             value={formData[field.name] || ''}
             onChange={(v) => onFieldChange(field.name, v)}
             accent={true}
+            suggestions={field.name === 'namaUnit' ? UNIT_NAME_SUGGESTIONS[activeObject] : undefined}
           />
         ))}
         
@@ -388,7 +390,20 @@ function Spinner() {
   );
 }
 
-export function FormField({ field, value, onChange, accent = false }: { field: FieldDef, value: string, onChange: (val: string) => void, accent?: boolean }) {
+export function FormField({
+  field,
+  value,
+  onChange,
+  accent = false,
+  suggestions
+}: {
+  field: FieldDef;
+  value: string;
+  onChange: (val: string) => void;
+  accent?: boolean;
+  suggestions?: string[];
+}) {
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const baseInput = `
     w-full border rounded-2xl px-4 py-3.5 text-sm text-gray-900
     placeholder-gray-400 outline-none transition-all duration-300 shadow-sm
@@ -397,6 +412,10 @@ export function FormField({ field, value, onChange, accent = false }: { field: F
       : 'bg-gray-50/50 border-gray-200 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/20 focus:bg-white'
     }
   `;
+
+  const filtered = suggestions
+    ? suggestions.filter((s) => s.toLowerCase().includes((value || '').toLowerCase()))
+    : [];
 
   return (
     <div>
@@ -430,13 +449,37 @@ export function FormField({ field, value, onChange, accent = false }: { field: F
           className={baseInput + ' resize-none'}
         />
       ) : (
-        <input
-          type={field.type === 'number' ? 'number' : 'text'}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={field.placeholder}
-          className={baseInput}
-        />
+        <div className="relative">
+          <input
+            type={field.type === 'number' ? 'number' : 'text'}
+            value={value}
+            onChange={(e) => {
+              onChange(e.target.value);
+              setShowSuggestions(true);
+            }}
+            onFocus={() => setShowSuggestions(true)}
+            onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+            placeholder={field.placeholder}
+            className={baseInput}
+          />
+          {showSuggestions && filtered.length > 0 && (
+            <div className="absolute z-30 top-full mt-1.5 left-0 right-0 bg-white/95 backdrop-blur-md border border-gray-100 rounded-2xl shadow-xl overflow-hidden py-1 max-h-60 overflow-y-auto">
+              {filtered.slice(0, 8).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onMouseDown={() => {
+                    onChange(s);
+                    setShowSuggestions(false);
+                  }}
+                  className="w-full text-left px-5 py-3 text-sm text-gray-700 hover:bg-emerald-50 hover:text-emerald-800 transition-colors font-medium active:bg-emerald-100"
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

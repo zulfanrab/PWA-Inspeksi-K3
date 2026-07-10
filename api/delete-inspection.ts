@@ -1,8 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { google } from 'googleapis';
 import { getDriveClient } from './driveClient.js';
-
-
+import { Readable } from 'stream';
 
 async function getRootFolderId(drive: any): Promise<string | null> {
   const res = await drive.files.list({
@@ -14,46 +13,59 @@ async function getRootFolderId(drive: any): Promise<string | null> {
   return res.data.files?.[0]?.id ?? null;
 }
 
+async function getOrCreateDeletedLogsFolder(drive: any, rootId: string): Promise<string> {
+  const res = await drive.files.list({
+    q: `name='DeletedLogs' and mimeType='application/vnd.google-apps.folder' and '${rootId}' in parents and trashed=false`,
+    fields: 'files(id)',
+    spaces: 'drive',
+    pageSize: 1,
+  });
+  if (res.data.files?.[0]?.id) {
+    return res.data.files[0].id;
+  }
+  const createRes = await drive.files.create({
+    requestBody: {
+      name: 'DeletedLogs',
+      mimeType: 'application/vnd.google-apps.folder',
+      parents: [rootId],
+    },
+    fields: 'id',
+  });
+  return createRes.data.id!;
+}
+
 async function appendTombstone(drive: any, sessionId: string): Promise<void> {
   const rootId = await getRootFolderId(drive);
   if (!rootId) return;
 
-  const logName = 'deleted-log.json';
+  const deletedFolderId = await getOrCreateDeletedLogsFolder(drive, rootId);
+
+  // Cek apakah file tombstone untuk sessionId ini sudah ada
   const existing = await drive.files.list({
-    q: `name='${logName}' and '${rootId}' in parents and trashed=false`,
+    q: `name='${sessionId}' and '${deletedFolderId}' in parents and trashed=false`,
     fields: 'files(id)',
     spaces: 'drive',
     pageSize: 1,
   });
 
-  const entry = { sessionId, deletedAt: new Date().toISOString() };
-
   if (existing.data.files?.length) {
-    const fileId = existing.data.files[0].id!;
-    const contentRes = await drive.files.get(
-      { fileId, alt: 'media' },
-      { responseType: 'json' }
-    );
-    const current: any[] = Array.isArray(contentRes.data) ? contentRes.data : [];
-    current.push(entry);
-    const { Readable } = await import('stream');
-    const stream = Readable.from([JSON.stringify(current)]);
-    await drive.files.update({
-      fileId,
-      media: { mimeType: 'application/json', body: stream },
-    });
-  } else {
-    const { Readable } = await import('stream');
-    const stream = Readable.from([JSON.stringify([entry])]);
-    await drive.files.create({
-      requestBody: {
-        name: logName,
-        parents: [rootId],
-        mimeType: 'application/json',
-      },
-      media: { mimeType: 'application/json', body: stream },
-    });
+    // Sudah terdaftar sebagai terhapus, skip
+    return;
   }
+
+  // Buat file tombstone kosong bernama [sessionId]
+  const stream = Readable.from(['{}']);
+  await drive.files.create({
+    requestBody: {
+      name: sessionId,
+      parents: [deletedFolderId],
+      mimeType: 'application/json',
+    },
+    media: {
+      mimeType: 'application/json',
+      body: stream,
+    },
+  });
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {

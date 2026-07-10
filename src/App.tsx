@@ -16,6 +16,8 @@ import { flushSync } from 'react-dom';
 import {
   SessionRepository,
   RoleRepository,
+  ClientRepository,
+  UnitRepository,
   type InspectionSession,
   type InspectionPhoto,
 } from './db/db';
@@ -33,6 +35,7 @@ import {
 import {
   pullTemplatesFromDrive,
   pullInspectionsFromDrive,
+  pushTemplatesToDrive,
 } from './services/syncService';
 import { GOOGLE_CONFIG, getGoogleRedirectUri, getApiBaseUrl } from './config';
 import { FormView } from './components/FormView';
@@ -201,6 +204,68 @@ function buildOAuthUrl() {
     prompt: 'select_account',
   });
   return `https://accounts.google.com/o/oauth2/auth?${params.toString()}`;
+}
+
+async function ensureClientAndUnitTemplates(
+  clientNameStr: string,
+  objectTypeStr: string,
+  unitDataObj: Record<string, string>,
+  templateClientId?: string,
+  templateUnitId?: string,
+  email?: string
+): Promise<{ clientId: string; unitId: string }> {
+  const trimmedClient = clientNameStr.trim();
+  if (!trimmedClient) return { clientId: '', unitId: '' };
+
+  let finalClientId = templateClientId;
+
+  // 1. Pastikan Klien terdaftar di template
+  if (!finalClientId) {
+    const allClients = await ClientRepository.getAll();
+    const match = allClients.find(c => c.name.toLowerCase() === trimmedClient.toLowerCase());
+    if (match) {
+      finalClientId = match.id;
+    } else {
+      finalClientId = await ClientRepository.create({
+        name: trimmedClient,
+        createdBy: email || 'system',
+      });
+    }
+  }
+
+  let finalUnitId = templateUnitId;
+
+  // 2. Pastikan Unit terdaftar di template klien tersebut
+  if (finalClientId) {
+    const trimmedNamaUnit = (unitDataObj.namaUnit || '').trim();
+    const trimmedNomorSeri = (unitDataObj.nomorSeri || '').trim();
+
+    const allUnits = await UnitRepository.getByClient(finalClientId);
+    const match = allUnits.find(u => 
+      u.label.toLowerCase() === trimmedNamaUnit.toLowerCase() &&
+      (u.unitData?.nomorSeri || '').toLowerCase() === trimmedNomorSeri.toLowerCase()
+    );
+
+    if (match) {
+      finalUnitId = match.id;
+    } else {
+      finalUnitId = await UnitRepository.create({
+        clientId: finalClientId,
+        objectType: objectTypeStr,
+        unitData: unitDataObj,
+        label: trimmedNamaUnit || 'Unit Tanpa Nama',
+        createdBy: email || 'system',
+      });
+    }
+  }
+
+  // Push template terbaru ke Drive di background agar ter-sync ke perangkat lain
+  pushTemplatesToDrive().catch(err => console.warn('[TemplateSync] Gagal push template:', err));
+
+  return {
+    clientId: finalClientId || '',
+    unitId: finalUnitId || ''
+  };
 }
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
@@ -823,6 +888,16 @@ const triggerAutoSync = useCallback(async () => {
     }
     setIsSaving(true);
     try {
+      // Pastikan klien dan unit masuk ke template unit di admin panel (jika diinput manual)
+      const { clientId, unitId } = await ensureClientAndUnitTemplates(
+        clientName,
+        activeObject,
+        formData,
+        fromTemplateClientId,
+        fromTemplateUnitId,
+        currentUserEmail
+      );
+
       if (formMode === 'edit' && editingId) {
         // FIXED: Simpan selalu sebagai 'draft' dulu
         // Status baru akan diupdate ke 'synced' setelah upload sukses
@@ -832,8 +907,8 @@ const triggerAutoSync = useCallback(async () => {
             clientName: clientName.trim(),
             objectType: activeObject,
             unitData: formData,
-            templateClientId: fromTemplateClientId,
-            templateUnitId: fromTemplateUnitId,
+            templateClientId: clientId || fromTemplateClientId,
+            templateUnitId: unitId || fromTemplateUnitId,
             inspectorEmail: currentUserEmail,
             status: 'draft', // FIXED: draft dulu, bukan synced
           },
@@ -915,8 +990,8 @@ const triggerAutoSync = useCallback(async () => {
             objectType: activeObject,
             unitData: formData,
             status: 'draft',
-            templateClientId: fromTemplateClientId,
-            templateUnitId: fromTemplateUnitId,
+            templateClientId: clientId || fromTemplateClientId,
+            templateUnitId: unitId || fromTemplateUnitId,
             inspectorEmail: currentUserEmail,
           },
           newPhotos

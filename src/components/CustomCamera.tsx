@@ -74,6 +74,30 @@ async function reverseGeocode(lat: number, lng: number): Promise<LocationDetail>
 // ─── WATERMARK RENDERER ───────────────────────────────────────────────────────
 // Posisi: pojok kiri bawah. Style: profesional survey lapangan.
 // Semua ukuran relatif terhadap H canvas → proporsional portrait & landscape.
+function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
+  const words = text.split(' ');
+  const lines: string[] = [];
+  let currentLine = words[0] || '';
+
+  for (let i = 1; i < words.length; i++) {
+    const word = words[i];
+    const width = ctx.measureText(currentLine + ' ' + word).width;
+    if (width < maxWidth) {
+      currentLine += ' ' + word;
+    } else {
+      lines.push(currentLine);
+      currentLine = word;
+    }
+  }
+  if (currentLine) {
+    lines.push(currentLine);
+  }
+  return lines;
+}
+
+// ─── WATERMARK RENDERER ───────────────────────────────────────────────────────
+// Posisi: pojok kiri bawah. Style: profesional survey lapangan.
+// Semua ukuran relatif terhadap H canvas → proporsional portrait & landscape.
 async function drawWatermark(
   ctx: CanvasRenderingContext2D,
   W: number,
@@ -89,7 +113,6 @@ async function drawWatermark(
   const F_SUB     = unit * 0.95;          // sub-label di bawah judul
   const PAD_X     = unit * 2.2;
   const PAD_Y     = unit * 1.8;
-  const ROW_H     = F_VALUE * 2.4;        // tinggi per baris (label + value)
   const LOGO_SZ   = F_TITLE * 2.2;
   const MARGIN    = unit * 2.2;
   const STRIPE_W  = unit * 0.65;
@@ -106,39 +129,46 @@ async function drawWatermark(
   const coordStr = gps ? `${gps.lat.toFixed(6)}, ${gps.lng.toFixed(6)}` : null;
   const accStr   = gps ? `±${Math.round(gps.acc)} m` : null;
 
-  // ── Struktur baris: setiap baris punya label kecil di atas + value di bawah
-  // Tanggal dan jam = 2 baris terpisah, tidak inline
+  // ── Struktur baris: setiap baris punya label kecil di atas + value di bawah (dengan auto wrap)
   type Row = { icon: string; label: string; value: string; valueColor: string };
-  const rows: Row[] = [];
+  const rawRows: Row[] = [];
 
-  rows.push({ icon: '📅', label: 'TANGGAL', value: dateStr,  valueColor: '#E2E8F0' });
-  rows.push({ icon: '🕐', label: 'WAKTU',   value: timeStr,  valueColor: '#E2E8F0' });
+  rawRows.push({ icon: '📅', label: 'TANGGAL', value: dateStr,  valueColor: '#E2E8F0' });
+  rawRows.push({ icon: '🕐', label: 'WAKTU',   value: timeStr,  valueColor: '#E2E8F0' });
 
   if (gps && coordStr) {
-    rows.push({ icon: '📍', label: 'KOORDINAT', value: coordStr, valueColor: '#34D399' });
-    rows.push({ icon: '  ', label: 'AKURASI',   value: accStr!,  valueColor: '#94A3B8' });
+    rawRows.push({ icon: '📍', label: 'KOORDINAT', value: coordStr, valueColor: '#34D399' });
+    rawRows.push({ icon: '  ', label: 'AKURASI',   value: accStr!,  valueColor: '#94A3B8' });
   } else {
-    rows.push({ icon: '📍', label: 'GPS', value: 'Tidak tersedia', valueColor: '#F59E0B' });
+    rawRows.push({ icon: '📍', label: 'GPS', value: 'Tidak tersedia', valueColor: '#F59E0B' });
   }
 
-  if (loc.poiName)  rows.push({ icon: '🏢', label: 'LOKASI',  value: loc.poiName,  valueColor: '#93C5FD' });
-  if (loc.areaName) rows.push({ icon: '🗺', label: 'WILAYAH', value: loc.areaName, valueColor: '#6EE7B7' });
+  if (loc.poiName)  rawRows.push({ icon: '🏢', label: 'LOKASI',  value: loc.poiName,  valueColor: '#93C5FD' });
+  if (loc.areaName) rawRows.push({ icon: '🗺', label: 'WILAYAH', value: loc.areaName, valueColor: '#6EE7B7' });
 
-  // ── Hitung lebar box dari konten terpanjang
-  FONT(F_VALUE, true);
-  const maxValW = Math.max(...rows.map(r => ctx.measureText(r.value).width));
-  FONT(F_TITLE, true);
-  const titleLineW = LOGO_SZ + unit * 1.5 + ctx.measureText('AKSARA INSPECT').width;
+  // ── Hitung lebar box (Dinaikkan dari 60% ke 75% W agar teks panjang punya lebih banyak ruang)
+  const boxW = Math.round(W * 0.75);
+  const maxTextW = boxW - STRIPE_W - PAD_X * 2 - ICON_COL;
 
-  const boxW = Math.min(
-    W * 0.60,
-    Math.max(maxValW + ICON_COL, titleLineW) + PAD_X * 2 + STRIPE_W
-  );
+  // Proses wrapping untuk setiap baris
+  const rows: (Row & { lines: string[] })[] = [];
+  for (const r of rawRows) {
+    FONT(F_VALUE, true);
+    const lines = wrapText(ctx, r.value, maxTextW);
+    rows.push({ ...r, lines });
+  }
 
-  // ── Hitung tinggi box
+  // Hitung total tinggi yang dibutuhkan secara dinamis
   const HEADER_H  = LOGO_SZ + PAD_Y * 0.6;
   const DIVIDER_H = unit * 1.6;
-  const boxH      = PAD_Y * 2 + HEADER_H + DIVIDER_H + rows.length * ROW_H;
+  
+  let rowsHeight = 0;
+  for (const r of rows) {
+    const lineCount = r.lines.length;
+    rowsHeight += F_LABEL + (lineCount * F_VALUE * 1.25) + unit * 1.2;
+  }
+
+  const boxH = PAD_Y * 2 + HEADER_H + DIVIDER_H + rowsHeight;
 
   // ── Posisi kiri bawah
   const bx = MARGIN;
@@ -149,7 +179,7 @@ async function drawWatermark(
   ctx.shadowColor   = 'rgba(0,0,0,0.6)';
   ctx.shadowBlur    = unit * 4;
   ctx.shadowOffsetY = unit * 1.5;
-  ctx.fillStyle     = 'rgba(8, 14, 24, 0.60)';
+  ctx.fillStyle     = 'rgba(8, 14, 24, 0.65)';
   rrect(ctx, bx, by, boxW, boxH, unit * 1.0);
   ctx.fill();
   ctx.restore();
@@ -159,11 +189,7 @@ async function drawWatermark(
   rrect(ctx, bx, by, STRIPE_W, boxH, { tl: unit, bl: unit, tr: 0, br: 0 });
   ctx.fill();
 
-  // Border
-  ctx.strokeStyle = 'rgba(16,185,129,0.25)';
-  ctx.lineWidth   = Math.max(0.5, unit * 0.09);
-  rrect(ctx, bx, by, boxW, boxH, unit * 1.0);
-  ctx.stroke();
+  // BORDER DIHAPUS (Sesuai request user: "kalo bisa hilangkan border juga boleh yang penting informasi timestampnya lengkap dan bagus")
 
   // ── Konten
   const cx = bx + STRIPE_W + PAD_X;
@@ -216,7 +242,7 @@ async function drawWatermark(
   ctx.stroke();
   cy += DIVIDER_H;
 
-  // — Baris data: label kecil abu di atas, value bold di bawah
+  // — Baris data: label kecil abu di atas, value bold di bawah (bisa multi-line)
   for (const row of rows) {
     const baseX = cx + ICON_COL;
 
@@ -233,9 +259,13 @@ async function drawWatermark(
     // Value
     FONT(F_VALUE, true);
     ctx.fillStyle = row.valueColor;
-    ctx.fillText(row.value, baseX, cy + F_LABEL + F_VALUE * 1.05);
 
-    cy += ROW_H;
+    for (let li = 0; li < row.lines.length; li++) {
+      ctx.fillText(row.lines[li], baseX, cy + F_LABEL + F_VALUE * (1.1 + li * 1.25));
+    }
+
+    // Hitung tinggi yang telah dipakai baris ini
+    cy += F_LABEL + (row.lines.length * F_VALUE * 1.25) + unit * 1.2;
   }
 }
 
@@ -538,6 +568,19 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
   const [photos,          setPhotos         ] = useState<string[]>([]);
   const [gallery,         setGallery        ] = useState<{ open: boolean; index: number }>({ open: false, index: 0 });
 
+  // States untuk Flash/Torch & Zoom
+  const [zoom,            setZoom           ] = useState(1);
+  const [maxZoom,         setMaxZoom        ] = useState(1);
+  const [minZoom,         setMinZoom        ] = useState(1);
+  const [zoomSupported,   setZoomSupported  ] = useState(false);
+  const [torch,           setTorch          ] = useState(false);
+  const [torchSupported,  setTorchSupported ] = useState(false);
+
+  // States untuk Lens Switcher (multi-camera)
+  type LensDevice = { deviceId: string; label: string };
+  const [lensDevices,     setLensDevices    ] = useState<LensDevice[]>([]);
+  const [activeDeviceId,  setActiveDeviceId ] = useState<string | null>(null);
+
   // ─── KAMERA ─────────────────────────────────────────────────────────────
   useEffect(() => {
     let mounted = true;
@@ -546,8 +589,12 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
         setLoading(true); setError(null);
         if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
 
+        const videoConstraints: MediaTrackConstraints = activeDeviceId
+          ? { deviceId: { exact: activeDeviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+          : { facingMode: facing, width: { ideal: 1920 }, height: { ideal: 1080 } };
+
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: facing, width: { ideal: 1920 }, height: { ideal: 1080 } },
+          video: videoConstraints,
           audio: false,
         });
         if (!mounted) { stream.getTracks().forEach(t => t.stop()); return; }
@@ -557,6 +604,79 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
           const p = videoRef.current.play();
           p?.catch(e => { if (e.name !== 'AbortError') console.error(e); });
         }
+
+        // Cek capabilities untuk zoom dan torch (flash)
+        const videoTrack = stream.getVideoTracks()[0];
+        if (videoTrack) {
+          // Reset torch state & zoom state
+          setTorch(false);
+          setZoom(1);
+
+          const capabilities = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+          
+          // Flash/Torch
+          setTorchSupported('torch' in capabilities);
+
+          // Zoom
+          if ('zoom' in capabilities) {
+            setZoomSupported(true);
+            const zoomCap = (capabilities as any).zoom;
+            setMinZoom(zoomCap.min || 1);
+            setMaxZoom(zoomCap.max || 1);
+            setZoom(zoomCap.min || 1);
+          } else {
+            setZoomSupported(false);
+          }
+        }
+
+        // Enumerate devices untuk lens switcher — hanya saat pertama kali stream berjalan
+        if (facing === 'environment') {
+          try {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const videoInputs = devices.filter(d => d.kind === 'videoinput' && d.deviceId);
+
+            // Filter hanya kamera belakang berdasarkan label
+            const backCameras = videoInputs.filter(d => {
+              const lbl = (d.label || '').toLowerCase();
+              // Deteksi kamera depan untuk di-exclude
+              const isFront = lbl.includes('front') || lbl.includes('user') || lbl.includes('selfie') ||
+                              lbl.includes('depan') || lbl.includes('facing front');
+              return !isFront;
+            });
+
+            if (backCameras.length > 1 && mounted) {
+              // Tentukan label yang manusiawi (0.5x, 1x, 2x dst.)
+              const lensLabels = backCameras.map((cam, idx) => {
+                const lbl = (cam.label || '').toLowerCase();
+                let friendlyLabel: string;
+                if (lbl.includes('ultra') || lbl.includes('0.5') || lbl.includes('0.6') || lbl.includes('wide') || idx === 0) {
+                  friendlyLabel = idx === 0 && backCameras.length >= 2 ? '0.5×' : '1×';
+                } else if (lbl.includes('tele') || lbl.includes('2x') || lbl.includes('3x') || lbl.includes('5x') || lbl.includes('zoom')) {
+                  friendlyLabel = lbl.includes('5x') ? '5×' : lbl.includes('3x') ? '3×' : '2×';
+                } else {
+                  // Urutkan berdasarkan index
+                  const multipliers = ['0.5×', '1×', '2×', '3×', '5×'];
+                  friendlyLabel = multipliers[idx] || `${idx + 1}×`;
+                }
+                return { deviceId: cam.deviceId, label: friendlyLabel };
+              });
+              setLensDevices(lensLabels);
+              // Set default ke lensa utama (1x)
+              if (!activeDeviceId) {
+                const mainLens = lensLabels.find(l => l.label === '1×') || lensLabels[Math.floor(lensLabels.length / 2)];
+                setActiveDeviceId(mainLens.deviceId);
+              }
+            } else {
+              setLensDevices([]);
+            }
+          } catch (_) {
+            // enumerateDevices gagal — tidak apa-apa, fitur lens switcher tidak ditampilkan
+          }
+        } else {
+          // Kamera depan — hapus lens devices
+          setLensDevices([]);
+        }
+
         setLoading(false);
       } catch (e: any) {
         if (mounted) { setError(e.message || 'Gagal mengakses kamera'); setLoading(false); }
@@ -564,7 +684,40 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
     };
     initStream();
     return () => { mounted = false; streamRef.current?.getTracks().forEach(t => t.stop()); };
-  }, [facing]);
+  }, [facing, activeDeviceId]);
+
+  const handleTorchToggle = async () => {
+    const stream = streamRef.current;
+    if (!stream) return;
+    const videoTrack = stream.getVideoTracks()[0];
+    if (videoTrack && torchSupported) {
+      try {
+        const nextTorch = !torch;
+        await videoTrack.applyConstraints({
+          advanced: [{ torch: nextTorch } as any]
+        });
+        setTorch(nextTorch);
+      } catch (e) {
+        console.error('Gagal menerapkan torch:', e);
+      }
+    }
+  };
+
+  const handleZoomChange = async (value: number) => {
+    const stream = streamRef.current;
+    if (!stream) return;
+    const videoTrack = stream.getVideoTracks()[0];
+    if (videoTrack && zoomSupported) {
+      try {
+        await videoTrack.applyConstraints({
+          advanced: [{ zoom: value } as any]
+        });
+        setZoom(value);
+      } catch (e) {
+        console.error('Gagal menerapkan zoom:', e);
+      }
+    }
+  };
 
   // ─── GPS + GEOCODING ─────────────────────────────────────────────────────
   const doGeocode = useCallback(async (lat: number, lng: number) => {
@@ -645,8 +798,24 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
             </span>
           </label>
 
+          {torchSupported && (
+            <button
+              onClick={handleTorchToggle}
+              style={{
+                ...btnStyle(torch ? 'rgba(245,158,11,0.2)' : 'rgba(255,255,255,0.1)', torch ? '#F59E0B' : '#E2E8F0'),
+                border: torch ? '1px solid rgba(245,158,11,0.4)' : 'none',
+              }}
+            >
+              {torch ? '🔦 Senter On' : '🔦 Senter Off'}
+            </button>
+          )}
+
           <button
-            onClick={() => setFacing(f => f === 'environment' ? 'user' : 'environment')}
+            onClick={() => {
+              setActiveDeviceId(null);
+              setLensDevices([]);
+              setFacing(f => f === 'environment' ? 'user' : 'environment');
+            }}
             style={btnStyle('rgba(255,255,255,0.1)')}>
             🔄 Balik
           </button>
@@ -719,6 +888,86 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
               `,
               backgroundSize: '33.33% 33.33%',
             }} />
+          )}
+
+          {/* Zoom overlay control */}
+          {zoomSupported && maxZoom > minZoom && (
+            <div style={{
+              position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)',
+              background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(5px)',
+              borderRadius: 20, padding: '6px 14px', display: 'flex', alignItems: 'center', gap: 10,
+              boxShadow: '0 4px 15px rgba(0,0,0,0.4)', zIndex: 10,
+            }}>
+              <button
+                type="button"
+                onClick={() => handleZoomChange(Math.max(minZoom, zoom - 0.5))}
+                style={{ background: 'none', border: 'none', color: '#fff', fontSize: 16, fontWeight: 'bold', cursor: 'pointer', padding: '0 6px' }}
+              >
+                -
+              </button>
+              <input
+                type="range"
+                min={minZoom}
+                max={maxZoom}
+                step={0.1}
+                value={zoom}
+                onChange={(e) => handleZoomChange(parseFloat(e.target.value))}
+                style={{ accentColor: '#10B981', width: 100, height: 4, cursor: 'pointer' }}
+              />
+              <button
+                type="button"
+                onClick={() => handleZoomChange(Math.min(maxZoom, zoom + 0.5))}
+                style={{ background: 'none', border: 'none', color: '#fff', fontSize: 16, fontWeight: 'bold', cursor: 'pointer', padding: '0 6px' }}
+              >
+                +
+              </button>
+              <span style={{ color: '#10B981', fontSize: 12, fontWeight: 'bold', minWidth: 32, textAlign: 'center' }}>
+                {zoom.toFixed(1)}x
+              </span>
+            </div>
+          )}
+
+          {/* Lens Switcher — tombol 0.5× / 1× / 2× untuk multi-camera fisik */}
+          {lensDevices.length > 1 && (
+            <div style={{
+              position: 'absolute',
+              bottom: zoomSupported && maxZoom > minZoom ? 62 : 16,
+              left: '50%', transform: 'translateX(-50%)',
+              display: 'flex', gap: 8, zIndex: 11,
+            }}>
+              {lensDevices.map((lens) => {
+                const isActive = activeDeviceId === lens.deviceId;
+                return (
+                  <button
+                    key={lens.deviceId}
+                    type="button"
+                    onClick={() => setActiveDeviceId(lens.deviceId)}
+                    style={{
+                      width: 46, height: 46, borderRadius: '50%',
+                      background: isActive
+                        ? 'rgba(16,185,129,0.85)'
+                        : 'rgba(0,0,0,0.6)',
+                      backdropFilter: 'blur(6px)',
+                      border: isActive
+                        ? '2px solid #10B981'
+                        : '2px solid rgba(255,255,255,0.2)',
+                      color: isActive ? '#fff' : '#CBD5E1',
+                      fontSize: lens.label.length > 3 ? 10 : 12,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      boxShadow: isActive
+                        ? '0 0 16px rgba(16,185,129,0.5)'
+                        : '0 2px 8px rgba(0,0,0,0.5)',
+                      transition: 'all 0.2s ease',
+                      transform: isActive ? 'scale(1.1)' : 'scale(1)',
+                    }}
+                  >
+                    {lens.label}
+                  </button>
+                );
+              })}
+            </div>
           )}
         </div>
 

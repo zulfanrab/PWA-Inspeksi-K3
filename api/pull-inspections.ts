@@ -85,6 +85,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const rootId = rootRes.data.files?.[0]?.id;
       
       if (rootId) {
+        // 1. Baca log lama dari deleted-log.json (jika ada) untuk backward compatibility
         const logRes = await drive.files.list({
           q: `name='deleted-log.json' and '${rootId}' in parents and trashed=false`,
           fields: 'files(id)',
@@ -99,6 +100,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           );
           const log: any[] = Array.isArray(logContent.data) ? logContent.data : [];
           deletedIds = log.map((e) => e.sessionId).filter(Boolean);
+        }
+
+        // 2. Baca log baru dari folder DeletedLogs
+        const deletedLogsFolderRes = await drive.files.list({
+          q: `name='DeletedLogs' and mimeType='application/vnd.google-apps.folder' and '${rootId}' in parents and trashed=false`,
+          fields: 'files(id)',
+          spaces: 'drive',
+          pageSize: 1,
+        });
+        
+        const deletedLogsFolderId = deletedLogsFolderRes.data.files?.[0]?.id;
+        if (deletedLogsFolderId) {
+          const newLogsRes = await drive.files.list({
+            q: `'${deletedLogsFolderId}' in parents and trashed=false`,
+            fields: 'files(name)',
+            spaces: 'drive',
+            pageSize: 1000,
+          });
+          const newLogIds = (newLogsRes.data.files ?? []).map(f => f.name!).filter(Boolean);
+          deletedIds = Array.from(new Set([...deletedIds, ...newLogIds]));
         }
       }
     } catch (e) {

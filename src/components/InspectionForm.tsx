@@ -1,6 +1,7 @@
 // src/components/InspectionForm.tsx
 import { useState, useRef } from 'react';
 import type { SifatPemeriksaan } from '../types';
+import { UNIT_NAME_SUGGESTIONS } from '../config/suggestions';
 
 const todayISO = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Jakarta' });
 
@@ -150,12 +151,30 @@ export default function InspectionForm({ activeObject, activeClient, onSave, tem
 
       {/* Input Umum */}
       <div className="space-y-4">
-        {['Nama Unit', 'Nomor Seri', 'Lokasi Site'].map(field => (
-          <div key={field}>
-            <label className="block text-[11px] font-bold text-gray-500 uppercase mb-1">{field}</label>
-            <input required type="text" onChange={e => setFormData({...formData, [field]: e.target.value})} className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm" />
-          </div>
-        ))}
+        {['Nama Unit', 'Nomor Seri', 'Lokasi Site'].map(field => {
+          if (field === 'Nama Unit') {
+            return (
+              <NamaUnitInputWithAutocomplete
+                key={field}
+                activeObject={activeObject}
+                value={formData['Nama Unit'] || ''}
+                onChange={val => setFormData({ ...formData, 'Nama Unit': val })}
+              />
+            );
+          }
+          return (
+            <div key={field}>
+              <label className="block text-[11px] font-bold text-gray-500 uppercase mb-1">{field}</label>
+              <input
+                required
+                type="text"
+                value={formData[field] || ''}
+                onChange={e => setFormData({ ...formData, [field]: e.target.value })}
+                className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm"
+              />
+            </div>
+          );
+        })}
       </div>
 
       {/* Input Khusus */}
@@ -185,5 +204,55 @@ export default function InspectionForm({ activeObject, activeClient, onSave, tem
 
       <button type="submit" className="w-full bg-[#1F2937] text-white py-4 rounded-xl font-bold text-sm shadow-lg">Simpan Draft Offline</button>
     </form>
+  );
+}
+
+function NamaUnitInputWithAutocomplete({
+  activeObject,
+  value,
+  onChange
+}: {
+  activeObject: string;
+  value: string;
+  onChange: (val: string) => void;
+}) {
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const suggestions = UNIT_NAME_SUGGESTIONS[activeObject] || [];
+
+  const filtered = suggestions.filter((s) => s.toLowerCase().includes((value || '').toLowerCase()));
+
+  return (
+    <div className="relative">
+      <label className="block text-[11px] font-bold text-gray-500 uppercase mb-1">Nama Unit</label>
+      <input
+        required
+        type="text"
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setShowSuggestions(true);
+        }}
+        onFocus={() => setShowSuggestions(true)}
+        onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+        className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm"
+      />
+      {showSuggestions && filtered.length > 0 && (
+        <div className="absolute z-30 top-full mt-1 left-0 right-0 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden py-1 max-h-60 overflow-y-auto">
+          {filtered.slice(0, 8).map((s) => (
+            <button
+              key={s}
+              type="button"
+              onMouseDown={() => {
+                onChange(s);
+                setShowSuggestions(false);
+              }}
+              className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-emerald-50 hover:text-emerald-800 transition-colors font-medium active:bg-emerald-100"
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
