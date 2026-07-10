@@ -72,8 +72,6 @@ async function reverseGeocode(lat: number, lng: number): Promise<LocationDetail>
 }
 
 // ─── WATERMARK RENDERER ───────────────────────────────────────────────────────
-// Posisi: pojok kiri bawah. Style: profesional survey lapangan.
-// Semua ukuran relatif terhadap H canvas → proporsional portrait & landscape.
 function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
   const words = text.split(' ');
   const lines: string[] = [];
@@ -95,9 +93,6 @@ function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number)
   return lines;
 }
 
-// ─── WATERMARK RENDERER ───────────────────────────────────────────────────────
-// Posisi: pojok kiri bawah. Style: profesional survey lapangan.
-// Semua ukuran relatif terhadap H canvas → proporsional portrait & landscape.
 async function drawWatermark(
   ctx: CanvasRenderingContext2D,
   W: number,
@@ -105,31 +100,28 @@ async function drawWatermark(
   gps: GpsData | null,
   loc: LocationDetail
 ) {
-  // ── Token ukuran — satu sumber kebenaran
-  const unit      = Math.max(1, H / 90);  // baseline: ~1.1% tinggi foto
-  const F_LABEL   = unit * 1.0;           // label abu kecil (TANGGAL / JAM / dll)
-  const F_VALUE   = unit * 1.4;           // nilai utama tiap baris
-  const F_TITLE   = unit * 1.4;           // judul app — SAMA dengan F_VALUE biar tidak norak
-  const F_SUB     = unit * 0.95;          // sub-label di bawah judul
+  const unit      = Math.max(1, H / 90);  
+  const F_LABEL   = unit * 1.0;           
+  const F_VALUE   = unit * 1.4;           
+  const F_TITLE   = unit * 1.4;           
+  const F_SUB     = unit * 0.95;          
   const PAD_X     = unit * 2.2;
   const PAD_Y     = unit * 1.8;
   const LOGO_SZ   = F_TITLE * 2.2;
   const MARGIN    = unit * 2.2;
   const STRIPE_W  = unit * 0.65;
-  const ICON_COL  = F_VALUE * 1.55;       // lebar kolom emoji (tetap, tidak campur dengan teks)
+  const ICON_COL  = F_VALUE * 1.55;       
 
   const FONT = (size: number, bold = false) => {
     ctx.font = `${bold ? '600 ' : ''}${size}px 'SF Pro Text','Segoe UI',system-ui,sans-serif`;
   };
 
-  // ── Data
   const now      = new Date();
   const dateStr  = now.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
   const timeStr  = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const coordStr = gps ? `${gps.lat.toFixed(6)}, ${gps.lng.toFixed(6)}` : null;
   const accStr   = gps ? `±${Math.round(gps.acc)} m` : null;
 
-  // ── Struktur baris: setiap baris punya label kecil di atas + value di bawah (dengan auto wrap)
   type Row = { icon: string; label: string; value: string; valueColor: string };
   const rawRows: Row[] = [];
 
@@ -146,11 +138,9 @@ async function drawWatermark(
   if (loc.poiName)  rawRows.push({ icon: '🏢', label: 'LOKASI',  value: loc.poiName,  valueColor: '#93C5FD' });
   if (loc.areaName) rawRows.push({ icon: '🗺', label: 'WILAYAH', value: loc.areaName, valueColor: '#6EE7B7' });
 
-  // ── Hitung lebar box (Dinaikkan dari 60% ke 75% W agar teks panjang punya lebih banyak ruang)
   const boxW = Math.round(W * 0.75);
   const maxTextW = boxW - STRIPE_W - PAD_X * 2 - ICON_COL;
 
-  // Proses wrapping untuk setiap baris
   const rows: (Row & { lines: string[] })[] = [];
   for (const r of rawRows) {
     FONT(F_VALUE, true);
@@ -158,7 +148,6 @@ async function drawWatermark(
     rows.push({ ...r, lines });
   }
 
-  // Hitung total tinggi yang dibutuhkan secara dinamis
   const HEADER_H  = LOGO_SZ + PAD_Y * 0.6;
   const DIVIDER_H = unit * 1.6;
   
@@ -170,11 +159,9 @@ async function drawWatermark(
 
   const boxH = PAD_Y * 2 + HEADER_H + DIVIDER_H + rowsHeight;
 
-  // ── Posisi kiri bawah
   const bx = MARGIN;
   const by = H - MARGIN - boxH;
 
-  // ── Background
   ctx.save();
   ctx.shadowColor   = 'rgba(0,0,0,0.6)';
   ctx.shadowBlur    = unit * 4;
@@ -184,18 +171,13 @@ async function drawWatermark(
   ctx.fill();
   ctx.restore();
 
-  // Stripe hijau kiri
   ctx.fillStyle = '#10B981';
   rrect(ctx, bx, by, STRIPE_W, boxH, { tl: unit, bl: unit, tr: 0, br: 0 });
   ctx.fill();
 
-  // BORDER DIHAPUS (Sesuai request user: "kalo bisa hilangkan border juga boleh yang penting informasi timestampnya lengkap dan bagus")
-
-  // ── Konten
   const cx = bx + STRIPE_W + PAD_X;
   let cy   = by + PAD_Y;
 
-  // — Header: logo + nama app (judul sama size dengan value, tidak oversized)
   try {
     const img = new Image();
     img.crossOrigin = 'anonymous';
@@ -207,7 +189,6 @@ async function drawWatermark(
     });
     ctx.drawImage(img, cx, cy + (LOGO_SZ - LOGO_SZ) / 2, LOGO_SZ, LOGO_SZ);
   } catch {
-    // Fallback kotak hijau dengan huruf A
     ctx.fillStyle = '#10B981';
     rrect(ctx, cx, cy, LOGO_SZ, LOGO_SZ, unit * 0.5);
     ctx.fill();
@@ -218,7 +199,6 @@ async function drawWatermark(
 
   const tx = cx + LOGO_SZ + unit * 1.5;
 
-  // Nama app — bold, tapi ukuran = F_TITLE (sama dengan F_VALUE, tidak besar-besaran)
   FONT(F_TITLE, true);
   ctx.fillStyle = '#10B981';
   ctx.fillText('AKSARA', tx, cy + F_TITLE * 1.0);
@@ -226,14 +206,12 @@ async function drawWatermark(
   ctx.fillStyle = '#FFFFFF';
   ctx.fillText(' INSPECT', tx + aksaraW, cy + F_TITLE * 1.0);
 
-  // Sub-label kecil
   FONT(F_SUB);
   ctx.fillStyle = 'rgba(100,116,139,0.85)';
   ctx.fillText('Survey Field Documentation', tx, cy + F_TITLE * 1.0 + F_SUB * 1.7);
 
   cy += HEADER_H;
 
-  // — Divider
   ctx.strokeStyle = 'rgba(148,163,184,0.15)';
   ctx.lineWidth   = Math.max(0.4, unit * 0.07);
   ctx.beginPath();
@@ -242,21 +220,17 @@ async function drawWatermark(
   ctx.stroke();
   cy += DIVIDER_H;
 
-  // — Baris data: label kecil abu di atas, value bold di bawah (bisa multi-line)
   for (const row of rows) {
     const baseX = cx + ICON_COL;
 
-    // Emoji
     FONT(F_VALUE);
     ctx.fillStyle = 'rgba(148,163,184,0.85)';
     ctx.fillText(row.icon, cx, cy + F_LABEL + F_VALUE * 0.85);
 
-    // Label kecil
     FONT(F_LABEL);
     ctx.fillStyle = 'rgba(100,116,139,0.8)';
     ctx.fillText(row.label, baseX, cy + F_LABEL);
 
-    // Value
     FONT(F_VALUE, true);
     ctx.fillStyle = row.valueColor;
 
@@ -264,12 +238,10 @@ async function drawWatermark(
       ctx.fillText(row.lines[li], baseX, cy + F_LABEL + F_VALUE * (1.1 + li * 1.25));
     }
 
-    // Hitung tinggi yang telah dipakai baris ini
     cy += F_LABEL + (row.lines.length * F_VALUE * 1.25) + unit * 1.2;
   }
 }
 
-// ── Helper roundRect cross-browser
 function rrect(
   ctx: CanvasRenderingContext2D,
   x: number, y: number, w: number, h: number,
@@ -310,7 +282,6 @@ function PhotoGallery({ photos, initialIndex, onClose, onDeleteOne, onDeleteAll 
   const dragStart = useRef<{ x: number; y: number } | null>(null);
   const lastOffset = useRef({ x: 0, y: 0 });
 
-  // Pinch zoom refs
   const lastDist = useRef<number | null>(null);
   const lastScale = useRef(1);
 
@@ -321,7 +292,6 @@ function PhotoGallery({ photos, initialIndex, onClose, onDeleteOne, onDeleteAll 
     setIdx(Math.max(0, Math.min(photos.length - 1, newIdx)));
   };
 
-  // Touch gestures
   const onTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length === 1) {
       dragStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
@@ -356,7 +326,6 @@ function PhotoGallery({ photos, initialIndex, onClose, onDeleteOne, onDeleteAll 
     setDragging(false);
     lastDist.current = null;
     
-    // Logic Swipe Kiri/Kanan buat ganti foto (hanya jalan kalau foto lagi gak di-zoom)
     if (scale <= 1 && dragStart.current && e.changedTouches.length === 1) {
       const dx = e.changedTouches[0].clientX - dragStart.current.x;
       if (Math.abs(dx) > 50) {
@@ -364,13 +333,11 @@ function PhotoGallery({ photos, initialIndex, onClose, onDeleteOne, onDeleteAll 
       }
     }
     
-    // Jangan reset memori jari kalau masih ada jari yang nempel di layar
     if (e.touches.length === 0) {
       dragStart.current = null;
     }
   };
 
-  // Double tap to zoom
   const lastTap = useRef(0);
   const onTap = () => {
     const now = Date.now();
@@ -395,7 +362,6 @@ function PhotoGallery({ photos, initialIndex, onClose, onDeleteOne, onDeleteAll 
     } catch { /* user cancelled */ }
   };
 
-  // Keyboard nav
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'ArrowRight') goTo(idx + 1);
@@ -412,7 +378,6 @@ function PhotoGallery({ photos, initialIndex, onClose, onDeleteOne, onDeleteAll 
       background: 'rgba(0,0,0,0.97)',
       display: 'flex', flexDirection: 'column',
     }}>
-      {/* Top bar galeri */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '12px 16px', paddingTop: 'calc(12px + env(safe-area-inset-top))',
@@ -426,12 +391,11 @@ function PhotoGallery({ photos, initialIndex, onClose, onDeleteOne, onDeleteAll 
         <button onClick={handleShare} style={btnStyle('#1D4ED8', '#93C5FD')}>⬆ Bagikan</button>
       </div>
 
-      {/* Area foto */}
       <div
         style={{ 
           flex: 1, overflow: 'hidden', position: 'relative', 
           cursor: dragging ? 'grabbing' : 'grab',
-          touchAction: 'none' /* 🔥 INI OBAT MUJARABNYA: MATIIN SCROLL BAWAAN BROWSER 🔥 */
+          touchAction: 'none' 
         }}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
@@ -454,7 +418,6 @@ function PhotoGallery({ photos, initialIndex, onClose, onDeleteOne, onDeleteAll 
           draggable={false}
         />
 
-        {/* Panah navigasi (desktop) */}
         {idx > 0 && (
           <button onClick={(e) => { e.stopPropagation(); goTo(idx - 1); }}
             style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', ...navBtnStyle }}>
@@ -468,7 +431,6 @@ function PhotoGallery({ photos, initialIndex, onClose, onDeleteOne, onDeleteAll 
           </button>
         )}
 
-        {/* Hint zoom */}
         {scale > 1 && (
           <div style={{
             position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)',
@@ -480,7 +442,6 @@ function PhotoGallery({ photos, initialIndex, onClose, onDeleteOne, onDeleteAll 
         )}
       </div>
 
-      {/* Thumbnail strip */}
       {photos.length > 1 && (
         <div style={{
           display: 'flex', gap: 6, padding: '8px 12px', overflowX: 'auto',
@@ -500,13 +461,11 @@ function PhotoGallery({ photos, initialIndex, onClose, onDeleteOne, onDeleteAll 
         </div>
       )}
 
-      {/* Bottom bar aksi */}
       <div style={{
         padding: '12px 16px', paddingBottom: 'calc(12px + env(safe-area-inset-bottom))',
         background: 'rgba(0,0,0,0.85)', borderTop: '1px solid rgba(255,255,255,0.07)',
         display: 'flex', gap: 10, justifyContent: 'center', flexShrink: 0,
       }}>
-        {/* Hapus foto ini */}
         <button
           onClick={() => {
             onDeleteOne(idx);
@@ -518,7 +477,6 @@ function PhotoGallery({ photos, initialIndex, onClose, onDeleteOne, onDeleteAll 
           🗑 Hapus Foto Ini
         </button>
 
-        {/* Hapus semua */}
         {!confirmAll ? (
           <button onClick={() => setConfirmAll(true)}
             style={btnStyle('rgba(239,68,68,0.08)', '#F87171', '1px solid rgba(239,68,68,0.2)')}>
@@ -536,7 +494,6 @@ function PhotoGallery({ photos, initialIndex, onClose, onDeleteOne, onDeleteAll 
   );
 }
 
-// Style helpers
 const btnStyle = (bg: string, color = '#E2E8F0', border = 'none'): React.CSSProperties => ({
   background: bg, color, border, borderRadius: 10,
   padding: '8px 14px', fontSize: 12, fontWeight: 600,
@@ -568,7 +525,6 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
   const [photos,          setPhotos         ] = useState<string[]>([]);
   const [gallery,         setGallery        ] = useState<{ open: boolean; index: number }>({ open: false, index: 0 });
 
-  // States untuk Flash/Torch & Zoom
   const [zoom,            setZoom           ] = useState(1);
   const [maxZoom,         setMaxZoom        ] = useState(1);
   const [minZoom,         setMinZoom        ] = useState(1);
@@ -576,12 +532,17 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
   const [torch,           setTorch          ] = useState(false);
   const [torchSupported,  setTorchSupported ] = useState(false);
 
-  // States untuk Lens Switcher (multi-camera)
   type LensDevice = { deviceId: string; label: string };
   const [lensDevices,     setLensDevices    ] = useState<LensDevice[]>([]);
   const [activeDeviceId,  setActiveDeviceId ] = useState<string | null>(null);
 
   // ─── KAMERA ─────────────────────────────────────────────────────────────
+  const hasEnumerated = useRef(false);
+
+  useEffect(() => {
+    hasEnumerated.current = false;
+  }, [facing]);
+
   useEffect(() => {
     let mounted = true;
     const initStream = async () => {
@@ -605,19 +566,15 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
           p?.catch(e => { if (e.name !== 'AbortError') console.error(e); });
         }
 
-        // Cek capabilities untuk zoom dan torch (flash)
         const videoTrack = stream.getVideoTracks()[0];
         if (videoTrack) {
-          // Reset torch state & zoom state
           setTorch(false);
           setZoom(1);
 
           const capabilities = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
           
-          // Flash/Torch
           setTorchSupported('torch' in capabilities);
 
-          // Zoom
           if ('zoom' in capabilities) {
             setZoomSupported(true);
             const zoomCap = (capabilities as any).zoom;
@@ -629,52 +586,107 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
           }
         }
 
-        // Enumerate devices untuk lens switcher — hanya saat pertama kali stream berjalan
-        if (facing === 'environment') {
+        // 🔥 LOGIKA BARU KLASIFIKASI & FILTER DUPLIKAT LENSA 🔥
+        if (facing === 'environment' && !hasEnumerated.current) {
+          hasEnumerated.current = true;
           try {
             const devices = await navigator.mediaDevices.enumerateDevices();
-            const videoInputs = devices.filter(d => d.kind === 'videoinput' && d.deviceId);
+            const videoInputs = devices.filter(d => d.kind === 'videoinput' && d.deviceId && d.label);
 
-            // Filter hanya kamera belakang berdasarkan label
             const backCameras = videoInputs.filter(d => {
               const lbl = (d.label || '').toLowerCase();
-              // Deteksi kamera depan untuk di-exclude
               const isFront = lbl.includes('front') || lbl.includes('user') || lbl.includes('selfie') ||
                               lbl.includes('depan') || lbl.includes('facing front');
               return !isFront;
             });
 
-            if (backCameras.length > 1 && mounted) {
-              // Tentukan label yang manusiawi (0.5x, 1x, 2x dst.)
-              const lensLabels = backCameras.map((cam, idx) => {
+            // Saring raw IDs biar kodingan ga kerja dua kali
+            const seenRaw = new Set<string>();
+            const uniqueBack = backCameras.filter(c => {
+              if (seenRaw.has(c.deviceId)) return false;
+              seenRaw.add(c.deviceId);
+              return true;
+            });
+
+            if (uniqueBack.length > 1 && mounted) {
+              const classified: { deviceId: string; type: string; label: string }[] = [];
+
+              for (const cam of uniqueBack) {
                 const lbl = (cam.label || '').toLowerCase();
-                let friendlyLabel: string;
-                if (lbl.includes('ultra') || lbl.includes('0.5') || lbl.includes('0.6') || lbl.includes('wide') || idx === 0) {
-                  friendlyLabel = idx === 0 && backCameras.length >= 2 ? '0.5×' : '1×';
-                } else if (lbl.includes('tele') || lbl.includes('2x') || lbl.includes('3x') || lbl.includes('5x') || lbl.includes('zoom')) {
-                  friendlyLabel = lbl.includes('5x') ? '5×' : lbl.includes('3x') ? '3×' : '2×';
-                } else {
-                  // Urutkan berdasarkan index
-                  const multipliers = ['0.5×', '1×', '2×', '3×', '5×'];
-                  friendlyLabel = multipliers[idx] || `${idx + 1}×`;
+                let type = 'unknown';
+                let label = '1×';
+
+                if (lbl.includes('ultra') || lbl.includes('0.5') || (lbl.includes('wide') && !lbl.includes('apple'))) {
+                  if (lbl.includes('ultra') || lbl.includes('0.5')) {
+                    type = 'ultra'; label = '0.5×';
+                  } else if (!lbl.includes('back wide')) { 
+                    type = 'ultra'; label = '0.5×';
+                  } else {
+                    type = 'main'; label = '1×';
+                  }
+                } else if (lbl.includes('tele') || lbl.includes('zoom') || lbl.match(/[2345]x/)) {
+                  type = 'tele';
+                  label = lbl.includes('5x') ? '5×' : lbl.includes('3x') ? '3×' : '2×';
+                } else if (lbl.includes('main') || lbl.includes('back wide')) {
+                  type = 'main'; label = '1×';
                 }
-                return { deviceId: cam.deviceId, label: friendlyLabel };
+
+                classified.push({ deviceId: cam.deviceId, type, label });
+              }
+
+              // Fallback buat Android Generic yg namanya cuma "camera2 0", "camera2 1" dll
+              // Index 0 itu PASTI kamera utama (1x) di Android.
+              const unknowns = classified.filter(c => c.type === 'unknown');
+              if (unknowns.length > 0) {
+                unknowns[0].type = 'main';
+                unknowns[0].label = '1×';
+                if (unknowns.length > 1) {
+                  unknowns[1].type = 'ultra';
+                  unknowns[1].label = '0.5×';
+                }
+                if (unknowns.length > 2) {
+                  unknowns[2].type = 'tele';
+                  unknowns[2].label = '2×';
+                }
+                for (let i = 3; i < unknowns.length; i++) {
+                  unknowns[i].type = 'tele';
+                  unknowns[i].label = `${i}×`;
+                }
+              }
+
+              // 🔥 BASMI DUPLIKAT NAMA 🔥
+              // Kalau ada dua kamera yg di-label "1x", ambil yg pertama aja.
+              const finalLenses: LensDevice[] = [];
+              const seenLabels = new Set<string>();
+
+              // Prioritaskan urutan parse: ultra dulu, main, baru tele
+              const typeOrder: Record<string, number> = { ultra: 0, main: 1, tele: 2, unknown: 3 };
+              classified.sort((a, b) => typeOrder[a.type] - typeOrder[b.type]);
+
+              classified.forEach(c => {
+                if (!seenLabels.has(c.label)) {
+                  seenLabels.add(c.label);
+                  finalLenses.push({ deviceId: c.deviceId, label: c.label });
+                }
               });
-              setLensDevices(lensLabels);
-              // Set default ke lensa utama (1x)
-              if (!activeDeviceId) {
-                const mainLens = lensLabels.find(l => l.label === '1×') || lensLabels[Math.floor(lensLabels.length / 2)];
+
+              // Urutkan visual tombol di layar: 0.5x paling kiri, 1x tengah, 2x kanan
+              const parseLens = (l: string) => parseFloat(l.replace('×', '')) || 1;
+              finalLenses.sort((a, b) => parseLens(a.label) - parseLens(b.label));
+
+              setLensDevices(finalLenses);
+
+              // PASTIIN DEFAULT AKTIF ADA DI KAMERA 1x (Bukan 0.5x)
+              if (!activeDeviceId && finalLenses.length > 0) {
+                const mainLens = finalLenses.find(l => l.label === '1×') || finalLenses[0];
                 setActiveDeviceId(mainLens.deviceId);
               }
             } else {
               setLensDevices([]);
             }
           } catch (_) {
-            // enumerateDevices gagal — tidak apa-apa, fitur lens switcher tidak ditampilkan
+            // enumerate gagal, biarkan kosong
           }
-        } else {
-          // Kamera depan — hapus lens devices
-          setLensDevices([]);
         }
 
         setLoading(false);
@@ -890,7 +902,7 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
             }} />
           )}
 
-          {/* Zoom overlay control */}
+          {/* Zoom overlay control (Hanya kalau kamera dukung zoom bawaan native) */}
           {zoomSupported && maxZoom > minZoom && (
             <div style={{
               position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)',
