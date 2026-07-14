@@ -2,6 +2,7 @@
 import { useState, useRef } from 'react';
 import type { SifatPemeriksaan } from '../types';
 import { UNIT_NAME_SUGGESTIONS } from '../config/suggestions';
+import { convertHeicToJpeg } from '../utils/heicConvert';
 
 const todayISO = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Jakarta' });
 
@@ -76,12 +77,19 @@ export default function InspectionForm({ activeObject, activeClient, onSave, tem
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleCapturePhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    let file = e.target.files?.[0];
     if (!file) return;
 
     try {
       setIsCompressing(true); // Tampilkan tulisan "Memproses..."
       
+      // Konversi HEIC ke JPEG jika format aslinya dari iPhone
+      try {
+        file = await convertHeicToJpeg(file);
+      } catch (err) {
+        console.error('HEIC conversion failed:', err);
+      }
+
       // Masukin ke mesin kompresor dulu
       const compressedBase64 = await compressImage(file);
       

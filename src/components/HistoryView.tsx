@@ -522,7 +522,7 @@ function HistoryCard({
 }
 
 // ==========================================
-// LIGHTBOX VIEWER — smooth zoom + mobile/desktop swipe/pinch + share + download
+// LIGHTBOX VIEWER — Modern floating toolbar + thumbnail strip
 // ==========================================
 
 function LightboxViewer({
@@ -533,6 +533,9 @@ function LightboxViewer({
   onNext,
   onClose,
   unitName,
+  allPhotos,
+  getSrc,
+  onGoTo,
 }: {
   photo: string;
   index: number;
@@ -541,6 +544,9 @@ function LightboxViewer({
   onNext: () => void;
   onClose: () => void;
   unitName?: string;
+  allPhotos?: any[];
+  getSrc?: (photo: any) => string | null;
+  onGoTo?: (idx: number) => void;
 }) {
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
@@ -548,25 +554,31 @@ function LightboxViewer({
 
   const dragStart = useRef<{ x: number; y: number } | null>(null);
   const lastOffset = useRef({ x: 0, y: 0 });
-
-  // Pinch zoom refs
   const lastDist = useRef<number | null>(null);
   const lastScale = useRef(1);
+  const thumbStripRef = useRef<HTMLDivElement>(null);
 
   const resetView = () => { setZoom(1); setOffset({ x: 0, y: 0 }); };
-
   const goToPrev = () => { resetView(); onPrev(); };
   const goToNext = () => { resetView(); onNext(); };
+  const handleGoTo = (idx: number) => { resetView(); onGoTo?.(idx); };
 
-  // ─── DESKTOP WHEEL & KEYBOARD ───
+  // Scroll thumbnail ke posisi aktif
+  useState(() => {
+    setTimeout(() => {
+      const strip = thumbStripRef.current;
+      if (!strip) return;
+      const active = strip.querySelector('[data-active="true"]') as HTMLElement;
+      if (active) active.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    }, 100);
+  });
+
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
-    setZoom((prev) => Math.max(0.5, Math.min(3, prev + (e.deltaY > 0 ? -0.2 : 0.2))));
+    setZoom((prev) => Math.max(0.5, Math.min(5, prev + (e.deltaY > 0 ? -0.15 : 0.15))));
   };
 
-  const handleDoubleClick = () => {
-    zoom === 1 ? setZoom(2.5) : resetView();
-  };
+  const handleDoubleClick = () => { zoom === 1 ? setZoom(2.5) : resetView(); };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowLeft' && index > 0) goToPrev();
@@ -574,7 +586,7 @@ function LightboxViewer({
     if (e.key === 'Escape') onClose();
   };
 
-  // ─── MOBILE TOUCH EVENTS ───
+  // ─── Touch events ───
   const onTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length === 1) {
       dragStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
@@ -593,22 +605,18 @@ function LightboxViewer({
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
       const dist = Math.hypot(dx, dy);
-      const newScale = Math.max(0.5, Math.min(4, lastScale.current * (dist / lastDist.current)));
-      setZoom(newScale);
-    } else if (e.touches.length === 1 && dragStart.current) {
-      if (zoom > 1) {
-        setOffset({
-          x: lastOffset.current.x + (e.touches[0].clientX - dragStart.current.x),
-          y: lastOffset.current.y + (e.touches[0].clientY - dragStart.current.y),
-        });
-      }
+      setZoom(Math.max(0.5, Math.min(5, lastScale.current * (dist / lastDist.current))));
+    } else if (e.touches.length === 1 && dragStart.current && zoom > 1) {
+      setOffset({
+        x: lastOffset.current.x + (e.touches[0].clientX - dragStart.current.x),
+        y: lastOffset.current.y + (e.touches[0].clientY - dragStart.current.y),
+      });
     }
   };
 
   const onTouchEnd = (e: React.TouchEvent) => {
     setDragging(false);
     lastDist.current = null;
-
     if (zoom <= 1 && dragStart.current && e.changedTouches.length === 1) {
       const dx = e.changedTouches[0].clientX - dragStart.current.x;
       if (Math.abs(dx) > 50) {
@@ -616,15 +624,12 @@ function LightboxViewer({
         if (dx > 0 && index > 0) goToPrev();
       }
     }
-
-    if (e.touches.length === 0) {
-      dragStart.current = null;
-    }
+    if (e.touches.length === 0) dragStart.current = null;
   };
 
-  // ─── DESKTOP MOUSE EVENTS (Buat Klik & Tarik) ───
+  // ─── Mouse events ───
   const onMouseDown = (e: React.MouseEvent) => {
-    e.preventDefault(); // Mencegah image ke-drag bawaan browser
+    e.preventDefault();
     dragStart.current = { x: e.clientX, y: e.clientY };
     lastOffset.current = offset;
     setDragging(true);
@@ -643,7 +648,6 @@ function LightboxViewer({
   const onMouseUpOrLeave = (e: React.MouseEvent) => {
     if (!dragging) return;
     setDragging(false);
-
     if (zoom <= 1 && dragStart.current) {
       const dx = e.clientX - dragStart.current.x;
       if (Math.abs(dx) > 50) {
@@ -654,7 +658,7 @@ function LightboxViewer({
     dragStart.current = null;
   };
 
-  // ─── SHARE & DOWNLOAD LOGIC ───
+  // ─── Share & Download ───
   const handleDownload = (e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     const a = document.createElement('a');
@@ -669,95 +673,145 @@ function LightboxViewer({
       const blob = await (await fetch(photo)).blob();
       const filename = `${unitName?.replace(/\s+/g, '_') || 'Foto'}_${String(index + 1).padStart(2, '0')}.jpg`;
       const file = new File([blob], filename, { type: 'image/jpeg' });
-      
       if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({ 
-          files: [file], 
-          title: 'Aksara Inspect Photo',
-          text: `Dokumentasi: ${unitName || 'Unit'}`
-        });
+        await navigator.share({ files: [file], title: 'Aksara Inspect Photo', text: `Dokumentasi: ${unitName || 'Unit'}` });
       } else {
         handleDownload();
       }
-    } catch (err) { }
+    } catch { /* user cancelled */ }
   };
 
   return (
     <div
-      className="absolute inset-0 z-10 bg-black/95 flex flex-col items-center justify-center outline-none"
+      className="absolute inset-0 z-20 flex flex-col items-center justify-center outline-none"
+      style={{ background: 'rgba(0,0,0,0.96)' }}
       onClick={onClose}
       onWheel={handleWheel}
       onKeyDown={handleKeyDown}
       tabIndex={0}
     >
-      {/* Area Foto - Sekarang support sentuh HP dan klik Mouse */}
-      <div 
-        className="flex-1 flex items-center justify-center w-full relative overflow-hidden" 
+      {/* Close button - top right */}
+      <button
+        onClick={onClose}
+        className="absolute top-4 right-4 z-30 w-10 h-10 rounded-full flex items-center justify-center transition-all"
+        style={{ background: 'rgba(255,255,255,0.1)', backdropFilter: 'blur(10px)', border: '1px solid rgba(255,255,255,0.15)' }}
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round">
+          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+
+      {/* Counter - top center */}
+      <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 px-4 py-1.5 rounded-full text-white text-xs font-bold"
+        style={{ background: 'rgba(255,255,255,0.1)', backdropFilter: 'blur(10px)', border: '1px solid rgba(255,255,255,0.1)' }}>
+        {index + 1} / {total}
+      </div>
+
+      {/* Photo area */}
+      <div
+        className="flex-1 flex items-center justify-center w-full relative overflow-hidden"
         onClick={(e) => e.stopPropagation()}
-        onTouchStart={onTouchStart}
-        onTouchMove={onTouchMove}
-        onTouchEnd={onTouchEnd}
-        onMouseDown={onMouseDown}
-        onMouseMove={onMouseMove}
-        onMouseUp={onMouseUpOrLeave}
-        onMouseLeave={onMouseUpOrLeave}
+        onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
+        onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUpOrLeave} onMouseLeave={onMouseUpOrLeave}
         style={{ touchAction: 'none', cursor: dragging ? 'grabbing' : 'grab' }}
       >
         <img
           src={photo}
           alt={`Foto ${index + 1}`}
-          className="rounded shadow-2xl pointer-events-none" // pointer-events-none penting biar gambar ga "kecabut" pas di-drag di PC
+          className="pointer-events-none select-none"
           style={{
             transform: `scale(${zoom}) translate(${offset.x / zoom}px, ${offset.y / zoom}px)`,
             transition: dragging ? 'none' : 'transform 0.2s ease-out',
-            maxWidth: '90vw',
-            maxHeight: '70vh',
-            objectFit: 'contain',
-            userSelect: 'none',
-            WebkitUserSelect: 'none',
+            maxWidth: '92vw', maxHeight: '72vh', objectFit: 'contain',
+            borderRadius: 8, boxShadow: '0 8px 40px rgba(0,0,0,0.6)',
           }}
           draggable={false}
           onDoubleClick={handleDoubleClick}
           onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
         />
-        
-        {/* Panah Hint */}
+
+        {/* Nav arrows - clickable */}
         {index > 0 && (
-          <div className="absolute left-4 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-black/50 text-white flex items-center justify-center pointer-events-none opacity-40">
-            ‹
-          </div>
+          <button onClick={(e) => { e.stopPropagation(); goToPrev(); }}
+            className="absolute left-3 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full flex items-center justify-center transition-all hover:scale-110"
+            style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(6px)', border: '1px solid rgba(255,255,255,0.15)' }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
         )}
         {index < total - 1 && (
-          <div className="absolute right-4 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-black/50 text-white flex items-center justify-center pointer-events-none opacity-40">
-            ›
+          <button onClick={(e) => { e.stopPropagation(); goToNext(); }}
+            className="absolute right-3 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full flex items-center justify-center transition-all hover:scale-110"
+            style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(6px)', border: '1px solid rgba(255,255,255,0.15)' }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
+        )}
+
+        {/* Zoom hint */}
+        {zoom > 1 && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full text-[10px] text-gray-400 pointer-events-none"
+            style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)' }}>
+            {Math.round(zoom * 100)}% · Double-tap reset
           </div>
         )}
       </div>
 
-      {/* Controls bottom */}
-      <div className="flex items-center justify-center gap-2 mt-3 pb-6 flex-wrap px-2" onClick={(e) => e.stopPropagation()}>
-        <button onClick={() => setZoom((prev) => Math.max(0.5, prev - 0.2))} className="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-white text-xs font-bold rounded-lg transition-all">🔍−</button>
-        <span className="text-white text-xs font-bold min-w-[45px] text-center">{Math.round(zoom * 100)}%</span>
-        <button onClick={() => setZoom((prev) => Math.min(4, prev + 0.2))} className="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-white text-xs font-bold rounded-lg transition-all">🔍+</button>
+      {/* Thumbnail strip */}
+      {allPhotos && getSrc && allPhotos.length > 1 && (
+        <div ref={thumbStripRef} className="flex gap-1.5 px-3 py-2 overflow-x-auto flex-shrink-0"
+          onClick={(e) => e.stopPropagation()}
+          style={{ scrollbarWidth: 'none', background: 'rgba(0,0,0,0.6)' }}>
+          {allPhotos.map((p: any, i: number) => {
+            const src = getSrc(p);
+            if (!src) return null;
+            return (
+              <img key={i} src={src} data-active={i === index ? 'true' : 'false'}
+                onClick={() => handleGoTo(i)}
+                className="flex-shrink-0 rounded cursor-pointer transition-all"
+                style={{
+                  width: 48, height: 48, objectFit: 'cover',
+                  border: i === index ? '2px solid #10B981' : '2px solid transparent',
+                  opacity: i === index ? 1 : 0.5,
+                }}
+              />
+            );
+          })}
+        </div>
+      )}
 
-        <div className="w-px h-5 bg-gray-700 mx-1"></div>
+      {/* Floating toolbar - bottom */}
+      <div className="flex items-center gap-2 px-4 py-3 mb-4 mx-3 rounded-2xl flex-shrink-0"
+        onClick={(e) => e.stopPropagation()}
+        style={{ background: 'rgba(30,30,30,0.8)', backdropFilter: 'blur(20px)', border: '1px solid rgba(255,255,255,0.08)' }}>
 
-        <button onClick={goToPrev} disabled={index === 0} className="px-3 py-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-30 text-white text-xs font-bold rounded-lg transition-all">← Prev</button>
-        <span className="text-white text-xs font-bold min-w-[50px] text-center bg-gray-800 py-2 rounded-lg">{index + 1} / {total}</span>
-        <button onClick={goToNext} disabled={index === total - 1} className="px-3 py-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-30 text-white text-xs font-bold rounded-lg transition-all">Next →</button>
+        <button onClick={() => setZoom((p) => Math.max(0.5, p - 0.2))}
+          className="w-9 h-9 rounded-xl flex items-center justify-center text-white hover:bg-white/10 transition-all">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+        </button>
+        <span className="text-white text-[11px] font-bold min-w-[38px] text-center">{Math.round(zoom * 100)}%</span>
+        <button onClick={() => setZoom((p) => Math.min(5, p + 0.2))}
+          className="w-9 h-9 rounded-xl flex items-center justify-center text-white hover:bg-white/10 transition-all">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/><line x1="11" y1="8" x2="11" y2="14"/></svg>
+        </button>
 
-        <div className="w-px h-5 bg-gray-700 mx-1"></div>
+        <div className="w-px h-5 bg-white/10 mx-1"></div>
 
-        <button onClick={handleShare} className="px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-all" title="Bagikan foto ini">⬆️ Share</button>
-        <button onClick={handleDownload} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg transition-all" title="Download foto ini">⬇️</button>
-        <button onClick={onClose} className="px-3 py-2 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded-lg transition-all">✕</button>
+        <button onClick={handleShare}
+          className="h-9 px-3 rounded-xl flex items-center gap-1.5 text-white text-[11px] font-bold hover:bg-white/10 transition-all">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+          Share
+        </button>
+        <button onClick={handleDownload}
+          className="h-9 px-3 rounded-xl flex items-center gap-1.5 text-emerald-400 text-[11px] font-bold hover:bg-emerald-500/15 transition-all">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download
+        </button>
       </div>
     </div>
   );
 }
 
 // ==========================================
-// PHOTO GALLERY MODAL
+// PHOTO GALLERY MODAL — Modern + Drag + ZIP
 // ==========================================
 
 function PhotoGalleryModal({
@@ -771,6 +825,8 @@ function PhotoGalleryModal({
 }) {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [lightbox, setLightbox] = useState<number | null>(null);
+  const [zipping, setZipping] = useState(false);
+  const [zipProgress, setZipProgress] = useState(0);
 
   const getSrc = (photo: any): string | null => {
     if (photo.dataUrl?.startsWith('data:image')) return photo.dataUrl;
@@ -789,73 +845,151 @@ function PhotoGalleryModal({
   const selectAll = () => setSelected(new Set(photos.map((_, i) => i)));
   const clearSelect = () => setSelected(new Set());
 
-  const downloadPhoto = (src: string, idx: number) => {
-    const a = document.createElement('a');
-    a.href = src;
-    a.download = `${unitName}_foto_${String(idx + 1).padStart(2, '0')}.jpg`;
-    a.click();
+  // ─── Drag-to-export handler ───
+  const handleDragStart = (e: React.DragEvent, src: string, idx: number) => {
+    const filename = `${unitName.replace(/\s+/g, '_')}_foto_${String(idx + 1).padStart(2, '0')}.jpg`;
+
+    // Set download URL for drag-to-desktop/Word
+    e.dataTransfer.setData('DownloadURL', `image/jpeg:${filename}:${src}`);
+    e.dataTransfer.setData('text/uri-list', src);
+    e.dataTransfer.setData('text/plain', src);
+    e.dataTransfer.effectAllowed = 'copy';
   };
 
-  const downloadSelected = async () => {
-    for (const idx of Array.from(selected)) {
-      const src = getSrc(photos[idx]);
-      if (!src) continue;
-      await new Promise((r) => setTimeout(r, 300));
-      downloadPhoto(src, idx);
+  // ─── ZIP download ───
+  const downloadAsZip = async (indices: number[]) => {
+    if (indices.length === 0) return;
+    setZipping(true);
+    setZipProgress(0);
+
+    try {
+      const JSZip = (await import('jszip')).default;
+      const zip = new JSZip();
+
+      for (let i = 0; i < indices.length; i++) {
+        const idx = indices[i];
+        const src = getSrc(photos[idx]);
+        if (!src) continue;
+
+        try {
+          const response = await fetch(src);
+          const blob = await response.blob();
+          const ext = blob.type.includes('png') ? 'png' : 'jpg';
+          const filename = `${unitName.replace(/\s+/g, '_')}_foto_${String(idx + 1).padStart(2, '0')}.${ext}`;
+          zip.file(filename, blob);
+        } catch {
+          // Skip foto yang gagal di-fetch
+        }
+
+        setZipProgress(Math.round(((i + 1) / indices.length) * 100));
+      }
+
+      const content = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+      const timestamp = new Date().toISOString().slice(0, 10);
+      const zipFilename = `${unitName.replace(/\s+/g, '_')}_photos_${timestamp}.zip`;
+
+      // Trigger download
+      const url = URL.createObjectURL(content);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = zipFilename;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('ZIP creation failed:', err);
+      alert('Gagal membuat file ZIP. Silakan coba lagi.');
+    } finally {
+      setZipping(false);
+      setZipProgress(0);
     }
   };
 
+  const downloadSelected = () => downloadAsZip(Array.from(selected));
+  const downloadAll = () => downloadAsZip(photos.map((_, i) => i));
+
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/80 flex flex-col"
-      style={{ paddingTop: 'env(safe-area-inset-top)' }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
+      className="fixed inset-0 z-50 flex flex-col"
+      style={{ background: 'rgba(10,10,15,0.92)', backdropFilter: 'blur(8px)', paddingTop: 'env(safe-area-inset-top)' }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      {/* Header */}
-      <div
-        className="flex items-center justify-between px-4 py-3 bg-gray-900 flex-shrink-0"
-        style={{ minHeight: 56 }}
-      >
-        <div>
-          <p className="text-white text-sm font-bold">📸 {unitName}</p>
-          <p className="text-gray-400 text-[10px]">{photos.length} foto</p>
+      {/* ─── Header ─── */}
+      <div className="flex items-center justify-between px-4 py-3 flex-shrink-0"
+        style={{ background: 'rgba(20,20,30,0.85)', backdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'rgba(16,185,129,0.15)' }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="2" strokeLinecap="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
+            </svg>
+          </div>
+          <div>
+            <p className="text-white text-sm font-bold">{unitName}</p>
+            <p className="text-gray-500 text-[10px] font-medium">{photos.length} foto dokumentasi</p>
+          </div>
         </div>
+
         <div className="flex items-center gap-2">
           {selected.size > 0 ? (
             <>
-              <button
-                onClick={downloadSelected}
-                className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg transition-all"
-              >
-                ⬇️ Download {selected.size}
+              <span className="px-2.5 py-1 rounded-full text-[10px] font-bold text-emerald-400"
+                style={{ background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.3)' }}>
+                {selected.size} dipilih
+              </span>
+              <button onClick={downloadSelected} disabled={zipping}
+                className="h-8 px-3 rounded-lg flex items-center gap-1.5 text-white text-[11px] font-bold transition-all disabled:opacity-50"
+                style={{ background: 'rgba(16,185,129,0.8)' }}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                ZIP
               </button>
-              <button
-                onClick={clearSelect}
-                className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs font-bold rounded-lg transition-all"
-              >
+              <button onClick={clearSelect}
+                className="h-8 px-3 rounded-lg text-gray-400 text-[11px] font-bold hover:text-white transition-all"
+                style={{ background: 'rgba(255,255,255,0.06)' }}>
                 Batal
               </button>
             </>
           ) : (
-            <button
-              onClick={selectAll}
-              className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs font-bold rounded-lg transition-all"
-            >
-              Pilih semua
-            </button>
+            <>
+              <button onClick={selectAll}
+                className="h-8 px-3 rounded-lg text-gray-400 text-[11px] font-bold hover:text-white transition-all"
+                style={{ background: 'rgba(255,255,255,0.06)' }}>
+                Pilih
+              </button>
+              <button onClick={downloadAll} disabled={zipping}
+                className="h-8 px-3 rounded-lg flex items-center gap-1.5 text-emerald-400 text-[11px] font-bold transition-all hover:text-emerald-300 disabled:opacity-50"
+                style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.2)' }}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                Semua .zip
+              </button>
+            </>
           )}
-          <button
-            onClick={onClose}
-            className="w-8 h-8 flex items-center justify-center bg-red-700 hover:bg-red-600 text-white rounded-lg text-sm font-bold transition-all"
-          >
-            ✕
+          <button onClick={onClose}
+            className="w-8 h-8 rounded-lg flex items-center justify-center transition-all hover:bg-white/10"
+            style={{ background: 'rgba(255,255,255,0.06)' }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" strokeWidth="2.5" strokeLinecap="round">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
           </button>
         </div>
       </div>
 
-      {/* Grid foto */}
+      {/* ZIP progress bar */}
+      {zipping && (
+        <div className="px-4 py-2 flex-shrink-0" style={{ background: 'rgba(16,185,129,0.08)' }}>
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-emerald-400 text-[11px] font-bold">📦 Mengemas ZIP...</span>
+            <span className="text-emerald-300 text-[11px] font-black">{zipProgress}%</span>
+          </div>
+          <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(16,185,129,0.15)' }}>
+            <div className="h-full rounded-full transition-all duration-300" style={{ width: `${zipProgress}%`, background: '#10B981' }} />
+          </div>
+        </div>
+      )}
+
+      {/* ─── Photo Grid ─── */}
       <div className="flex-1 overflow-y-auto p-3">
         <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-5">
           {photos.map((photo, idx) => {
@@ -865,64 +999,92 @@ function PhotoGalleryModal({
             return (
               <div
                 key={idx}
-                className="relative rounded-lg overflow-hidden border-2 transition-all cursor-pointer group"
+                className="relative rounded-xl overflow-hidden cursor-pointer group"
                 style={{
                   aspectRatio: '1',
-                  borderColor: isSelected ? '#10B981' : 'transparent',
+                  border: isSelected ? '2px solid #10B981' : '2px solid rgba(255,255,255,0.06)',
+                  transition: 'all 0.2s ease',
                 }}
+                draggable
+                onDragStart={(e) => handleDragStart(e, src, idx)}
               >
                 <img
                   src={src}
                   alt={`Foto ${idx + 1}`}
-                  className="w-full h-full object-cover group-hover:brightness-75 transition-all"
+                  className="w-full h-full object-cover transition-all duration-200"
+                  style={{ transform: 'scale(1)', transition: 'transform 0.25s ease' }}
+                  onMouseEnter={(e) => { (e.target as HTMLImageElement).style.transform = 'scale(1.08)'; }}
+                  onMouseLeave={(e) => { (e.target as HTMLImageElement).style.transform = 'scale(1)'; }}
                   onClick={() => setLightbox(idx)}
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).style.display = 'none';
-                  }}
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                 />
+
+                {/* Hover overlay gradient */}
+                <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
+                  style={{ background: 'linear-gradient(180deg, transparent 50%, rgba(0,0,0,0.6) 100%)' }} />
 
                 {/* Checkbox */}
                 <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toggleSelect(idx);
-                  }}
-                  className="absolute top-1.5 left-1.5 w-5 h-5 rounded-full border-2 border-white flex items-center justify-center text-[10px] font-bold transition-all"
+                  onClick={(e) => { e.stopPropagation(); toggleSelect(idx); }}
+                  className="absolute top-2 left-2 w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold transition-all"
                   style={{
-                    background: isSelected ? '#10B981' : 'rgba(0,0,0,0.4)',
+                    background: isSelected ? '#10B981' : 'rgba(0,0,0,0.45)',
+                    border: '2px solid rgba(255,255,255,0.7)',
+                    backdropFilter: 'blur(4px)',
                   }}
                 >
-                  {isSelected ? '✓' : ''}
+                  {isSelected && (
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12"/>
+                    </svg>
+                  )}
                 </button>
 
-                {/* Download single */}
+                {/* Drag hint - desktop only */}
+                <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-all pointer-events-none">
+                  <div className="px-1.5 py-0.5 rounded text-[8px] font-bold text-white"
+                    style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)' }}>
+                    📎 Drag
+                  </div>
+                </div>
+
+                {/* Number badge */}
+                <span className="absolute bottom-2 left-2 text-[9px] text-white font-bold px-1.5 py-0.5 rounded-md"
+                  style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)' }}>
+                  {String(idx + 1).padStart(2, '0')}
+                </span>
+
+                {/* Download single on hover */}
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    downloadPhoto(src, idx);
+                    const a = document.createElement('a');
+                    a.href = src; a.download = `${unitName}_foto_${String(idx + 1).padStart(2, '0')}.jpg`;
+                    a.click();
                   }}
-                  className="absolute bottom-1.5 right-1.5 w-6 h-6 rounded-lg bg-black/50 hover:bg-emerald-500 text-white flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition-all"
+                  className="absolute bottom-2 right-2 w-7 h-7 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all"
+                  style={{ background: 'rgba(16,185,129,0.8)', backdropFilter: 'blur(4px)' }}
                 >
-                  ⬇️
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                  </svg>
                 </button>
-
-                {/* Nomor foto */}
-                <span className="absolute bottom-1.5 left-1.5 text-[9px] text-white font-bold bg-black/40 px-1 rounded">
-                  {String(idx + 1).padStart(2, '0')}
-                </span>
               </div>
             );
           })}
         </div>
       </div>
 
-      {/* Lightbox overlay */}
+      {/* ─── Lightbox overlay ─── */}
       {lightbox !== null && (
         <LightboxViewer
           photo={getSrc(photos[lightbox]) || ''}
           index={lightbox}
           total={photos.length}
           unitName={unitName}
+          allPhotos={photos}
+          getSrc={getSrc}
+          onGoTo={(idx) => setLightbox(idx)}
           onPrev={() => setLightbox((i) => (i !== null && i > 0 ? i - 1 : i))}
           onNext={() => setLightbox((i) => (i !== null && i < photos.length - 1 ? i + 1 : i))}
           onClose={() => setLightbox(null)}

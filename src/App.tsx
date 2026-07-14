@@ -45,7 +45,7 @@ import { AdminPanel } from './components/AdminPanel';
 import { ClientPicker, type PickedUnit } from './components/ClientPicker';
 import { useResponsive } from './hooks/useResponsive';
 import { uploadProfilePhoto, getProfilePhoto } from './services/profilePhotoService';
-
+import { convertHeicToJpeg } from './utils/heicConvert';
 // ─── TYPES ───────────────────────────────────────────────────────────────────
 
 type View = 'HOME' | 'PICK_UNIT' | 'FORM' | 'SYNC_HUB' | 'HISTORY' | 'ADMIN';
@@ -851,8 +851,21 @@ const triggerAutoSync = useCallback(async () => {
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handlePhotos = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
+  const handlePhotos = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const rawFiles = Array.from(e.target.files || []);
+    
+    // Konversi HEIC ke JPEG sebelum diproses
+    const files = await Promise.all(
+      rawFiles.map(async (file) => {
+        try {
+          return await convertHeicToJpeg(file);
+        } catch (err) {
+          console.error('Failed to convert HEIC:', err);
+          return file; // Fallback, walau mungkin ga bisa dirender
+        }
+      })
+    );
+
     files.forEach((file) => {
       const reader = new FileReader();
       reader.onloadend = async () => {
