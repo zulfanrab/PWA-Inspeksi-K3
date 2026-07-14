@@ -52,6 +52,17 @@ type View = 'HOME' | 'PICK_UNIT' | 'FORM' | 'SYNC_HUB' | 'HISTORY' | 'ADMIN';
 type FormMode = 'create' | 'edit';
 type FieldType = 'text' | 'number' | 'select' | 'textarea';
 
+const FUNNY_LOADER_MESSAGES = [
+  "Proses penarikan data sedang berlangsung",
+  "Mohon bersabar ya sayang",
+  "Jangan lupa makan ya sayang",
+  "Mohon bersabar, yang sabar disayang Rio",
+  "Kalem euy, sabar nuju proses Kaka",
+  "Server nuju ngopi heula Kaka, antosan sakedap",
+  "Data sedang berselancar dari awan Google Drive",
+  "Sabar nuju digarap, tong rurusuhan bisi salah hidung"
+];
+
 interface FieldDef {
   name: string;
   label: string;
@@ -544,6 +555,9 @@ export default function App() {
   const [isProcessingGallery, setIsProcessingGallery] = useState(false);
   const [galleryProcessProgress, setGalleryProcessProgress] = useState({ current: 0, total: 0 });
 
+  // Global loading overlay state
+  const [globalLoading, setGlobalLoading] = useState<string | null>(null);
+
   // Profile photo state
   const [profilePhotoUrl, setProfilePhotoUrl] = useState<string | null>(null);
 
@@ -599,6 +613,7 @@ const setupRole = useCallback(async (email: string, name: string) => {
 }, []);
 
 const doPullInspections = useCallback(async () => {
+  setGlobalLoading("Menarik data riwayat terbaru...");
   try {
     const result = await pullInspectionsFromDrive();
     if (result.pulled > 0) {
@@ -627,6 +642,8 @@ const doPullInspections = useCallback(async () => {
     }
   } catch (err) {
     console.warn('[App] pullInspectionsFromDrive error:', err);
+  } finally {
+    setGlobalLoading(null);
   }
 }, [refreshData, isAuthenticated]);
 
@@ -721,38 +738,43 @@ const triggerAutoSync = useCallback(async () => {
     const currentDrafts = await SessionRepository.getDrafts();
     if (currentDrafts.length === 0) return;
     
+    setGlobalLoading("Sinkronisasi otomatis draft...");
     console.log(`[BulkSync] Memulai upload massal untuk ${currentDrafts.length} draft...`);
     
-    for (const draft of currentDrafts) {
-      try {
-        setUploadingId(draft.id);
-        setUploadProgress(null);
-        
-        const { folderId } = await uploadToDrive(draft, draft.photos, (p) => flushSync(() => setUploadProgress(p)), null);
-        
-        // Tandai sukses di DB
-        await SessionRepository.markSynced(draft.id, folderId);
-        
-        // Clear status uploading
-        setUploadingId(null);  
-        setUploadProgress(null);
+    try {
+      for (const draft of currentDrafts) {
+        try {
+          setUploadingId(draft.id);
+          setUploadProgress(null);
+          
+          const { folderId } = await uploadToDrive(draft, draft.photos, (p) => flushSync(() => setUploadProgress(p)), null);
+          
+          // Tandai sukses di DB
+          await SessionRepository.markSynced(draft.id, folderId);
+          
+          // Clear status uploading
+          setUploadingId(null);  
+          setUploadProgress(null);
 
-        // 🔥 FIX: Panggil refreshData() DI SINI (di dalam loop)
-        // Memaksa state 'drafts' update & re-render, item langsung ilang dari UI
-        await refreshData(); 
-        
-      } catch (err: unknown) {
-        console.error(`[BulkSync] Gagal upload draft ${draft.id}:`, err);
-        // Reset id kalau error biar UI gak nyangkut
-        setUploadingId(null); 
-        setUploadProgress(null);
-        
-        if (err instanceof TokenExpiredError) {
-          setIsAuthenticated(false);
-          setTokenError((err as Error).message);
-          break; // Stop semua jika token mati
+          // 🔥 FIX: Panggil refreshData() DI SINI (di dalam loop)
+          // Memaksa state 'drafts' update & re-render, item langsung ilang dari UI
+          await refreshData(); 
+          
+        } catch (err: unknown) {
+          console.error(`[BulkSync] Gagal upload draft ${draft.id}:`, err);
+          // Reset id kalau error biar UI gak nyangkut
+          setUploadingId(null); 
+          setUploadProgress(null);
+          
+          if (err instanceof TokenExpiredError) {
+            setIsAuthenticated(false);
+            setTokenError((err as Error).message);
+            break; // Stop semua jika token mati
+          }
         }
       }
+    } finally {
+      setGlobalLoading(null);
     }
     
     // Opsional: jaga-jaga panggil lagi setelah loop selesai total
@@ -966,6 +988,7 @@ const triggerAutoSync = useCallback(async () => {
       return;
     }
     setIsSaving(true);
+    setGlobalLoading("Sedang mengamankan data inspeksi Anda...");
     try {
       // Pastikan klien dan unit masuk ke template unit di admin panel (jika diinput manual)
       const { clientId, unitId } = await ensureClientAndUnitTemplates(
@@ -1092,6 +1115,7 @@ const triggerAutoSync = useCallback(async () => {
       }
     } finally {
       setIsSaving(false);
+      setGlobalLoading(null);
     }
   };
 
@@ -1099,6 +1123,7 @@ const triggerAutoSync = useCallback(async () => {
   const handleSync = async (id: string) => {
     setUploadingId(id);
     setUploadProgress(null);
+    setGlobalLoading("Sedang menyinkronkan data...");
     try {
       const session = await SessionRepository.getById(id);
       if (!session) throw new Error('Sesi tidak ditemukan');
@@ -1118,6 +1143,7 @@ const triggerAutoSync = useCallback(async () => {
       }
     } finally {
       setUploadingId(null);
+      setGlobalLoading(null);
     }
   };
 
@@ -1126,6 +1152,7 @@ const triggerAutoSync = useCallback(async () => {
     if (!isOnline) { alert('⚠️ Tidak ada koneksi internet.'); return; }
     setUploadingId(id);
     setUploadProgress(null);
+    setGlobalLoading("Mengunggah ulang berkas inspeksi...");
     try {
       const session = await SessionRepository.getById(id);
       if (!session) throw new Error('Data tidak ditemukan');
@@ -1146,6 +1173,7 @@ const triggerAutoSync = useCallback(async () => {
       }
     } finally {
       setUploadingId(null);
+      setGlobalLoading(null);
     }
   };
 
@@ -1584,6 +1612,94 @@ const handleDelete = async (id: string) => {
           <NavTab icon={ICONS.shield} label="Admin" active={view === 'ADMIN'} onClick={() => setScreenStack(['ADMIN'])} />
         </nav>
       )}
+
+      {globalLoading && (
+        <GlobalFunnyLoader message={globalLoading} />
+      )}
+    </div>
+  );
+}
+
+function GlobalFunnyLoader({ message }: { message: string }) {
+  const marqueeText = FUNNY_LOADER_MESSAGES.join("   •   ");
+  
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 99999,
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+      background: 'rgba(15, 23, 42, 0.82)', backdropFilter: 'blur(10px)',
+      color: '#fff', fontFamily: 'system-ui, -apple-system, sans-serif'
+    }}>
+      {/* 3D Loading Card */}
+      <div style={{
+        background: 'rgba(255, 255, 255, 0.08)',
+        border: '1px solid rgba(255, 255, 255, 0.15)',
+        borderRadius: 24, padding: 32, maxWidth: 320, width: '85%',
+        display: 'flex', flexDirection: 'column', alignItems: 'center',
+        boxShadow: '0 20px 40px rgba(0,0,0,0.5)', textAlign: 'center',
+        transform: 'translateY(-20px)',
+      }}>
+        <div style={{ position: 'relative', width: 80, height: 80, marginBottom: 20 }}>
+          <div style={{
+            position: 'absolute', inset: 0, borderRadius: '50%',
+            border: '4px solid rgba(16, 185, 129, 0.2)',
+            borderTopColor: '#10B981',
+            animation: 'spin 1s linear infinite'
+          }} />
+          <div style={{
+            position: 'absolute', inset: 12, borderRadius: '50%',
+            border: '4px solid rgba(59, 130, 246, 0.2)',
+            borderBottomColor: '#3B82F6',
+            animation: 'spin 1.5s linear infinite reverse'
+          }} />
+          <div style={{
+            position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 28, animation: 'pulse 2s infinite'
+          }}>
+            ⚡
+          </div>
+        </div>
+
+        <h4 style={{ margin: '0 0 8px 0', fontSize: 16, fontWeight: 700, color: '#10B981', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
+          Memproses Data
+        </h4>
+        <p style={{ margin: 0, fontSize: 13, color: '#94A3B8', lineHeight: 1.5 }}>
+          {message}
+        </p>
+      </div>
+
+      {/* Running Marquee Banner */}
+      <div style={{
+        position: 'absolute', bottom: 50, left: 0, right: 0,
+        background: '#10B981', color: '#fff', padding: '12px 0',
+        overflow: 'hidden', whiteSpace: 'nowrap', display: 'flex',
+        boxShadow: '0 4px 15px rgba(16, 185, 129, 0.3)',
+        transform: 'rotate(-1.5deg) scale(1.02)',
+      }}>
+        <div style={{
+          display: 'inline-block',
+          paddingLeft: '100%',
+          animation: 'globalMarquee 40s linear infinite',
+          fontSize: 13, fontWeight: 800, textTransform: 'uppercase',
+          letterSpacing: '0.05em',
+        }}>
+          {marqueeText}   •   {marqueeText}
+        </div>
+      </div>
+
+      <style>{`
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+        @keyframes pulse {
+          0%, 100% { transform: scale(1); opacity: 1; }
+          50% { transform: scale(1.08); opacity: 0.85; }
+        }
+        @keyframes globalMarquee {
+          0% { transform: translate3d(0, 0, 0); }
+          100% { transform: translate3d(-100%, 0, 0); }
+        }
+      `}</style>
     </div>
   );
 }
