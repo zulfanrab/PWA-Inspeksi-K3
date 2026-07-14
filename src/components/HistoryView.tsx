@@ -863,6 +863,7 @@ function PhotoGalleryModal({
     setZipProgress(0);
 
     try {
+      // @ts-ignore
       const JSZip = (await import('jszip')).default;
       const zip = new JSZip();
 

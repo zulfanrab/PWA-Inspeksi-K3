@@ -938,7 +938,7 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
         
         // Kembalikan ke continuous autofocus setelah 3 detik jika disupport
         setTimeout(async () => {
-          const currentCapabilities = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+          const currentCapabilities: any = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
           if (currentCapabilities.focusMode?.includes('continuous')) {
             await videoTrack.applyConstraints({
               advanced: [{ focusMode: 'continuous' } as any]

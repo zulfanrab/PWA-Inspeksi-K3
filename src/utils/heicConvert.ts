@@ -25,6 +25,7 @@ export async function convertHeicToJpeg(file: File): Promise<File> {
 
   try {
     // Dynamic import agar heic2any hanya di-load saat diperlukan (code splitting)
+    // @ts-ignore
     const heic2any = (await import('heic2any')).default;
 
     const blob = await heic2any({
