@@ -452,8 +452,53 @@ function NavTab({ icon, label, active, onClick }: { icon: React.ReactNode; label
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const { isMobile, isDesktop } = useResponsive();
-  const [view, setView] = useState<View>('HOME');
+  const [screenStack, setScreenStack] = useState<View[]>(() => {
+    try {
+      const saved = localStorage.getItem('aksara_navigation_stack');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed as View[];
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to parse aksara_navigation_stack:', e);
+    }
+    return ['HOME'];
+  });
+
+  const view = screenStack[screenStack.length - 1] || 'HOME';
+
+  const navigateTo = useCallback((newScreen: View) => {
+    setScreenStack((prev) => [...prev, newScreen]);
+  }, []);
+
+  const goBack = useCallback(() => {
+    setScreenStack((prev) => (prev.length > 1 ? prev.slice(0, -1) : ['HOME']));
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('aksara_navigation_stack', JSON.stringify(screenStack));
+  }, [screenStack]);
+
+  const goBackRef = useRef(goBack);
+  useEffect(() => {
+    goBackRef.current = goBack;
+  }, [goBack]);
+
+  useEffect(() => {
+    window.history.pushState(null, '', window.location.href);
+
+    const handlePopState = () => {
+      window.history.pushState(null, '', window.location.href);
+      goBackRef.current();
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, []);
 
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentUserEmail, setCurrentUserEmail] = useState('');
@@ -799,7 +844,7 @@ const triggerAutoSync = useCallback(async () => {
     localStorage.removeItem('aksara_user_name');
   };
 
-  const handleStartInspection = () => { resetForm(); setView('PICK_UNIT'); };
+  const handleStartInspection = () => { resetForm(); navigateTo('PICK_UNIT'); };
 
   const handleUnitPicked = (picked: PickedUnit) => {
     resetForm();
@@ -809,21 +854,21 @@ const triggerAutoSync = useCallback(async () => {
     setFromTemplateClientId(picked.client.id);
     setFromTemplateUnitId(picked.unit.id);
     setFormMode('create');
-    setView('FORM');
+    navigateTo('FORM');
   };
 
   const handleManualPick = (objectType: string) => {
     resetForm();
     setActiveObject(objectType);
     setFormMode('create');
-    setView('FORM');
+    navigateTo('FORM');
   };
 
   const handleSelectObject = (key: string) => {
     resetForm();
     setActiveObject(key);
     setFormMode('create');
-    setView('FORM');
+    navigateTo('FORM');
   };
 
   const handleEdit = async (sessionId: string) => {
@@ -844,7 +889,7 @@ const triggerAutoSync = useCallback(async () => {
     setDeletedPhotoIds([]);
     setFromTemplateClientId(session.templateClientId);
     setFromTemplateUnitId(session.templateUnitId);
-    setView('FORM');
+    navigateTo('FORM');
   };
 
   const handleFieldChange = (name: string, value: string) => {
@@ -1014,7 +1059,11 @@ const triggerAutoSync = useCallback(async () => {
 
       await refreshData();
       resetForm();
-      setView('HOME');
+      if (formMode === 'edit') {
+        goBack();
+      } else {
+        setScreenStack(['HOME']);
+      }
     } catch (err: any) {
       if (err?.name === 'QuotaExceededError' || err?.inner?.name === 'QuotaExceededError') {
         alert('⚠️ Penyimpanan penuh! Hapus draft lama atau sync ke Drive.');
@@ -1232,7 +1281,7 @@ const handleDelete = async (id: string) => {
             ].map((item) => (
               <button
                 key={item.id}
-                onClick={() => setView(item.id as View)}
+                onClick={() => setScreenStack([item.id as View])}
                 style={{
                   width: '100%', display: 'flex', alignItems: 'center', gap: 12,
                   padding: '12px 14px', borderRadius: 10, border: 'none', cursor: 'pointer',
@@ -1286,7 +1335,7 @@ const handleDelete = async (id: string) => {
         ) : (
           /* Mobile Header - Logo */
           <>
-            <button onClick={() => { resetForm(); setView('HOME'); }} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+            <button onClick={() => { resetForm(); setScreenStack(['HOME']); }} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
               <img src="/icons/icon-192.png" alt="ARP" style={{ width: 30, height: 30, borderRadius: 9, objectFit: 'cover' }} />
               <span style={{ fontSize: 13, fontWeight: 700, color: T.textPrimary, letterSpacing: '-0.3px' }}>
                 Aksara <span style={{ color: T.emerald500 }}>Inspect</span>
@@ -1298,7 +1347,7 @@ const handleDelete = async (id: string) => {
                 <span style={{ fontSize: 10, fontWeight: 600, color: isOnline ? '#065F46' : '#B91C1C' }}>{isOnline ? 'Online' : 'Offline'}</span>
               </div>
               {drafts.length > 0 && (
-                <button onClick={() => setView('SYNC_HUB')} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `0.5px solid ${T.amberBorder}`, background: T.amberLight, color: T.amber800 }}>
+                <button onClick={() => navigateTo('SYNC_HUB')} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `0.5px solid ${T.amberBorder}`, background: T.amberLight, color: T.amber800 }}>
                   Sync <span style={{ background: T.amber400, color: T.amber800, borderRadius: 10, padding: '1px 5px', fontSize: 10, fontWeight: 700 }}>{drafts.length}</span>
                 </button>
               )}
@@ -1409,7 +1458,7 @@ const handleDelete = async (id: string) => {
                   <p style={{ fontSize: 11, fontWeight: 700, color: T.amber800 }}>{drafts.length} draft belum di-sync</p>
                   <p style={{ fontSize: 10, color: T.amber700, marginTop: 1 }}>Hubungkan internet & upload ke Drive</p>
                 </div>
-                <button onClick={() => setView('SYNC_HUB')} style={{ padding: '5px 10px', background: T.amber600, color: '#fff', borderRadius: 8, fontSize: 10, fontWeight: 700, border: 'none', cursor: 'pointer', flexShrink: 0 }}>Buka Sync</button>
+                <button onClick={() => navigateTo('SYNC_HUB')} style={{ padding: '5px 10px', background: T.amber600, color: '#fff', borderRadius: 8, fontSize: 10, fontWeight: 700, border: 'none', cursor: 'pointer', flexShrink: 0 }}>Buka Sync</button>
               </div>
             )}
             <div>
@@ -1424,7 +1473,7 @@ const handleDelete = async (id: string) => {
         )}
 
         {view === 'PICK_UNIT' && (
-          <ClientPicker onPick={handleUnitPicked} onManual={handleManualPick} onCancel={() => setView('HOME')} />
+          <ClientPicker onPick={handleUnitPicked} onManual={handleManualPick} onCancel={goBack} />
         )}
 
 {view === 'FORM' && (
@@ -1460,7 +1509,7 @@ const handleDelete = async (id: string) => {
             onRemoveExistingPhoto={removeExistingPhoto}
             onRemoveNewPhoto={removeNewPhoto}
             onSave={handleSaveForm}
-            onCancel={() => { resetForm(); setView('HOME'); }}
+            onCancel={() => { resetForm(); goBack(); }}
           />
         )}
 
@@ -1484,7 +1533,7 @@ const handleDelete = async (id: string) => {
         )}
 
         {view === 'ADMIN' && (
-          <AdminPanel currentUserEmail={currentUserEmail} onClose={() => setView('HOME')} />
+          <AdminPanel currentUserEmail={currentUserEmail} onClose={goBack} />
         )}
 
       </main>
@@ -1494,16 +1543,16 @@ const handleDelete = async (id: string) => {
       {/* BOTTOM NAV + FAB - Only for Mobile */}
       {!isDesktop && (view === 'HOME' || view === 'HISTORY' || view === 'SYNC_HUB' || view === 'ADMIN') && (
         <nav style={{ position: 'fixed', bottom: 0, left: 0, right: 0, background: darkMode ? 'rgba(15,23,42,0.97)' : 'rgba(255,255,255,0.97)', backdropFilter: 'blur(8px)', borderTop: `0.5px solid ${T.border}`, padding: '8px 16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-around', maxWidth: 640, margin: '0 auto', zIndex: 40 }}>
-          <NavTab icon={ICONS.home} label="Beranda" active={view === 'HOME'} onClick={() => { resetForm(); setView('HOME'); }} />
-          <NavTab icon={ICONS.clipboard} label="Riwayat" active={view === 'HISTORY'} onClick={() => setView('HISTORY')} />
+          <NavTab icon={ICONS.home} label="Beranda" active={view === 'HOME'} onClick={() => { resetForm(); setScreenStack(['HOME']); }} />
+          <NavTab icon={ICONS.clipboard} label="Riwayat" active={view === 'HISTORY'} onClick={() => setScreenStack(['HISTORY'])} />
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
             <button onClick={handleStartInspection} aria-label="Mulai inspeksi baru" style={{ width: 64, height: 64, borderRadius: '50%', background: 'rgba(16,185,129,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', cursor: 'pointer', marginTop: -32, WebkitTapHighlightColor: 'transparent', padding: 0 }}>
               <div style={{ width: 52, height: 52, borderRadius: '50%', background: T.emerald500, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', border: '2.5px solid #fff', boxShadow: `0 0 0 1px ${T.emeraldBorder}` }}>{ICONS.camera}</div>
             </button>
             <span style={{ fontSize: 9, fontWeight: 700, color: T.emerald500, letterSpacing: '0.02em' }}>Inspeksi</span>
           </div>
-          <NavTab icon={ICONS.cloudUp} label="Sync" active={view === 'SYNC_HUB'} onClick={() => setView('SYNC_HUB')} />
-          <NavTab icon={ICONS.shield} label="Admin" active={view === 'ADMIN'} onClick={() => setView('ADMIN')} />
+          <NavTab icon={ICONS.cloudUp} label="Sync" active={view === 'SYNC_HUB'} onClick={() => setScreenStack(['SYNC_HUB'])} />
+          <NavTab icon={ICONS.shield} label="Admin" active={view === 'ADMIN'} onClick={() => setScreenStack(['ADMIN'])} />
         </nav>
       )}
     </div>
