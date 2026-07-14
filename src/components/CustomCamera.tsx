@@ -176,10 +176,10 @@ async function drawWatermark(
 
   // ── Background
   ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,0.6)';
-  ctx.shadowBlur = unit * 4;
-  ctx.shadowOffsetY = unit * 1.5;
-  ctx.fillStyle = 'rgba(8, 14, 24, 0.65)';
+  ctx.shadowColor = 'rgba(0,0,0,0.3)';
+  ctx.shadowBlur = unit * 3;
+  ctx.shadowOffsetY = unit * 1.0;
+  ctx.fillStyle = 'rgba(8, 14, 24, 0.38)';
   rrect(ctx, bx, by, boxW, boxH, unit * 1.0);
   ctx.fill();
   ctx.restore();
@@ -559,7 +559,7 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [watermark, setWatermark] = useState(true);
+  const [watermark, setWatermark] = useState(false);
   const [gps, setGps] = useState<GpsData | null>(null);
   const [location, setLocation] = useState<LocationDetail>({ poiName: null, areaName: null });
   const [locationLoading, setLocationLoading] = useState(false);
@@ -580,14 +580,17 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
   type LensDevice = { deviceId: string; label: string };
   const [lensDevices, setLensDevices] = useState<LensDevice[]>([]);
   const [activeDeviceId, setActiveDeviceId] = useState<string | null>(null);
+  // Ref: deviceId kamera utama (1×) yang dideteksi browser saat pertama buka
+  const mainDeviceIdRef = useRef<string | null>(null);
 
   // ─── KAMERA ─────────────────────────────────────────────────────────────
   // Ref supaya enumerate hanya dijalankan SEKALI per facing mode, bukan setiap ganti lensa
   const hasEnumerated = useRef(false);
 
-  // Reset enumerate flag ketika facing berubah
+  // Reset enumerate flag & refs ketika facing berubah
   useEffect(() => {
     hasEnumerated.current = false;
+    mainDeviceIdRef.current = null;
   }, [facing]);
 
   useEffect(() => {
@@ -595,6 +598,19 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
     const initStream = async () => {
       try {
         setLoading(true); setError(null);
+
+        // ★ Skip re-init jika stream sudah menggunakan deviceId yang sama (anti flicker)
+        if (activeDeviceId && streamRef.current) {
+          const existingTrack = streamRef.current.getVideoTracks()[0];
+          if (existingTrack) {
+            const existingSettings = existingTrack.getSettings ? existingTrack.getSettings() : {} as any;
+            if (existingSettings.deviceId === activeDeviceId) {
+              setLoading(false);
+              return;
+            }
+          }
+        }
+
         if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
 
         const videoConstraints: MediaTrackConstraints = activeDeviceId
@@ -640,6 +656,13 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
         // Enumerate devices untuk lens switcher — HANYA SEKALI per facing mode
         if (facing === 'environment' && !hasEnumerated.current) {
           hasEnumerated.current = true;
+
+          // ★ Kunci anti-bug: deviceId dari stream saat ini PASTI kamera utama (1×)
+          // karena browser membuka main camera via facingMode: 'environment'
+          const currentSettings = videoTrack.getSettings ? videoTrack.getSettings() : {} as any;
+          const detectedMainId: string | null = currentSettings.deviceId || null;
+          mainDeviceIdRef.current = detectedMainId;
+
           try {
             const devices = await navigator.mediaDevices.enumerateDevices();
             const videoInputs = devices.filter(d => d.kind === 'videoinput' && d.deviceId && d.label);
@@ -661,41 +684,76 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
             });
 
             if (uniqueBack.length > 1 && mounted) {
-              const classified = uniqueBack.map((cam, idx) => {
+              const classified = uniqueBack.map((cam) => {
                 const lbl = (cam.label || '').toLowerCase();
                 let type: 'ultra' | 'main' | 'tele' | 'unknown' = 'unknown';
                 let label = '';
 
-                if (lbl.includes('ultra') || lbl.includes('0.5') || lbl.includes('0.6') || (lbl.includes('wide') && !lbl.includes('main'))) {
-                  type = 'ultra'; label = '0.5×';
-                } else if (lbl.includes('tele') || lbl.includes('2x') || lbl.includes('3x') || lbl.includes('5x') || lbl.includes('zoom')) {
-                  type = 'tele';
-                  label = lbl.includes('5x') ? '5×' : lbl.includes('3x') ? '3×' : '2×';
-                } else if (lbl.includes('main') || lbl.includes('utama') || lbl.includes('1x')) {
+                // ★ RULE 1: deviceId cocok dengan stream aktif → PASTI main (1×)
+                // Ini 100% akurat karena browser selalu membuka kamera utama via facingMode
+                if (detectedMainId && cam.deviceId === detectedMainId) {
                   type = 'main'; label = '1×';
                 }
-                
+                // RULE 2: Deteksi ultra-wide dari keyword label
+                else if (
+                  lbl.includes('ultra') || lbl.includes('0.5') || lbl.includes('0.6') ||
+                  (lbl.includes('wide') && !lbl.includes('main') && !lbl.includes('utama') && !lbl.includes('primary'))
+                ) {
+                  type = 'ultra'; label = '0.5×';
+                }
+                // RULE 3: Deteksi telephoto dari keyword label
+                else if (
+                  lbl.includes('tele') || lbl.includes('periscope') ||
+                  lbl.includes('5x') || lbl.includes('3x') || lbl.includes('2x') ||
+                  lbl.includes('zoom')
+                ) {
+                  type = 'tele';
+                  if (lbl.includes('5x') || lbl.includes('periscope')) label = '5×';
+                  else if (lbl.includes('3x')) label = '3×';
+                  else label = '2×';
+                }
+                // RULE 4: Deteksi main dari keyword (fallback jika deviceId tidak cocok)
+                else if (
+                  lbl.includes('main') || lbl.includes('utama') ||
+                  lbl.includes('1x') || lbl.includes('primary')
+                ) {
+                  type = 'main'; label = '1×';
+                }
+
                 return { deviceId: cam.deviceId, type, label };
               });
 
-              // 1. Jika tidak ada yang berlabel 'main', kita asumsikan kamera pertama (index 0) adalah 'main' (1x)
-              // Ini mencegah bug dimana kamera utama (1x) malah dilabeli 0.5x
-              if (!classified.some(c => c.type === 'main')) {
+              // ★ SAFETY: Pastikan tepat SATU kamera berlabel main
+              const mainCams = classified.filter(c => c.type === 'main');
+              if (mainCams.length === 0) {
+                // Fallback: kamera pertama = main
                 classified[0].type = 'main';
                 classified[0].label = '1×';
+              } else if (mainCams.length > 1) {
+                // Duplikat main → keep yang cocok detectedMainId, demote sisanya
+                let kept = false;
+                classified.forEach(c => {
+                  if (c.type === 'main') {
+                    if (!kept && (c.deviceId === detectedMainId || !detectedMainId)) {
+                      kept = true;
+                    } else {
+                      c.type = 'tele'; c.label = '2×';
+                    }
+                  }
+                });
               }
 
-              // 2. Fallback untuk tipe 'unknown' sisanya
+              // Fallback untuk tipe 'unknown' sisanya
               let nextUnknownIsUltra = !classified.some(c => c.type === 'ultra');
               classified.forEach((c) => {
                 if (c.type === 'unknown') {
                   if (nextUnknownIsUltra) {
                     c.type = 'ultra';
                     c.label = '0.5×';
-                    nextUnknownIsUltra = false; // Berikutnya jika ada unknown lagi, jadikan tele
+                    nextUnknownIsUltra = false;
                   } else {
                     c.type = 'tele';
-                    c.label = '2×'; 
+                    c.label = '2×';
                   }
                 }
               });
@@ -846,7 +904,17 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
           background: 'rgba(0,0,0,0.82)', backdropFilter: 'blur(8px)',
           borderBottom: '1px solid rgba(255,255,255,0.06)', gap: 10, flexShrink: 0,
         }}>
-          <button onClick={onClose} style={btnStyle('rgba(255,255,255,0.1)')}>✕ Tutup</button>
+          <button onClick={onClose} style={{
+            background: 'rgba(255,255,255,0.08)', color: '#E2E8F0',
+            border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10,
+            padding: '7px 12px', fontSize: 12, fontWeight: 600,
+            cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
+          }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+            Tutup
+          </button>
 
           <label style={{
             display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer',
@@ -867,11 +935,19 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
             <button
               onClick={handleTorchToggle}
               style={{
-                ...btnStyle(torch ? 'rgba(245,158,11,0.2)' : 'rgba(255,255,255,0.1)', torch ? '#F59E0B' : '#E2E8F0'),
-                border: torch ? '1px solid rgba(245,158,11,0.4)' : 'none',
+                background: torch ? 'rgba(250,204,21,0.18)' : 'rgba(255,255,255,0.08)',
+                color: torch ? '#FACC15' : '#94A3B8',
+                border: torch ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.1)',
+                borderRadius: 10, padding: '7px 12px', fontSize: 12, fontWeight: 600,
+                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
+                transition: 'all 0.25s ease',
+                boxShadow: torch ? '0 0 14px rgba(250,204,21,0.25)' : 'none',
               }}
             >
-              {torch ? '🔦 Senter On' : '🔦 Senter Off'}
+              <svg width="15" height="15" viewBox="0 0 24 24" fill={torch ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+              </svg>
+              {torch ? 'ON' : 'OFF'}
             </button>
           )}
 
@@ -881,8 +957,17 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
               setLensDevices([]);
               setFacing(f => f === 'environment' ? 'user' : 'environment');
             }}
-            style={btnStyle('rgba(255,255,255,0.1)')}>
-            🔄 Balik
+            style={{
+              background: 'rgba(255,255,255,0.08)', color: '#E2E8F0',
+              border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10,
+              padding: '7px 12px', fontSize: 12, fontWeight: 600,
+              cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
+            }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+            </svg>
+            Balik
           </button>
         </div>
 
@@ -1001,7 +1086,9 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
               display: 'flex', gap: 8, zIndex: 11,
             }}>
               {lensDevices.map((lens) => {
-                const isActive = activeDeviceId === lens.deviceId;
+                const isActive = activeDeviceId
+                  ? activeDeviceId === lens.deviceId
+                  : lens.deviceId === mainDeviceIdRef.current;
                 return (
                   <button
                     key={lens.deviceId}
