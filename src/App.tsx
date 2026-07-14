@@ -452,6 +452,7 @@ function NavTab({ icon, label, active, onClick }: { icon: React.ReactNode; label
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 
 export default function App() {
+  const { isMobile, isDesktop } = useResponsive();
   const [screenStack, setScreenStack] = useState<View[]>(() => {
     try {
       const saved = localStorage.getItem('aksara_navigation_stack');
