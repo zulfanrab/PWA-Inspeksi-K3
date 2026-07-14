@@ -540,6 +540,10 @@ export default function App() {
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const profilePhotoInputRef = useRef<HTMLInputElement>(null);
 
+  // Gallery processing state
+  const [isProcessingGallery, setIsProcessingGallery] = useState(false);
+  const [galleryProcessProgress, setGalleryProcessProgress] = useState({ current: 0, total: 0 });
+
   // Profile photo state
   const [profilePhotoUrl, setProfilePhotoUrl] = useState<string | null>(null);
 
@@ -899,28 +903,41 @@ const triggerAutoSync = useCallback(async () => {
 
   const handlePhotos = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const rawFiles = Array.from(e.target.files || []);
-    
-    // Konversi HEIC ke JPEG sebelum diproses
-    const files = await Promise.all(
-      rawFiles.map(async (file) => {
-        try {
-          return await convertHeicToJpeg(file);
-        } catch (err) {
-          console.error('Failed to convert HEIC:', err);
-          return file; // Fallback, walau mungkin ga bisa dirender
-        }
-      })
-    );
+    if (rawFiles.length === 0) return;
 
-    files.forEach((file) => {
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        const original = reader.result as string;
-        const compressed = await compressPhoto(original);
-        setNewPhotos((prev) => [...prev, compressed]);
-      };
-      reader.readAsDataURL(file);
-    });
+    setIsProcessingGallery(true);
+    setGalleryProcessProgress({ current: 0, total: rawFiles.length });
+
+    const processedPhotos: string[] = [];
+
+    for (let i = 0; i < rawFiles.length; i++) {
+      let file = rawFiles[i];
+      
+      // Render progress update
+      setGalleryProcessProgress({ current: i + 1, total: rawFiles.length });
+      await new Promise(res => setTimeout(res, 20)); // Kasih napas buat UI
+
+      try {
+        file = await convertHeicToJpeg(file);
+      } catch (err) {
+        console.error('Failed to convert HEIC:', err);
+      }
+
+      const dataUrl = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = async () => {
+          const original = reader.result as string;
+          const compressed = await compressPhoto(original);
+          resolve(compressed);
+        };
+        reader.readAsDataURL(file);
+      });
+
+      processedPhotos.push(dataUrl);
+    }
+
+    setNewPhotos((prev) => [...prev, ...processedPhotos]);
+    setIsProcessingGallery(false);
     e.target.value = '';
   };
 
@@ -1506,6 +1523,8 @@ const handleDelete = async (id: string) => {
             uploadingId={uploadingId}
             uploadProgress={uploadProgress}
             editingId={editingId}
+            isProcessingGallery={isProcessingGallery}
+            galleryProcessProgress={galleryProcessProgress}
             
             onClientNameChange={setClientName}
             onClientNameFocus={() => setShowClientDropdown(true)}

@@ -57,6 +57,8 @@ interface FormViewProps {
   onRemoveNewPhoto: (idx: number) => void;
   onSave: () => void;
   onCancel: () => void;
+  isProcessingGallery?: boolean;
+  galleryProcessProgress?: { current: number; total: number };
 }
 
 export function FormView({
@@ -86,6 +88,8 @@ export function FormView({
   onRemoveNewPhoto,
   onSave,
   onCancel,
+  isProcessingGallery,
+  galleryProcessProgress,
 }: FormViewProps) {
   const isEdit = formMode === 'edit';
   const [showOptional, setShowOptional] = useState(false);
@@ -96,7 +100,17 @@ export function FormView({
   const optionalFields = commonFields.filter(f => !REQUIRED_COMMON.includes(f.name));
 
   return (
-    <div className="space-y-6 pb-12">
+    <div className="space-y-6 pb-12 relative">
+      {/* ── OVERLAY LOADING GALERI ── */}
+      {isProcessingGallery && (
+        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white/80 backdrop-blur-sm rounded-2xl">
+          <div className="w-16 h-16 border-4 border-[#10B981]/30 border-t-[#10B981] rounded-full animate-spin mb-4" />
+          <h3 className="text-[#064E3B] font-bold text-lg mb-1">Memproses Foto...</h3>
+          <p className="text-gray-600 font-medium text-sm">
+            {galleryProcessProgress?.current} dari {galleryProcessProgress?.total}
+          </p>
+        </div>
+      )}
 
       {/* Header */}
       <div className="flex items-center gap-4 pb-2">
