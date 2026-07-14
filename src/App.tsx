@@ -523,7 +523,7 @@ export default function App() {
   const [formData, setFormData] = useState<Record<string, string>>(defaultFormFields());
   const [existingPhotos, setExistingPhotos] = useState<InspectionPhoto[]>([]);
   const [newPhotos, setNewPhotos] = useState<string[]>([]);
-  const [deletedPhotoIds, setDeletedPhotoIds] = useState<string[]>([]);
+  const [deletedPhotos, setDeletedPhotos] = useState<InspectionPhoto[]>([]);
   const [fromTemplateClientId, setFromTemplateClientId] = useState<string | undefined>();
   const [fromTemplateUnitId, setFromTemplateUnitId] = useState<string | undefined>();
 
@@ -827,7 +827,7 @@ const triggerAutoSync = useCallback(async () => {
     setFormData(defaultFormFields());
     setExistingPhotos([]);
     setNewPhotos([]);
-    setDeletedPhotoIds([]);
+    setDeletedPhotos([]);
     setFromTemplateClientId(undefined);
     setFromTemplateUnitId(undefined);
   };
@@ -887,7 +887,7 @@ const triggerAutoSync = useCallback(async () => {
     });
     setExistingPhotos(session.photos);
     setNewPhotos([]);
-    setDeletedPhotoIds([]);
+    setDeletedPhotos([]);
     setFromTemplateClientId(session.templateClientId);
     setFromTemplateUnitId(session.templateUnitId);
     navigateTo('FORM');
@@ -925,8 +925,11 @@ const triggerAutoSync = useCallback(async () => {
   };
 
   const removeExistingPhoto = (photoId: string) => {
+    const photoToDelete = existingPhotos.find(p => p.id === photoId);
+    if (photoToDelete) {
+      setDeletedPhotos((prev) => [...prev, photoToDelete]);
+    }
     setExistingPhotos((prev) => prev.filter((p) => p.id !== photoId));
-    setDeletedPhotoIds((prev) => [...prev, photoId]);
   };
 
   const removeNewPhoto = (idx: number) => {
@@ -972,13 +975,12 @@ const triggerAutoSync = useCallback(async () => {
             status: 'draft', // FIXED: draft dulu, bukan synced
           },
           newPhotos,
-          deletedPhotoIds
+          deletedPhotos.map(p => p.id)
         );
         // Hapus foto yang didelete dari Drive
-        if (deletedPhotoIds.length > 0 && isOnline) {
-          for (const photoId of deletedPhotoIds) {
-            const photo = existingPhotos.find(p => p.id === photoId);
-            if (photo?.driveFileId) {
+        if (deletedPhotos.length > 0 && isOnline) {
+          for (const photo of deletedPhotos) {
+            if (photo.driveFileId) {
               try {
                 await deletePhotoFromDrive(photo.driveFileId, currentUserEmail);
               } catch (e) {
@@ -1136,6 +1138,10 @@ const handleDelete = async (id: string) => {
   const session = await SessionRepository.getById(id);
   if (!session) return;
 
+  // OPTIMISTIC UI UPDATE (WAJIB)
+  setHistory(prev => prev.filter(item => item.id !== id));
+  setDrafts(prev => prev.filter(item => item.id !== id));
+
   try {
     // 1. Hapus dari Drive dulu (kalau synced)
     if (session.status === 'synced') {
@@ -1154,6 +1160,9 @@ const handleDelete = async (id: string) => {
         throw new Error(err?.error || `HTTP ${res.status}`);
       }
 
+      // Hapus lokal di IndexedDB
+      await SessionRepository.delete(id);
+
       // 🔥 LANGSUNG CLEANUP DARI deleted-log SETELAH DELETE SUKSES
       await doPullInspections();
       return;
@@ -1161,9 +1170,9 @@ const handleDelete = async (id: string) => {
 
     // Kalau draft, hapus langsung dari DB lokal
     await SessionRepository.delete(id);
-    setHistory(prev => prev.filter(item => item.id !== id));
 
   } catch (err: any) {
+    refreshData(); // Kembalikan data ke UI jika gagal
     alert(`⚠️ Gagal hapus: ${err.message}`);
   }
 };

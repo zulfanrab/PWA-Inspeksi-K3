@@ -1,5 +1,5 @@
 // src/components/HistoryView.tsx
-import { useState, useRef, useMemo } from 'react';
+import { useState, useRef, useMemo, useEffect } from 'react';
 import type { InspectionSession, InspectionPhoto } from '../db/db';
 import { getInspectionYear, getSifatPemeriksaan, getTanggalInspeksi } from '../types';
 import { exportToPDF } from '../utils/pdfExport';
@@ -46,8 +46,29 @@ export function HistoryView({
   uploadProgress,
   currentUserEmail,
 }: HistoryViewProps) {
-  const [activeTab, setActiveTab] = useState<'recent' | 'byClient'>('recent');
-  const [openClients, setOpenClients] = useState<Set<string>>(new Set());
+  const [activeTab, setActiveTab] = useState<'recent' | 'byClient'>(() => {
+    return (localStorage.getItem('aksara_history_tab') as 'recent' | 'byClient') || 'recent';
+  });
+  const [openClients, setOpenClients] = useState<Set<string>>(() => {
+    const saved = localStorage.getItem('aksara_history_open_clients');
+    if (saved) {
+      try {
+        return new Set(JSON.parse(saved));
+      } catch (e) {
+        return new Set();
+      }
+    }
+    return new Set();
+  });
+
+  // Persist state to localStorage
+  useEffect(() => {
+    localStorage.setItem('aksara_history_tab', activeTab);
+  }, [activeTab]);
+
+  useEffect(() => {
+    localStorage.setItem('aksara_history_open_clients', JSON.stringify(Array.from(openClients)));
+  }, [openClients]);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterYear, setFilterYear] = useState<string>('Semua');
   const [filterSifat, setFilterSifat] = useState<'Semua' | 'Baru' | 'Berkala'>('Semua');

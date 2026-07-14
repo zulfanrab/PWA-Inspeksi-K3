@@ -576,73 +576,30 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
   const [torch, setTorch] = useState(false);
   const [torchSupported, setTorchSupported] = useState(false);
 
-  // States untuk Lens Switcher (multi-camera)
-  type LensDevice = { deviceId: string; label: string };
-  const [lensDevices, setLensDevices] = useState<LensDevice[]>([]);
-  const [activeDeviceId, setActiveDeviceId] = useState<string | null>(null);
-  // Ref: deviceId kamera utama (1×) yang dideteksi browser saat pertama buka
-  const mainDeviceIdRef = useRef<string | null>(null);
-
   // States untuk Pinch Zoom & Tap to Focus
   const [pinchStartDist, setPinchStartDist] = useState<number | null>(null);
   const [pinchStartZoom, setPinchStartZoom] = useState<number>(1);
   const [focusRing, setFocusRing] = useState<{ x: number; y: number; show: boolean } | null>(null);
 
   // ─── KAMERA ─────────────────────────────────────────────────────────────
-  // Ref supaya enumerate hanya dijalankan SEKALI per facing mode, bukan setiap ganti lensa
-  const hasEnumerated = useRef(false);
-
-  // Reset enumerate flag & refs ketika facing berubah
-  useEffect(() => {
-    hasEnumerated.current = false;
-    mainDeviceIdRef.current = null;
-  }, [facing]);
-
   useEffect(() => {
     let mounted = true;
     const initStream = async () => {
       try {
         setLoading(true); setError(null);
 
-        // ★ Skip re-init jika stream sudah menggunakan deviceId yang sama (anti flicker)
-        if (activeDeviceId && streamRef.current) {
-          const existingTrack = streamRef.current.getVideoTracks()[0];
-          if (existingTrack) {
-            const existingSettings = existingTrack.getSettings ? existingTrack.getSettings() : {} as any;
-            if (existingSettings.deviceId === activeDeviceId) {
-              setLoading(false);
-              return;
-            }
-          }
-        }
-
         if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
 
-        const videoConstraints: MediaTrackConstraints = activeDeviceId
-          ? { deviceId: { exact: activeDeviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } }
-          : { facingMode: facing, width: { ideal: 1920 }, height: { ideal: 1080 } };
+        const videoConstraints: MediaTrackConstraints = { 
+          facingMode: facing, 
+          width: { ideal: 1920 }, 
+          height: { ideal: 1080 } 
+        };
 
-        let stream: MediaStream;
-        try {
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: videoConstraints,
-            audio: false,
-          });
-        } catch (err) {
-          console.warn("Failed to open camera with constraints:", videoConstraints, err);
-          // Jika gagal membuka lensa khusus (misal ultra-wide / tele yang dikunci vendor), fallback ke main camera
-          if (activeDeviceId && activeDeviceId !== mainDeviceIdRef.current) {
-            if (mounted) {
-              setActiveDeviceId(mainDeviceIdRef.current);
-            }
-            return; // useEffect akan mentrigger ulang dengan deviceId kamera utama
-          }
-          // Fallback kedua: buka camera belakang default tanpa exact ID
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: facing, width: { ideal: 1920 }, height: { ideal: 1080 } },
-            audio: false,
-          });
-        }
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: videoConstraints,
+          audio: false,
+        });
 
         if (!mounted) { stream.getTracks().forEach(t => t.stop()); return; }
         streamRef.current = stream;
@@ -664,156 +621,25 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
           // Flash/Torch
           setTorchSupported('torch' in capabilities);
 
-          // Zoom
+          // Zoom capabilities
           if ('zoom' in capabilities) {
             setZoomSupported(true);
             const zoomCap = (capabilities as any).zoom;
             setMinZoom(zoomCap.min || 1);
             setMaxZoom(zoomCap.max || 1);
-            setZoom(zoomCap.min || 1);
+            
+            // Re-apply current zoom state to the new camera track
+            try {
+              setZoom(prevZoom => {
+                const safeHardwareZoom = Math.min(zoomCap.max || 1, Math.max(zoomCap.min || 1, prevZoom));
+                videoTrack.applyConstraints({ advanced: [{ zoom: safeHardwareZoom } as any] }).catch(()=>{});
+                return prevZoom;
+              });
+            } catch(e) {}
           } else {
             setZoomSupported(false);
-          }
-        }
-
-        // Enumerate devices untuk lens switcher — HANYA SEKALI per facing mode
-        if (facing === 'environment' && !hasEnumerated.current) {
-          hasEnumerated.current = true;
-
-          // ★ Kunci anti-bug: deviceId dari stream saat ini PASTI kamera utama (1×)
-          // karena browser membuka main camera via facingMode: 'environment'
-          const currentSettings = videoTrack.getSettings ? videoTrack.getSettings() : {} as any;
-          const detectedMainId: string | null = currentSettings.deviceId || null;
-          mainDeviceIdRef.current = detectedMainId;
-
-          try {
-            const devices = await navigator.mediaDevices.enumerateDevices();
-            const videoInputs = devices.filter(d => d.kind === 'videoinput' && d.deviceId && d.label);
-
-            // Filter kamera belakang: exclude kamera depan dan sensor dummy/depth/macro
-            const backCameras = videoInputs.filter(d => {
-              const lbl = (d.label || '').toLowerCase();
-              const isFront = lbl.includes('front') || lbl.includes('user') || lbl.includes('selfie') ||
-                lbl.includes('depan') || lbl.includes('facing front');
-              const isAux = lbl.includes('depth') || lbl.includes('macro') || lbl.includes('bokeh') || 
-                lbl.includes('sensor') || lbl.includes('virtual') || lbl.includes('aux');
-              return !isFront && !isAux;
-            });
-
-            // Deduplicate berdasarkan deviceId
-            const seen = new Set<string>();
-            const uniqueBack = backCameras.filter(c => {
-              if (seen.has(c.deviceId)) return false;
-              seen.add(c.deviceId);
-              return true;
-            });
-
-            if (uniqueBack.length > 1 && mounted) {
-              const classified = uniqueBack.map((cam) => {
-                const lbl = (cam.label || '').toLowerCase();
-                let type: 'ultra' | 'main' | 'tele' | 'unknown' = 'unknown';
-                let label = '';
-
-                // ★ RULE 1: deviceId cocok dengan stream aktif → PASTI main (1×)
-                if (detectedMainId && cam.deviceId === detectedMainId) {
-                  type = 'main'; label = '1×';
-                }
-                // RULE 2: Deteksi ultra-wide dari keyword label
-                else if (
-                  lbl.includes('ultra') || lbl.includes('0.5') || lbl.includes('0.6') ||
-                  (lbl.includes('wide') && !lbl.includes('main') && !lbl.includes('utama') && !lbl.includes('primary'))
-                ) {
-                  type = 'ultra'; label = '0.5×';
-                }
-                // RULE 3: Deteksi telephoto dari keyword label
-                else if (
-                  lbl.includes('tele') || lbl.includes('periscope') ||
-                  lbl.includes('5x') || lbl.includes('3x') || lbl.includes('2x') ||
-                  lbl.includes('zoom')
-                ) {
-                  type = 'tele';
-                  if (lbl.includes('5x') || lbl.includes('periscope')) label = '5×';
-                  else if (lbl.includes('3x')) label = '3×';
-                  else label = '2×';
-                }
-                // RULE 4: Deteksi main dari keyword
-                else if (
-                  lbl.includes('main') || lbl.includes('utama') ||
-                  lbl.includes('1x') || lbl.includes('primary')
-                ) {
-                  type = 'main'; label = '1×';
-                }
-
-                return { deviceId: cam.deviceId, type, label };
-              });
-
-              // ★ SAFETY: Pastikan tepat SATU kamera berlabel main
-              const mainCams = classified.filter(c => c.type === 'main');
-              if (mainCams.length === 0) {
-                classified[0].type = 'main';
-                classified[0].label = '1×';
-              } else if (mainCams.length > 1) {
-                let kept = false;
-                classified.forEach(c => {
-                  if (c.type === 'main') {
-                    if (!kept && (c.deviceId === detectedMainId || !detectedMainId)) {
-                      kept = true;
-                    } else {
-                      c.type = 'tele'; c.label = '2×';
-                    }
-                  }
-                });
-              }
-
-              // Fallback untuk tipe 'unknown' sisanya
-              let nextUnknownIsUltra = !classified.some(c => c.type === 'ultra');
-              classified.forEach((c) => {
-                if (c.type === 'unknown') {
-                  if (nextUnknownIsUltra) {
-                    c.type = 'ultra';
-                    c.label = '0.5×';
-                    nextUnknownIsUltra = false;
-                  } else {
-                    c.type = 'tele';
-                    c.label = '2×';
-                  }
-                }
-              });
-
-              // Batasi jumlah tombol (Maks 1 Ultra, 1 Main, maks 2 Tele)
-              const finalLenses: typeof classified = [];
-              const u = classified.find(c => c.type === 'ultra');
-              const m = classified.find(c => c.type === 'main');
-              const teles = classified.filter(c => c.type === 'tele');
-              
-              const uniqueTeles: typeof classified = [];
-              const teleSeen = new Set();
-              teles.forEach(t => {
-                if (!teleSeen.has(t.label)) {
-                   teleSeen.add(t.label);
-                   uniqueTeles.push(t);
-                }
-              });
-
-              if (u) finalLenses.push(u);
-              if (m) finalLenses.push(m);
-              finalLenses.push(...uniqueTeles.slice(0, 2));
-
-              const val = (lbl: string) => parseFloat(lbl.replace(/[^0-9.]/g, '')) || 1;
-              finalLenses.sort((a, b) => val(a.label) - val(b.label));
-
-              const lensResult = finalLenses.map(c => ({ deviceId: c.deviceId, label: c.label }));
-              setLensDevices(lensResult);
-
-              if (!activeDeviceId && lensResult.length > 0) {
-                 const mainLens = lensResult.find(l => l.label === '1×') || lensResult[0];
-                 setActiveDeviceId(mainLens.deviceId);
-              }
-            } else {
-              setLensDevices([]);
-            }
-          } catch (_) {
-            // enumerateDevices failed
+            setMinZoom(1);
+            setMaxZoom(1);
           }
         }
 
@@ -824,7 +650,7 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
     };
     initStream();
     return () => { mounted = false; streamRef.current?.getTracks().forEach(t => t.stop()); };
-  }, [facing, activeDeviceId]);
+  }, [facing]);
 
   const handleTorchToggle = async () => {
     const stream = streamRef.current;
@@ -844,63 +670,23 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
   };
 
   const handleZoomChange = async (value: number) => {
+    // Clamp digital zoom slider from minZoom up to 5x natively
+    const newZoom = Math.max(minZoom, Math.min(5, value));
+    setZoom(newZoom);
+
     const stream = streamRef.current;
     if (!stream) return;
     const videoTrack = stream.getVideoTracks()[0];
+    
     if (videoTrack && zoomSupported) {
       try {
+        const hardwareZoom = Math.min(maxZoom, newZoom);
         await videoTrack.applyConstraints({
-          advanced: [{ zoom: value } as any]
+          advanced: [{ zoom: hardwareZoom } as any]
         });
-        setZoom(value);
       } catch (e) {
-        console.error('Gagal menerapkan zoom:', e);
+        console.error('Gagal menerapkan hardware zoom:', e);
       }
-    }
-  };
-
-  // ─── LENS PRESETS & FOCUS GESTURES ───────────────────────────────────────
-  const getActivePreset = () => {
-    const activeLens = lensDevices.find(d => d.deviceId === activeDeviceId);
-    if (activeLens) {
-      if (activeLens.label === '0.5×') return '0.5x';
-      if (activeLens.label === '2×' || activeLens.label === '3×') return '2x';
-      if (activeLens.label === '5×') return '5x';
-    }
-    
-    // Fallback based on digital zoom
-    if (zoom >= 4.5) return '5x';
-    if (zoom >= 1.8) return '2x';
-    if (zoom < 0.8) return '0.5x';
-    return '1x';
-  };
-
-  const handlePresetClick = async (preset: string) => {
-    let targetDeviceId = mainDeviceIdRef.current;
-
-    if (preset === '0.5x') {
-      const ultra = lensDevices.find(d => d.label === '0.5×');
-      if (ultra) {
-        targetDeviceId = ultra.deviceId;
-      } else {
-        // Jika tidak ada ultra-wide fisik, tidak bisa zoom out dibawah 1x
-        return;
-      }
-    } else if (preset === '2x') {
-      const tele2x = lensDevices.find(d => d.label === '2×' || d.label === '3×');
-      if (tele2x) targetDeviceId = tele2x.deviceId;
-    } else if (preset === '5x') {
-      const tele5x = lensDevices.find(d => d.label === '5×');
-      if (tele5x) targetDeviceId = tele5x.deviceId;
-    }
-
-    if (targetDeviceId && targetDeviceId !== activeDeviceId) {
-      setActiveDeviceId(targetDeviceId);
-      setZoom(1); // Reset digital zoom untuk kamera baru
-    } else {
-      // Jika tetap di kamera yang sama, gunakan digital zoom
-      const zoomVal = preset === '2x' ? 2 : preset === '5x' ? 5 : 1;
-      handleZoomChange(Math.min(maxZoom, Math.max(minZoom, zoomVal)));
     }
   };
 
@@ -981,7 +767,8 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
       
       const factor = dist / pinchStartDist;
       let targetZoom = pinchStartZoom * factor;
-      targetZoom = Math.max(minZoom, Math.min(maxZoom, targetZoom));
+      // Clamp to minZoom - 5x for universal zooming
+      targetZoom = Math.max(minZoom, Math.min(5, targetZoom));
       handleZoomChange(targetZoom);
     }
   };
@@ -1020,7 +807,21 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
       const W = v.videoWidth || 1280, H = v.videoHeight || 720;
       c.width = W; c.height = H;
       const ctx = c.getContext('2d')!;
-      ctx.drawImage(v, 0, 0, W, H);
+      
+      // Hitung CSS Zoom yang digunakan
+      const cssZoom = zoomSupported && maxZoom > 1 ? (zoom > maxZoom ? zoom / maxZoom : 1) : zoom;
+
+      if (cssZoom > 1) {
+        // Crop area tengah sesuai level zoom
+        const cropW = W / cssZoom;
+        const cropH = H / cssZoom;
+        const startX = (W - cropW) / 2;
+        const startY = (H - cropH) / 2;
+        ctx.drawImage(v, startX, startY, cropW, cropH, 0, 0, W, H);
+      } else {
+        ctx.drawImage(v, 0, 0, W, H);
+      }
+      
       if (watermark) await drawWatermark(ctx, W, H, gps, location);
       const dataUrl = c.toDataURL('image/jpeg', 0.92);
       setPhotos(prev => [...prev, dataUrl]);
@@ -1102,8 +903,6 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
 
           <button
             onClick={() => {
-              setActiveDeviceId(null);
-              setLensDevices([]);
               setFacing(f => f === 'environment' ? 'user' : 'environment');
             }}
             style={{
@@ -1153,9 +952,13 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
             </div>
           )}
 
+          {/* CSS Fallback Zoom untuk device yang tidak support hardware zoom atau over-zoom */}
           <video ref={videoRef} autoPlay playsInline muted style={{
             width: '100%', height: '100%', objectFit: 'cover',
             display: loading || error ? 'none' : 'block',
+            transform: `scale(${zoomSupported && maxZoom > 1 ? (zoom > maxZoom ? zoom / maxZoom : 1) : zoom})`,
+            transition: 'transform 0.1s ease-out',
+            transformOrigin: 'center center',
           }} />
 
           {/* Flash */}
@@ -1215,83 +1018,40 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
           )}
 
           {/* Zoom overlay control */}
-          {zoomSupported && maxZoom > minZoom && (
-            <div style={{
-              position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)',
-              background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(5px)',
-              borderRadius: 20, padding: '6px 14px', display: 'flex', alignItems: 'center', gap: 10,
-              boxShadow: '0 4px 15px rgba(0,0,0,0.4)', zIndex: 10,
-            }}>
-              <button
-                type="button"
-                onClick={() => handleZoomChange(Math.max(minZoom, zoom - 0.5))}
-                style={{ background: 'none', border: 'none', color: '#fff', fontSize: 16, fontWeight: 'bold', cursor: 'pointer', padding: '0 6px' }}
-              >
-                -
-              </button>
-              <input
-                type="range"
-                min={minZoom}
-                max={maxZoom}
-                step={0.1}
-                value={zoom}
-                onChange={(e) => handleZoomChange(parseFloat(e.target.value))}
-                style={{ accentColor: '#10B981', width: 100, height: 4, cursor: 'pointer' }}
-              />
-              <button
-                type="button"
-                onClick={() => handleZoomChange(Math.min(maxZoom, zoom + 0.5))}
-                style={{ background: 'none', border: 'none', color: '#fff', fontSize: 16, fontWeight: 'bold', cursor: 'pointer', padding: '0 6px' }}
-              >
-                +
-              </button>
-              <span style={{ color: '#10B981', fontSize: 12, fontWeight: 'bold', minWidth: 32, textAlign: 'center' }}>
-                {zoom.toFixed(1)}x
-              </span>
-            </div>
-          )}
+          <div style={{
+            position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)',
+            background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(5px)',
+            borderRadius: 20, padding: '6px 14px', display: 'flex', alignItems: 'center', gap: 10,
+            boxShadow: '0 4px 15px rgba(0,0,0,0.4)', zIndex: 10,
+          }}>
+            <button
+              type="button"
+              onClick={() => handleZoomChange(Math.max(minZoom, zoom - 0.5))}
+              style={{ background: 'none', border: 'none', color: '#fff', fontSize: 16, fontWeight: 'bold', cursor: 'pointer', padding: '0 6px' }}
+            >
+              -
+            </button>
+            <input
+              type="range"
+              min={minZoom}
+              max={5}
+              step={0.1}
+              value={zoom}
+              onChange={(e) => handleZoomChange(parseFloat(e.target.value))}
+              style={{ accentColor: '#10B981', width: 100, height: 4, cursor: 'pointer' }}
+            />
+            <button
+              type="button"
+              onClick={() => handleZoomChange(Math.min(5, zoom + 0.5))}
+              style={{ background: 'none', border: 'none', color: '#fff', fontSize: 16, fontWeight: 'bold', cursor: 'pointer', padding: '0 6px' }}
+            >
+              +
+            </button>
+            <span style={{ color: '#10B981', fontSize: 12, fontWeight: 'bold', minWidth: 32, textAlign: 'center' }}>
+              {zoom.toFixed(1)}x
+            </span>
+          </div>
 
-          {/* Presets Lens Switcher (0.5x, 1x, 2x, 5x) — Multi-Camera Fisik + Digital Hybrid */}
-          {!loading && !error && facing === 'environment' && (
-            <div style={{
-              position: 'absolute',
-              bottom: zoomSupported && maxZoom > minZoom ? 64 : 18,
-              left: '50%', transform: 'translateX(-50%)',
-              display: 'flex', gap: 8, zIndex: 11,
-              background: 'rgba(0,0,0,0.55)',
-              backdropFilter: 'blur(8px)',
-              padding: '4px 8px',
-              borderRadius: '30px',
-              border: '1px solid rgba(255,255,255,0.12)',
-              boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
-            }}>
-              {(lensDevices.some(d => d.label === '0.5×') ? ['0.5x', '1x', '2x', '5x'] : ['1x', '2x', '5x']).map((preset) => {
-                const activePreset = getActivePreset();
-                const isActive = activePreset === preset;
-                return (
-                  <button
-                    key={preset}
-                    type="button"
-                    onClick={() => handlePresetClick(preset)}
-                    style={{
-                      width: 38, height: 38, borderRadius: '50%',
-                      background: isActive ? '#10B981' : 'transparent',
-                      border: 'none',
-                      color: isActive ? '#fff' : '#CBD5E1',
-                      fontSize: 11,
-                      fontWeight: 700,
-                      cursor: 'pointer',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      transition: 'all 0.2s ease',
-                      boxShadow: isActive ? '0 0 10px rgba(16,185,129,0.5)' : 'none',
-                    }}
-                  >
-                    {preset}
-                  </button>
-                );
-              })}
-            </div>
-          )}
         </div>
 
         {/* ── GPS STATUS BAR ───────────────────────────────────────────── */}
