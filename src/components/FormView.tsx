@@ -1,7 +1,7 @@
 // src/components/FormView.tsx
 import { Document3DLoading } from './Document3DLoading';
 import { CustomCamera } from './CustomCamera';
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import type { ReactNode } from 'react';
 import type { InspectionPhoto } from '../db/db';
 import type { SifatPemeriksaan } from '../types';
@@ -404,6 +404,9 @@ function Spinner() {
   );
 }
 
+const SpeechRecognitionSupported = typeof window !== 'undefined' && 
+  (!!(window as any).SpeechRecognition || !!(window as any).webkitSpeechRecognition);
+
 export function FormField({
   field,
   value,
@@ -418,6 +421,49 @@ export function FormField({
   suggestions?: string[];
 }) {
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
+
+  const toggleListening = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert('Maaf, pengetikan suara (Voice-to-Text) tidak didukung di browser ini. Gunakan Chrome atau Safari.');
+      return;
+    }
+
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+      return;
+    }
+
+    try {
+      const rec = new SpeechRecognition();
+      rec.continuous = false;
+      rec.interimResults = false;
+      rec.lang = 'id-ID';
+
+      rec.onstart = () => setIsListening(true);
+      rec.onerror = (e: any) => {
+        console.error(e);
+        setIsListening(false);
+      };
+      rec.onend = () => setIsListening(false);
+      rec.onresult = (event: any) => {
+        const transcript = event.results[0][0].transcript;
+        if (transcript) {
+          onChange(value ? `${value} ${transcript}` : transcript);
+        }
+      };
+
+      recognitionRef.current = rec;
+      rec.start();
+    } catch (err) {
+      console.error(err);
+      setIsListening(false);
+    }
+  };
+
   const baseInput = `
     w-full border rounded-2xl px-4 py-3.5 text-sm text-gray-900
     placeholder-gray-400 outline-none transition-all duration-300 shadow-sm
@@ -455,13 +501,27 @@ export function FormField({
           {field.options?.map((o) => <option key={o} value={o}>{o}</option>)}
         </select>
       ) : field.type === 'textarea' ? (
-        <textarea
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={field.placeholder}
-          rows={3}
-          className={baseInput + ' resize-none'}
-        />
+        <div className="relative">
+          <textarea
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder={field.placeholder}
+            rows={3}
+            className={baseInput + ' resize-none pr-12'}
+          />
+          {SpeechRecognitionSupported && (
+            <button
+              type="button"
+              onClick={toggleListening}
+              className={`absolute right-3.5 top-3.5 w-8 h-8 rounded-full flex items-center justify-center transition-all ${
+                isListening ? 'bg-red-500 text-white animate-pulse' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+              }`}
+              title="Dikte suara (Voice-to-Text)"
+            >
+              🎙️
+            </button>
+          )}
+        </div>
       ) : (
         <div className="relative">
           <input
@@ -474,8 +534,20 @@ export function FormField({
             onFocus={() => setShowSuggestions(true)}
             onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
             placeholder={field.placeholder}
-            className={baseInput}
+            className={baseInput + (field.type !== 'number' && SpeechRecognitionSupported ? ' pr-12' : '')}
           />
+          {field.type !== 'number' && SpeechRecognitionSupported && (
+            <button
+              type="button"
+              onClick={toggleListening}
+              className={`absolute right-3.5 top-[50%] translate-y-[-50%] w-8 h-8 rounded-full flex items-center justify-center transition-all ${
+                isListening ? 'bg-red-500 text-white animate-pulse' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+              }`}
+              title="Dikte suara (Voice-to-Text)"
+            >
+              🎙️
+            </button>
+          )}
           {showSuggestions && filtered.length > 0 && (
             <div className="absolute z-30 top-full mt-1.5 left-0 right-0 bg-white/95 backdrop-blur-md border border-gray-100 rounded-2xl shadow-xl overflow-hidden py-1 max-h-60 overflow-y-auto">
               {filtered.slice(0, 8).map((s) => (
