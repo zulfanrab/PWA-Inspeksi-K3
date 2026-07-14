@@ -583,6 +583,11 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
   // Ref: deviceId kamera utama (1×) yang dideteksi browser saat pertama buka
   const mainDeviceIdRef = useRef<string | null>(null);
 
+  // States untuk Pinch Zoom & Tap to Focus
+  const [pinchStartDist, setPinchStartDist] = useState<number | null>(null);
+  const [pinchStartZoom, setPinchStartZoom] = useState<number>(1);
+  const [focusRing, setFocusRing] = useState<{ x: number; y: number; show: boolean } | null>(null);
+
   // ─── KAMERA ─────────────────────────────────────────────────────────────
   // Ref supaya enumerate hanya dijalankan SEKALI per facing mode, bukan setiap ganti lensa
   const hasEnumerated = useRef(false);
@@ -617,10 +622,28 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
           ? { deviceId: { exact: activeDeviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } }
           : { facingMode: facing, width: { ideal: 1920 }, height: { ideal: 1080 } };
 
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: videoConstraints,
-          audio: false,
-        });
+        let stream: MediaStream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: videoConstraints,
+            audio: false,
+          });
+        } catch (err) {
+          console.warn("Failed to open camera with constraints:", videoConstraints, err);
+          // Jika gagal membuka lensa khusus (misal ultra-wide / tele yang dikunci vendor), fallback ke main camera
+          if (activeDeviceId && activeDeviceId !== mainDeviceIdRef.current) {
+            if (mounted) {
+              setActiveDeviceId(mainDeviceIdRef.current);
+            }
+            return; // useEffect akan mentrigger ulang dengan deviceId kamera utama
+          }
+          // Fallback kedua: buka camera belakang default tanpa exact ID
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: facing, width: { ideal: 1920 }, height: { ideal: 1080 } },
+            audio: false,
+          });
+        }
+
         if (!mounted) { stream.getTracks().forEach(t => t.stop()); return; }
         streamRef.current = stream;
         if (videoRef.current) {
@@ -667,12 +690,14 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
             const devices = await navigator.mediaDevices.enumerateDevices();
             const videoInputs = devices.filter(d => d.kind === 'videoinput' && d.deviceId && d.label);
 
-            // Filter kamera belakang: exclude yang jelas-jelas kamera depan
+            // Filter kamera belakang: exclude kamera depan dan sensor dummy/depth/macro
             const backCameras = videoInputs.filter(d => {
               const lbl = (d.label || '').toLowerCase();
               const isFront = lbl.includes('front') || lbl.includes('user') || lbl.includes('selfie') ||
                 lbl.includes('depan') || lbl.includes('facing front');
-              return !isFront;
+              const isAux = lbl.includes('depth') || lbl.includes('macro') || lbl.includes('bokeh') || 
+                lbl.includes('sensor') || lbl.includes('virtual') || lbl.includes('aux');
+              return !isFront && !isAux;
             });
 
             // Deduplicate berdasarkan deviceId
@@ -690,7 +715,6 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
                 let label = '';
 
                 // ★ RULE 1: deviceId cocok dengan stream aktif → PASTI main (1×)
-                // Ini 100% akurat karena browser selalu membuka kamera utama via facingMode
                 if (detectedMainId && cam.deviceId === detectedMainId) {
                   type = 'main'; label = '1×';
                 }
@@ -712,7 +736,7 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
                   else if (lbl.includes('3x')) label = '3×';
                   else label = '2×';
                 }
-                // RULE 4: Deteksi main dari keyword (fallback jika deviceId tidak cocok)
+                // RULE 4: Deteksi main dari keyword
                 else if (
                   lbl.includes('main') || lbl.includes('utama') ||
                   lbl.includes('1x') || lbl.includes('primary')
@@ -726,11 +750,9 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
               // ★ SAFETY: Pastikan tepat SATU kamera berlabel main
               const mainCams = classified.filter(c => c.type === 'main');
               if (mainCams.length === 0) {
-                // Fallback: kamera pertama = main
                 classified[0].type = 'main';
                 classified[0].label = '1×';
               } else if (mainCams.length > 1) {
-                // Duplikat main → keep yang cocok detectedMainId, demote sisanya
                 let kept = false;
                 classified.forEach(c => {
                   if (c.type === 'main') {
@@ -758,15 +780,12 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
                 }
               });
 
-              // 3. Batasi jumlah tombol yang muncul (Maksimal 1 Ultra, 1 Main, dan maks 2 Tele)
+              // Batasi jumlah tombol (Maks 1 Ultra, 1 Main, maks 2 Tele)
               const finalLenses: typeof classified = [];
               const u = classified.find(c => c.type === 'ultra');
               const m = classified.find(c => c.type === 'main');
-              
-              // Cari tele (bisa lebih dari satu, misal 2x dan 3x)
               const teles = classified.filter(c => c.type === 'tele');
               
-              // Deduplicate tele by label untuk menghindari ada dua tombol "2x"
               const uniqueTeles: typeof classified = [];
               const teleSeen = new Set();
               teles.forEach(t => {
@@ -778,16 +797,14 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
 
               if (u) finalLenses.push(u);
               if (m) finalLenses.push(m);
-              finalLenses.push(...uniqueTeles.slice(0, 2)); // Maks 2 telephoto
+              finalLenses.push(...uniqueTeles.slice(0, 2));
 
-              // 4. Urutkan berdasarkan angka pada label (0.5x -> 1x -> 2x -> 3x)
               const val = (lbl: string) => parseFloat(lbl.replace(/[^0-9.]/g, '')) || 1;
               finalLenses.sort((a, b) => val(a.label) - val(b.label));
 
               const lensResult = finalLenses.map(c => ({ deviceId: c.deviceId, label: c.label }));
               setLensDevices(lensResult);
 
-              // Set activeDeviceId ke lensa '1x' jika belum ada
               if (!activeDeviceId && lensResult.length > 0) {
                  const mainLens = lensResult.find(l => l.label === '1×') || lensResult[0];
                  setActiveDeviceId(mainLens.deviceId);
@@ -796,7 +813,7 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
               setLensDevices([]);
             }
           } catch (_) {
-            // enumerateDevices gagal — tidak apa-apa, fitur lens switcher tidak ditampilkan
+            // enumerateDevices failed
           }
         }
 
@@ -841,6 +858,138 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
       }
     }
   };
+
+  // ─── LENS PRESETS & FOCUS GESTURES ───────────────────────────────────────
+  const getActivePreset = () => {
+    const activeLens = lensDevices.find(d => d.deviceId === activeDeviceId);
+    if (activeLens) {
+      if (activeLens.label === '0.5×') return '0.5x';
+      if (activeLens.label === '2×' || activeLens.label === '3×') return '2x';
+      if (activeLens.label === '5×') return '5x';
+    }
+    
+    // Fallback based on digital zoom
+    if (zoom >= 4.5) return '5x';
+    if (zoom >= 1.8) return '2x';
+    if (zoom < 0.8) return '0.5x';
+    return '1x';
+  };
+
+  const handlePresetClick = async (preset: string) => {
+    let targetDeviceId = mainDeviceIdRef.current;
+
+    if (preset === '0.5x') {
+      const ultra = lensDevices.find(d => d.label === '0.5×');
+      if (ultra) {
+        targetDeviceId = ultra.deviceId;
+      } else {
+        // Jika tidak ada ultra-wide fisik, tidak bisa zoom out dibawah 1x
+        return;
+      }
+    } else if (preset === '2x') {
+      const tele2x = lensDevices.find(d => d.label === '2×' || d.label === '3×');
+      if (tele2x) targetDeviceId = tele2x.deviceId;
+    } else if (preset === '5x') {
+      const tele5x = lensDevices.find(d => d.label === '5×');
+      if (tele5x) targetDeviceId = tele5x.deviceId;
+    }
+
+    if (targetDeviceId && targetDeviceId !== activeDeviceId) {
+      setActiveDeviceId(targetDeviceId);
+      setZoom(1); // Reset digital zoom untuk kamera baru
+    } else {
+      // Jika tetap di kamera yang sama, gunakan digital zoom
+      const zoomVal = preset === '2x' ? 2 : preset === '5x' ? 5 : 1;
+      handleZoomChange(Math.min(maxZoom, Math.max(minZoom, zoomVal)));
+    }
+  };
+
+  const triggerFocus = async (clientX: number, clientY: number) => {
+    const stream = streamRef.current;
+    if (!stream) return;
+    const videoTrack = stream.getVideoTracks()[0];
+    if (!videoTrack) return;
+
+    const capabilities = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+    const constraints: any = { advanced: [] };
+
+    const rect = videoRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const x = (clientX - rect.left) / rect.width;
+    const y = (clientY - rect.top) / rect.height;
+
+    let applied = false;
+    if ('focusMode' in capabilities) {
+      const modes = (capabilities as any).focusMode || [];
+      if (modes.includes('manual') || modes.includes('single-shot')) {
+        const mode = modes.includes('single-shot') ? 'single-shot' : 'manual';
+        const focusPoint: any = { focusMode: mode };
+        if ('pointsOfInterest' in capabilities) {
+          focusPoint.pointsOfInterest = [{ x, y }];
+        }
+        constraints.advanced.push(focusPoint);
+        applied = true;
+      }
+    }
+
+    if (applied) {
+      try {
+        await videoTrack.applyConstraints(constraints);
+        
+        // Kembalikan ke continuous autofocus setelah 3 detik jika disupport
+        setTimeout(async () => {
+          const currentCapabilities = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+          if (currentCapabilities.focusMode?.includes('continuous')) {
+            await videoTrack.applyConstraints({
+              advanced: [{ focusMode: 'continuous' } as any]
+            });
+          }
+        }, 3000);
+      } catch (e) {
+        console.warn("Failed to apply focus constraints:", e);
+      }
+    }
+  };
+
+  const handleVideoClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    // Hanya trigger focus jika klik di container utama/video, bukan di tombol overlays
+    if (e.target !== e.currentTarget && (e.target as HTMLElement).tagName !== 'VIDEO') return;
+
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    setFocusRing({ x, y, show: true });
+    triggerFocus(e.clientX, e.clientY);
+  };
+
+  const handleVideoTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.hypot(dx, dy);
+      setPinchStartDist(dist);
+      setPinchStartZoom(zoom);
+    }
+  };
+
+  const handleVideoTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length === 2 && pinchStartDist !== null) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.hypot(dx, dy);
+      
+      const factor = dist / pinchStartDist;
+      let targetZoom = pinchStartZoom * factor;
+      targetZoom = Math.max(minZoom, Math.min(maxZoom, targetZoom));
+      handleZoomChange(targetZoom);
+    }
+  };
+
+  const handleVideoTouchEnd = () => {
+    setPinchStartDist(null);
+  };
+
 
   // ─── GPS + GEOCODING ─────────────────────────────────────────────────────
   const doGeocode = useCallback(async (lat: number, lng: number) => {
@@ -972,7 +1121,13 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
         </div>
 
         {/* ── VIDEO AREA ───────────────────────────────────────────────── */}
-        <div style={{ flex: 1, position: 'relative', overflow: 'hidden', background: '#0a0a0a' }}>
+        <div 
+          onTouchStart={handleVideoTouchStart}
+          onTouchMove={handleVideoTouchMove}
+          onTouchEnd={handleVideoTouchEnd}
+          onClick={handleVideoClick}
+          style={{ flex: 1, position: 'relative', overflow: 'hidden', background: '#0a0a0a', touchAction: 'none' }}
+        >
           {loading && (
             <div style={{
               position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
@@ -1009,6 +1164,25 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
               position: 'absolute', inset: 0, background: '#fff', opacity: 0.45,
               pointerEvents: 'none', animation: 'camflash 0.18s ease-out forwards',
             }} />
+          )}
+
+          {/* Focus Ring Indicator */}
+          {focusRing && focusRing.show && (
+            <div 
+              style={{
+                position: 'absolute',
+                left: focusRing.x - 30,
+                top: focusRing.y - 30,
+                width: 60,
+                height: 60,
+                border: '2px solid #FACC15',
+                borderRadius: '8px',
+                pointerEvents: 'none',
+                zIndex: 100,
+                animation: 'focus-bounce 0.3s ease-out, focus-fade 1.2s ease-out forwards',
+              }} 
+              onAnimationEnd={() => setFocusRing(null)}
+            />
           )}
 
           {/* Badge foto — klik buka galeri */}
@@ -1077,45 +1251,42 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
             </div>
           )}
 
-          {/* Lens Switcher — tombol 0.5× / 1× / 2× untuk multi-camera fisik */}
-          {lensDevices.length > 1 && (
+          {/* Presets Lens Switcher (0.5x, 1x, 2x, 5x) — Multi-Camera Fisik + Digital Hybrid */}
+          {!loading && !error && facing === 'environment' && (
             <div style={{
               position: 'absolute',
-              bottom: zoomSupported && maxZoom > minZoom ? 62 : 16,
+              bottom: zoomSupported && maxZoom > minZoom ? 64 : 18,
               left: '50%', transform: 'translateX(-50%)',
               display: 'flex', gap: 8, zIndex: 11,
+              background: 'rgba(0,0,0,0.55)',
+              backdropFilter: 'blur(8px)',
+              padding: '4px 8px',
+              borderRadius: '30px',
+              border: '1px solid rgba(255,255,255,0.12)',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
             }}>
-              {lensDevices.map((lens) => {
-                const isActive = activeDeviceId
-                  ? activeDeviceId === lens.deviceId
-                  : lens.deviceId === mainDeviceIdRef.current;
+              {(lensDevices.some(d => d.label === '0.5×') ? ['0.5x', '1x', '2x', '5x'] : ['1x', '2x', '5x']).map((preset) => {
+                const activePreset = getActivePreset();
+                const isActive = activePreset === preset;
                 return (
                   <button
-                    key={lens.deviceId}
+                    key={preset}
                     type="button"
-                    onClick={() => setActiveDeviceId(lens.deviceId)}
+                    onClick={() => handlePresetClick(preset)}
                     style={{
-                      width: 46, height: 46, borderRadius: '50%',
-                      background: isActive
-                        ? 'rgba(16,185,129,0.85)'
-                        : 'rgba(0,0,0,0.6)',
-                      backdropFilter: 'blur(6px)',
-                      border: isActive
-                        ? '2px solid #10B981'
-                        : '2px solid rgba(255,255,255,0.2)',
+                      width: 38, height: 38, borderRadius: '50%',
+                      background: isActive ? '#10B981' : 'transparent',
+                      border: 'none',
                       color: isActive ? '#fff' : '#CBD5E1',
-                      fontSize: lens.label.length > 3 ? 10 : 12,
+                      fontSize: 11,
                       fontWeight: 700,
                       cursor: 'pointer',
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      boxShadow: isActive
-                        ? '0 0 16px rgba(16,185,129,0.5)'
-                        : '0 2px 8px rgba(0,0,0,0.5)',
                       transition: 'all 0.2s ease',
-                      transform: isActive ? 'scale(1.1)' : 'scale(1)',
+                      boxShadow: isActive ? '0 0 10px rgba(16,185,129,0.5)' : 'none',
                     }}
                   >
-                    {lens.label}
+                    {preset}
                   </button>
                 );
               })}
@@ -1235,6 +1406,15 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
         <style>{`
           @keyframes camflash {
             0%   { opacity: 0.45; }
+            100% { opacity: 0; }
+          }
+          @keyframes focus-bounce {
+            0% { transform: scale(1.4); opacity: 0.4; }
+            100% { transform: scale(1); opacity: 1; }
+          }
+          @keyframes focus-fade {
+            0% { opacity: 1; }
+            70% { opacity: 1; }
             100% { opacity: 0; }
           }
         `}</style>
