@@ -180,6 +180,19 @@ export const uploadToDrive = async (
 for (let i = startIdx; i < totalPhotos; i++) {
   const photo = photosToUpload[i];
   
+  // KUNCI FIX: Jika foto sudah memiliki driveFileId (sudah terupload), lewati upload ulang!
+  if (photo.driveFileId) {
+    await db.inspection_sessions.update(session.id, {
+      photosUploaded: i + 1
+    });
+    onProgress?.({
+      percentage: Math.round(((i + 1) / totalPhotos) * 100),
+      loaded: i + 1,
+      total: totalPhotos,
+    });
+    continue;
+  }
+  
   // Panggil progress SEBELUM fetch (tapi belum di-render)
   onProgress?.({
     percentage: Math.ceil(((i + 1) / totalPhotos) * 100),
