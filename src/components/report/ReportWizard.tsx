@@ -277,6 +277,18 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
     setAiNarrative((prev: any) => ({ ...prev, [sectionKey]: text }));
   };
 
+  const skipToManualNarrative = () => {
+    const safety = calculations?.overallSafetyStatus || 'AMAN';
+    setAiNarrative({
+      executiveSummary: `Pemeriksaan dan pengujian berkala K3 dilakukan pada tanggal ${formData.inspectionDate} untuk instalasi ${typeCode === 'IL' ? 'Listrik' : 'Penyalur Petir'} CV Cahya Karunia Jaya yang berlokasi di ${formData.companyAddress || 'Bandung'}.`,
+      findingsNarrative: `Berdasarkan pemeriksaan visual secara detail, secara umum kondisi fisik peralatan terpasang dalam kondisi layak, namun ada beberapa temuan minor yang dicatat untuk perbaikan lebih lanjut.`,
+      testResultsNarrative: `Hasil pengujian teknis lapangan menunjukkan bahwa semua parameter yang diukur (termasuk nilai pembumian/isolasi) berada dalam batas aman yang diperbolehkan undang-undang dengan status safety: ${safety}.`,
+      recommendations: `1. Lakukan perawatan kebersihan secara berkala.\n2. Lakukan pengecekan rutin terminal kabel dan pengencangan baut.\n3. Pertahankan sistem pembumian agar tetap di bawah batas aman.`,
+      conclusion: `Instalasi ${typeCode === 'IL' ? 'Listrik' : 'Penyalur Petir'} CV Cahya Karunia Jaya dinyatakan MEMENUHI persyaratan keselamatan dan kesehatan kerja (K3) serta LAYAK untuk dioperasikan.`
+    });
+    setCurrentStep(7);
+  };
+
   // Submit Final Generation
   const handleGenerateFinalReport = async () => {
     setIsGenerating(true);
@@ -783,14 +795,22 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
                 ))}
               </div>
             ) : (
-              <div className="flex flex-col items-center justify-center py-20 text-center bg-gray-50 rounded-xl border border-dashed border-gray-200">
-                <p className="text-xs font-bold text-gray-500">Belum ada narasi AI.</p>
-                <button
-                  onClick={generateNarrative}
-                  className="mt-3 bg-emerald-600 text-white font-bold text-xs px-4 py-2 rounded-lg"
-                >
-                  Generate Narasi via Gemini AI
-                </button>
+              <div className="flex flex-col items-center justify-center py-20 text-center bg-gray-50 rounded-xl border border-dashed border-gray-200 p-6 space-y-3">
+                <p className="text-xs font-bold text-gray-500">Belum ada narasi untuk bagian Kesimpulan & Rekomendasi.</p>
+                <div className="flex flex-col sm:flex-row gap-2.5">
+                  <button
+                    onClick={generateNarrative}
+                    className="bg-emerald-600 text-white font-bold text-xs px-4 py-2.5 rounded-lg hover:bg-emerald-700 active:scale-95 transition-all"
+                  >
+                    Generate Narasi via Gemini AI (Otomatis)
+                  </button>
+                  <button
+                    onClick={skipToManualNarrative}
+                    className="bg-white border border-gray-300 text-gray-700 font-bold text-xs px-4 py-2.5 rounded-lg hover:bg-gray-50 active:scale-95 transition-all"
+                  >
+                    Tulis Manual (Tanpa AI)
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -902,12 +922,20 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
               Uji & Hitung K3 →
             </button>
           ) : currentStep === 6 ? (
-            <button
-              onClick={generateNarrative}
-              className="text-xs font-bold text-white bg-emerald-600 border border-emerald-600 px-5 py-2.5 rounded-lg hover:bg-emerald-700 active:scale-95 transition-all"
-            >
-              Generate AI Narasi →
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={skipToManualNarrative}
+                className="text-xs font-bold text-gray-700 border border-gray-250 bg-white px-4 py-2.5 rounded-lg hover:bg-gray-50"
+              >
+                Tulis Manual (Tanpa AI)
+              </button>
+              <button
+                onClick={generateNarrative}
+                className="text-xs font-bold text-white bg-emerald-600 border border-emerald-600 px-5 py-2.5 rounded-lg hover:bg-emerald-700 active:scale-95 transition-all"
+              >
+                Generate AI Narasi (Gemini) →
+              </button>
+            </div>
           ) : currentStep < 9 ? (
             <button
               onClick={() => setCurrentStep(prev => prev + 1)}
