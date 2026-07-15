@@ -128,7 +128,7 @@ export const forms: FormFieldConfig[] = [
     fieldId: 'tahananPembumian',
     section: 'testing',
     label: 'Tahanan Elektroda Pembumian / Grounding (Ω)',
-    type: 'number',
+    type: 'text',
     required: true,
     mappedPlaceholder: '{tahanan_pembumian}'
   }

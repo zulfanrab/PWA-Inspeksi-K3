@@ -21,13 +21,15 @@ export const formulas: FormulaConfigWithCalc[] = [
     thresholdType: 'MAX',
     standardRef: 'Permenaker No.02/1989 Pasal 54',
     calculate: (inputs) => {
-      const R = Number(inputs.tahananPembumian || 0);
-      const pass = R <= 5.0;
+      const R_str = String(inputs.tahananPembumian || '0');
+      const R_values = R_str.split(',').map(v => Number(v.trim()) || 0);
+      const R_max = Math.max(...R_values);
+      const pass = R_max <= 5.0;
       
       return {
-        result: R,
+        result: R_max,
         pass,
-        details: `Tahanan grounding terukur: ${R} Ω. Batas maksimum standar: 5.0 Ω. Status: ${pass ? 'MEMENUHI (ACC)' : 'TIDAK MEMENUHI (Belum ACC)'}`
+        details: `Tahanan grounding terukur (Maks): ${R_max} Ω. Batas maksimum standar: 5.0 Ω. Status: ${pass ? 'MEMENUHI (ACC)' : 'TIDAK MEMENUHI (Belum ACC)'}`
       };
     }
   },

@@ -42,13 +42,14 @@ export const ValidationEngine = {
         continue; // Skip jika kosong (biar ditangani mandatory required)
       }
 
-      const val = Number(valStr);
-
       if (rule.type === 'range') {
         const min = rule.params.min !== undefined ? Number(rule.params.min) : -Infinity;
         const max = rule.params.max !== undefined ? Number(rule.params.max) : Infinity;
 
-        if (isNaN(val) || val < min || val > max) {
+        const vals = String(valStr).split(',').map(v => Number(v.trim()));
+        const hasInvalid = vals.some(v => isNaN(v) || v < min || v > max);
+
+        if (hasInvalid) {
           errors.push({
             fieldId: rule.fieldId,
             errorMessage: rule.errorMessage,

@@ -12,6 +12,7 @@ import {
 } from '../db/db';
 
 import { pushTemplatesToDrive } from '../services/syncService';
+import { getValidToken } from '../services/driveService';
 import { UNIT_NAME_SUGGESTIONS } from '../config/suggestions';
 import { getApiBaseUrl } from '../config';
 
@@ -262,6 +263,10 @@ function TemplateManager() {
       if (res.ok) {
         const data = await res.json();
         setTemplates(data.templates || []);
+        // Save folder ID to state if returned
+        if (data.templatesFolderId) {
+          (window as any)._templatesFolderId = data.templatesFolderId;
+        }
       }
     } catch (e) {
       console.error(e);
@@ -277,29 +282,39 @@ function TemplateManager() {
   const handleUpload = async (typeCode: string, file: File) => {
     setUploading(typeCode);
     try {
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const base64 = reader.result as string;
-        const apiBase = getApiBaseUrl();
-        const res = await fetch(`${apiBase}/api/report?action=template`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            typeCode,
-            fileBase64: base64,
-            fileName: file.name
-          })
-        });
+      const folderId = (window as any)._templatesFolderId;
+      if (!folderId) {
+        throw new Error('Folder Templates belum ditemukan. Silakan muat ulang.');
+      }
 
-        if (res.ok) {
-          alert(`Template ${typeCode} berhasil diupload!`);
-          loadTemplates();
-        } else {
-          const err = await res.json();
-          alert(`Gagal: ${err.error}`);
-        }
+      const token = getValidToken();
+      const fileName = `Template_${typeCode.toUpperCase()}.docx`;
+
+      const metadata = {
+        name: fileName,
+        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        parents: [folderId]
       };
-      reader.readAsDataURL(file);
+
+      const form = new FormData();
+      form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+      form.append('file', file);
+
+      const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
+        body: form
+      });
+
+      if (res.ok) {
+        alert(`Template ${typeCode} berhasil diupload!`);
+        loadTemplates();
+      } else {
+        const err = await res.json();
+        throw new Error(err.error?.message || 'Gagal upload ke Drive');
+      }
     } catch (err: any) {
       alert(`Gagal: ${err.message}`);
     } finally {

@@ -165,7 +165,16 @@ async function handleNarrative(req: VercelRequest, res: VercelResponse) {
 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    return res.status(500).json({ error: 'Konfigurasi server salah: GEMINI_API_KEY belum dikonfigurasi.' });
+    return res.status(200).json({
+      success: true,
+      data: {
+        executiveSummary: "(API Key Gemini belum diset. Silakan edit teks ini secara manual)",
+        findingsNarrative: "(API Key Gemini belum diset. Silakan edit teks ini secara manual)",
+        testResultsNarrative: "(API Key Gemini belum diset. Silakan edit teks ini secara manual)",
+        recommendations: "(API Key Gemini belum diset. Silakan edit teks ini secara manual)",
+        conclusion: "(API Key Gemini belum diset. Silakan edit teks ini secara manual)"
+      }
+    });
   }
 
   const genAI = new GoogleGenerativeAI(apiKey);
@@ -306,6 +315,7 @@ async function handleGenerate(req: VercelRequest, res: VercelResponse) {
     inspectorCertNumber: reportData.generalData.inspectorCertNumber,
     ...reportData.technicalData,
     components: reportData.checklistData.components,
+    continuity: reportData.checklistData.continuity || [],
     overallResult: reportData.checklistData.overallResult,
     visualFaults: visualFaultsList.join('\n'),
     calculations: reportData.formulaResults.calculations,
@@ -442,6 +452,7 @@ async function handleTemplate(req: VercelRequest, res: VercelResponse) {
 
     return res.status(200).json({
       success: true,
+      templatesFolderId,
       templates: listRes.data.files || []
     });
   }

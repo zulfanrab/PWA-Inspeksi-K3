@@ -297,27 +297,10 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
     try {
       const apiBase = getApiBaseUrl();
 
-      // 1. Dapatkan Nomor Laporan Baru jika belum ada
+      // 1. Validasi Nomor Laporan Manual
       let currentReportNum = reportNum;
       if (!currentReportNum) {
-        const dateObj = new Date(formData.reportDate);
-        const seqRes = await fetch(`${apiBase}/api/report?action=sequence`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            inspectionTypeCode: typeCode,
-            year: dateObj.getFullYear(),
-            month: dateObj.getMonth() + 1
-          })
-        });
-
-        if (!seqRes.ok) {
-          throw new Error('Gagal mengalokasikan nomor laporan dari server.');
-        }
-
-        const seqData = await seqRes.json();
-        currentReportNum = seqData.fullReportNumber;
-        setReportNum(currentReportNum);
+        throw new Error('Nomor Laporan wajib diisi secara manual pada tahap Data Umum.');
       }
 
       // 2. Rakit Payload Laporan Lengkap
@@ -340,25 +323,52 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
 
       // Bangun struktur data checklist
       const components: any[] = [];
+      const continuity: any[] = [];
       if (config) {
-        config.checklists.categories.forEach(cat => {
-          cat.components.forEach(comp => {
-            const items = comp.items.map(item => ({
-              itemId: item.itemId,
-              description: item.description,
-              standard: item.standard,
-              result: checklistResponses[item.itemId] || 'BAIK',
-              remarks: checklistRemarks[item.itemId] || ''
-            }));
-            components.push({
-              componentId: comp.componentId,
-              componentName: comp.componentName,
-              category: cat.categoryName,
-              items
+        const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+        let mainCatIdx = 0;
+        config.checklists.categories.forEach((cat) => {
+          if (cat.categoryId === 'hubungan_antar_bagian') {
+            cat.components.forEach(comp => {
+              const items = comp.items.map((item, itemIdx) => ({
+                itemId: item.itemId,
+                no: itemIdx + 1,
+                description: item.description,
+                standard: item.standard,
+                result: checklistResponses[item.itemId] || 'BAIK',
+                remarks: checklistRemarks[item.itemId] || ''
+              }));
+              continuity.push(...items);
             });
-          });
+          } else {
+            const catLetter = alphabet[mainCatIdx] || String(mainCatIdx + 1);
+            mainCatIdx++;
+            cat.components.forEach(comp => {
+              const items = comp.items.map((item, itemIdx) => ({
+                itemId: item.itemId,
+                no: itemIdx + 1,
+                description: item.description,
+                standard: item.standard,
+                result: checklistResponses[item.itemId] || 'BAIK',
+                remarks: checklistRemarks[item.itemId] || ''
+              }));
+              components.push({
+                componentId: comp.componentId,
+                componentName: comp.componentName,
+                category: cat.categoryName,
+                categoryNo: catLetter,
+                items
+              });
+            });
+          }
         });
       }
+
+      const groundingStr = String(formData.tahananPembumian || '0');
+      const groundingPoints = groundingStr.split(',').map((val, idx) => ({
+        no: idx + 1,
+        value: val.trim()
+      }));
 
       const reportPayload = {
         inspectionId: selectedInspection.id,
@@ -377,10 +387,12 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
         },
         technicalData: {
           ...formData, // include all fields
+          groundingPoints
         },
         checklistData: {
           configVersion: '1.0.0',
           components,
+          continuity,
           overallResult: calculations?.overallSafetyStatus === 'AMAN' ? 'LAIK' : 'LAIK_BERSYARAT'
         },
         testingData: {
@@ -584,6 +596,16 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
                   type="date"
                   value={formData.reportDate}
                   onChange={e => handleInputChange('reportDate', e.target.value)}
+                  className="w-full text-xs border border-gray-200 p-2.5 rounded-lg focus:ring-1 focus:ring-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">Nomor Laporan *</label>
+                <input
+                  type="text"
+                  placeholder="Contoh: 001/ARP/IPP/VII/2026"
+                  value={reportNum}
+                  onChange={e => setReportNum(e.target.value)}
                   className="w-full text-xs border border-gray-200 p-2.5 rounded-lg focus:ring-1 focus:ring-emerald-500"
                 />
               </div>

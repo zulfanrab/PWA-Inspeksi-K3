@@ -71,6 +71,23 @@ export const checklists: ChecklistConfig = {
           ]
         }
       ]
+    },
+    {
+      categoryId: 'hubungan_antar_bagian',
+      categoryName: 'Hubungan Antar Bagian Penyalur Petir (Kontinuitas)',
+      components: [
+        {
+          componentId: 'kontinuitas_sistem',
+          componentName: 'Hubungan Antar Bagian / Kontinuitas',
+          isDefault: true,
+          items: [
+            { itemId: 'penerima_ke_penerima', description: 'Hubungan antara Penerima dengan Penerima', standard: 'Permenaker 02/1989' },
+            { itemId: 'penerima_ke_penurunan', description: 'Hubungan antara Penerima dengan Penghantar Penurunan', standard: 'Permenaker 02/1989' },
+            { itemId: 'ujung_ke_ujung_penurunan', description: 'Hubungan antara Ujung-ujung Penghantar Penurunan', standard: 'Permenaker 02/1989' },
+            { itemId: 'penurunan_ke_bumi', description: 'Hubungan antara Penghantar Penurunan dengan Elektroda Bumi', standard: 'Permenaker 02/1989' }
+          ]
+        }
+      ]
     }
   ]
 };
