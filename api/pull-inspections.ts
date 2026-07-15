@@ -29,47 +29,49 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
     const files = listRes.data.files ?? [];
-    const results: any[] = [];
 
-    for (const file of files) {
-      try {
-        const contentRes = await drive.files.get(
-          { fileId: file.id!, alt: 'media' },
-          { responseType: 'json' } // Biarkan googleapis yang nentuin ini teks atau objek
-        );
-        
-        // 🔥 FIX PARSER: Kebal dari error JSON.parse
-        let parsed;
-        if (typeof contentRes.data === 'string') {
-          parsed = JSON.parse(contentRes.data);
-        } else {
-          parsed = contentRes.data;
+    const results = (await Promise.all(
+      files.map(async (file) => {
+        try {
+          const contentRes = await drive.files.get(
+            { fileId: file.id!, alt: 'media' },
+            { responseType: 'json' } // Biarkan googleapis yang nentuin ini teks atau objek
+          );
+          
+          // 🔥 FIX PARSER: Kebal dari error JSON.parse
+          let parsed;
+          if (typeof contentRes.data === 'string') {
+            parsed = JSON.parse(contentRes.data);
+          } else {
+            parsed = contentRes.data;
+          }
+
+          // Ambil fileId foto dari folder yang sama
+          const folderId = file.parents?.[0];
+          if (folderId) {
+            const photoRes = await drive.files.list({
+              q: `'${folderId}' in parents and name != 'data-inspeksi.json' and trashed=false`,
+              fields: 'files(id, name)',
+              spaces: 'drive',
+              pageSize: 1000,
+            });
+            const photoFiles = photoRes.data.files ?? [];
+            // Urutkan by nama file (foto-001, foto-002, dst)
+            photoFiles.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
+            parsed.drivePhotoIds = photoFiles.map((f) => f.id!);
+            parsed.drivePhotoFileNames = photoFiles.map((f) => f.name!);
+          } else {
+            parsed.drivePhotoIds = [];
+            parsed.drivePhotoFileNames = [];
+          }
+
+          return parsed;
+        } catch (fileErr) {
+          console.warn(`[pull-inspections] Gagal baca file ${file.id}:`, fileErr);
+          return null;
         }
-
-        // Ambil fileId foto dari folder yang sama
-        const folderId = file.parents?.[0];
-        if (folderId) {
-          const photoRes = await drive.files.list({
-            q: `'${folderId}' in parents and name != 'data-inspeksi.json' and trashed=false`,
-            fields: 'files(id, name)',
-            spaces: 'drive',
-            pageSize: 1000,
-          });
-          const photoFiles = photoRes.data.files ?? [];
-          // Urutkan by nama file (foto-001, foto-002, dst)
-          photoFiles.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
-          parsed.drivePhotoIds = photoFiles.map((f) => f.id!);
-          parsed.drivePhotoFileNames = photoFiles.map((f) => f.name!);
-        } else {
-          parsed.drivePhotoIds = [];
-          parsed.drivePhotoFileNames = [];
-        }
-
-        results.push(parsed);
-      } catch (fileErr) {
-        console.warn(`[pull-inspections] Gagal baca file ${file.id}:`, fileErr);
-      }
-    }
+      })
+    )).filter(Boolean);
 
     // ==========================================
     // BACA TOMBSTONE (LOG PENGHAPUSAN)
