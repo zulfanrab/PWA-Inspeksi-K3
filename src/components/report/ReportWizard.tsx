@@ -250,7 +250,7 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
       });
 
       // Panggil API Vercel Serverless
-      const response = await fetch(`${apiBase}/api/report/narrative`, {
+      const response = await fetch(`${apiBase}/api/report?action=narrative`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -289,7 +289,7 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
       let currentReportNum = reportNum;
       if (!currentReportNum) {
         const dateObj = new Date(formData.reportDate);
-        const seqRes = await fetch(`${apiBase}/api/report/sequence`, {
+        const seqRes = await fetch(`${apiBase}/api/report?action=sequence`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -414,7 +414,7 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
       // 4. Kirim ke Serverless Generator
       setGenStatus('Mengirim ke Word Generator Server...');
       
-      const genResponse = await fetch(`${apiBase}/api/report/generate`, {
+      const genResponse = await fetch(`${apiBase}/api/report?action=generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reportId: localId, reportData: reportPayload })
@@ -436,7 +436,7 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
         await new Promise(r => setTimeout(r, 2000));
         attempts++;
         
-        const statusRes = await fetch(`${apiBase}/api/report/status?jobId=${jobId}`);
+        const statusRes = await fetch(`${apiBase}/api/report?action=status&jobId=${jobId}`);
         if (!statusRes.ok) continue;
 
         const statusData = await statusRes.json();

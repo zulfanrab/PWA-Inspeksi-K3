@@ -258,7 +258,7 @@ function TemplateManager() {
     setLoading(true);
     try {
       const apiBase = getApiBaseUrl();
-      const res = await fetch(`${apiBase}/api/report/template`);
+      const res = await fetch(`${apiBase}/api/report?action=template`);
       if (res.ok) {
         const data = await res.json();
         setTemplates(data.templates || []);
@@ -281,7 +281,7 @@ function TemplateManager() {
       reader.onload = async () => {
         const base64 = reader.result as string;
         const apiBase = getApiBaseUrl();
-        const res = await fetch(`${apiBase}/api/report/template`, {
+        const res = await fetch(`${apiBase}/api/report?action=template`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
