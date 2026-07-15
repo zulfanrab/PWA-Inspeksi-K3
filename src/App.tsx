@@ -558,6 +558,9 @@ export default function App() {
   // Global loading overlay state
   const [globalLoading, setGlobalLoading] = useState<string | null>(null);
 
+  // Background data pulling / sync banner state
+  const [pullingDataMessage, setPullingDataMessage] = useState<string | null>(null);
+
   // Profile photo state
   const [profilePhotoUrl, setProfilePhotoUrl] = useState<string | null>(null);
 
@@ -613,7 +616,7 @@ const setupRole = useCallback(async (email: string, name: string) => {
 }, []);
 
 const doPullInspections = useCallback(async () => {
-  setGlobalLoading("Menarik data riwayat terbaru...");
+  setPullingDataMessage("Menarik data riwayat terbaru...");
   try {
     const result = await pullInspectionsFromDrive();
     if (result.pulled > 0) {
@@ -643,7 +646,7 @@ const doPullInspections = useCallback(async () => {
   } catch (err) {
     console.warn('[App] pullInspectionsFromDrive error:', err);
   } finally {
-    setGlobalLoading(null);
+    setPullingDataMessage(null);
   }
 }, [refreshData, isAuthenticated]);
 
@@ -738,7 +741,7 @@ const triggerAutoSync = useCallback(async () => {
     const currentDrafts = await SessionRepository.getDrafts();
     if (currentDrafts.length === 0) return;
     
-    setGlobalLoading("Sinkronisasi otomatis draft...");
+    setPullingDataMessage("Sinkronisasi otomatis draft...");
     console.log(`[BulkSync] Memulai upload massal untuk ${currentDrafts.length} draft...`);
     
     try {
@@ -774,7 +777,7 @@ const triggerAutoSync = useCallback(async () => {
         }
       }
     } finally {
-      setGlobalLoading(null);
+      setPullingDataMessage(null);
     }
     
     // Opsional: jaga-jaga panggil lagi setelah loop selesai total
@@ -1236,6 +1239,19 @@ const handleDelete = async (id: string) => {
 
   return (
     <div style={{ minHeight: '100vh', background: T.bg, fontFamily: 'system-ui, -apple-system, sans-serif', color: T.textPrimary }}>
+      <style>{`
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+        @keyframes pulse {
+          0%, 100% { transform: scale(1); opacity: 1; }
+          50% { transform: scale(1.08); opacity: 0.85; }
+        }
+        @keyframes globalMarquee {
+          0% { transform: translate3d(0, 0, 0); }
+          100% { transform: translate3d(-100%, 0, 0); }
+        }
+      `}</style>
 
       <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={handlePhotos} style={{ display: 'none' }} aria-hidden="true" />
       <input ref={galleryInputRef} type="file" accept="image/*" multiple onChange={handlePhotos} style={{ display: 'none' }} aria-hidden="true" />
@@ -1434,6 +1450,34 @@ const handleDelete = async (id: string) => {
             </div>
           )}
 
+          {pullingDataMessage && (
+            <div style={{ maxWidth: 640, margin: '8px auto 0', padding: '0 16px' }}>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                background: darkMode ? '#1e293b' : '#EFF6FF',
+                border: `0.5px solid ${darkMode ? '#334155' : '#BFDBFE'}`,
+                borderRadius: 10,
+                padding: '8px 12px',
+                boxShadow: '0 2px 8px rgba(0, 0, 0, 0.05)'
+              }}>
+                <div style={{
+                  width: 12,
+                  height: 12,
+                  borderRadius: '50%',
+                  border: `2px solid ${darkMode ? '#334155' : '#DBEAFE'}`,
+                  borderTopColor: '#3B82F6',
+                  animation: 'spin 1s linear infinite',
+                  flexShrink: 0
+                }} />
+                <p style={{ fontSize: 11, fontWeight: 600, color: darkMode ? '#60A5FA' : '#1D4ED8', margin: 0 }}>
+                  {pullingDataMessage}
+                </p>
+              </div>
+            </div>
+          )}
+
           {isAuthenticated && currentUserName && (
             <div style={{ maxWidth: 640, margin: '10px auto 0', padding: '0 16px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: T.white, border: `0.5px solid ${T.border}`, borderRadius: 12, padding: '8px 12px' }}>
@@ -1451,30 +1495,54 @@ const handleDelete = async (id: string) => {
       {/* MAIN */}
       <main style={{ maxWidth: isDesktop ? 'none' : 640, margin: isDesktop ? '0 24px' : '0 auto', padding: isDesktop ? '24px 24px 32px' : '16px 16px 100px', marginLeft: isDesktop ? 260 : 'auto', display: 'flex', flexDirection: 'column', gap: isDesktop ? 24 : 16 }}>
 
+        {/* Desktop Alerts - Visible across all views on Desktop */}
+        {isDesktop && (
+          <>
+            {tokenError && !isAuthenticated && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: T.redLight, border: `1px solid ${T.redBorder}`, borderRadius: 12, padding: '12px 16px', maxWidth: 600 }}>
+                <span style={{ fontSize: 16 }}>⚠️</span>
+                <p style={{ flex: 1, fontSize: 13, fontWeight: 500, color: T.redText, margin: 0 }}>{tokenError}</p>
+                <button onClick={handleLogin} style={{ fontSize: 12, fontWeight: 600, color: T.redText, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>Login ulang</button>
+              </div>
+            )}
+
+            {pullStatus && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: T.emeraldLight, border: `1px solid ${T.emeraldBorder}`, borderRadius: 12, padding: '12px 16px', maxWidth: 600 }}>
+                <p style={{ fontSize: 13, fontWeight: 600, color: T.emeraldText, margin: 0 }}>{pullStatus}</p>
+              </div>
+            )}
+
+            {pullingDataMessage && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                background: darkMode ? '#1e293b' : '#EFF6FF',
+                border: `1px solid ${darkMode ? '#334155' : '#BFDBFE'}`,
+                borderRadius: 12,
+                padding: '12px 16px',
+                maxWidth: 600,
+                boxShadow: '0 2px 8px rgba(0, 0, 0, 0.05)'
+              }}>
+                <div style={{
+                  width: 14,
+                  height: 14,
+                  borderRadius: '50%',
+                  border: `2px solid ${darkMode ? '#334155' : '#DBEAFE'}`,
+                  borderTopColor: '#3B82F6',
+                  animation: 'spin 1s linear infinite',
+                  flexShrink: 0
+                }} />
+                <p style={{ fontSize: 13, fontWeight: 600, color: darkMode ? '#60A5FA' : '#1D4ED8', margin: 0 }}>
+                  {pullingDataMessage}
+                </p>
+              </div>
+            )}
+          </>
+        )}
+
         {view === 'HOME' && (
           <>
-            {/* Desktop Alerts */}
-            {isDesktop && (
-              <>
-                {tokenError && !isAuthenticated && (
-                  <div style={{ marginBottom: 16 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: T.redLight, border: `1px solid ${T.redBorder}`, borderRadius: 12, padding: '12px 16px', maxWidth: 600 }}>
-                      <span style={{ fontSize: 16 }}>⚠️</span>
-                      <p style={{ flex: 1, fontSize: 13, fontWeight: 500, color: T.redText }}>{tokenError}</p>
-                      <button onClick={handleLogin} style={{ fontSize: 12, fontWeight: 600, color: T.redText, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>Login ulang</button>
-                    </div>
-                  </div>
-                )}
-
-                {pullStatus && (
-                  <div style={{ marginBottom: 16 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: T.emeraldLight, border: `1px solid ${T.emeraldBorder}`, borderRadius: 12, padding: '12px 16px', maxWidth: 600 }}>
-                      <p style={{ fontSize: 13, fontWeight: 600, color: T.emeraldText }}>{pullStatus}</p>
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
 
             <div>
               <h1 style={{ fontSize: isDesktop ? 24 : 16, fontWeight: 700, color: T.textPrimary, letterSpacing: '-0.3px' }}>
@@ -1687,19 +1755,6 @@ function GlobalFunnyLoader({ message }: { message: string }) {
         </div>
       </div>
 
-      <style>{`
-        @keyframes spin {
-          to { transform: rotate(360deg); }
-        }
-        @keyframes pulse {
-          0%, 100% { transform: scale(1); opacity: 1; }
-          50% { transform: scale(1.08); opacity: 0.85; }
-        }
-        @keyframes globalMarquee {
-          0% { transform: translate3d(0, 0, 0); }
-          100% { transform: translate3d(-100%, 0, 0); }
-        }
-      `}</style>
     </div>
   );
 }
