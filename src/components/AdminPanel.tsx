@@ -13,6 +13,7 @@ import {
 
 import { pushTemplatesToDrive } from '../services/syncService';
 import { UNIT_NAME_SUGGESTIONS } from '../config/suggestions';
+import { getApiBaseUrl } from '../config';
 
 // ==========================================
 // FIELD DEFINITIONS (copy dari App.tsx agar AdminPanel mandiri)
@@ -153,7 +154,7 @@ const OBJECT_TYPES = [
 // TYPES
 // ==========================================
 
-type AdminTab = 'clients' | 'roles';
+type AdminTab = 'clients' | 'roles' | 'templates';
 type ClientSubView = 'list' | 'form' | 'units' | 'unit-form';
 
 interface AdminPanelProps {
@@ -226,11 +227,143 @@ export function AdminPanel({ currentUserEmail, onClose }: AdminPanelProps) {
         >
           👥 Akses User
         </button>
+        <button
+          onClick={() => setTab('templates')}
+          className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${
+            tab === 'templates' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          📄 Template Word
+        </button>
       </div>
 
       {/* Content */}
       {tab === 'clients' && <ClientManager currentUserEmail={currentUserEmail} />}
       {tab === 'roles' && <RoleManager currentUserEmail={currentUserEmail} />}
+      {tab === 'templates' && <TemplateManager />}
+    </div>
+  );
+}
+
+// ==========================================
+// TEMPLATE MANAGER
+// ==========================================
+
+function TemplateManager() {
+  const [templates, setTemplates] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState<string | null>(null);
+
+  const loadTemplates = async () => {
+    setLoading(true);
+    try {
+      const apiBase = getApiBaseUrl();
+      const res = await fetch(`${apiBase}/api/report/template`);
+      if (res.ok) {
+        const data = await res.json();
+        setTemplates(data.templates || []);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadTemplates();
+  }, []);
+
+  const handleUpload = async (typeCode: string, file: File) => {
+    setUploading(typeCode);
+    try {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const base64 = reader.result as string;
+        const apiBase = getApiBaseUrl();
+        const res = await fetch(`${apiBase}/api/report/template`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            typeCode,
+            fileBase64: base64,
+            fileName: file.name
+          })
+        });
+
+        if (res.ok) {
+          alert(`Template ${typeCode} berhasil diupload!`);
+          loadTemplates();
+        } else {
+          const err = await res.json();
+          alert(`Gagal: ${err.error}`);
+        }
+      };
+      reader.readAsDataURL(file);
+    } catch (err: any) {
+      alert(`Gagal: ${err.message}`);
+    } finally {
+      setUploading(null);
+    }
+  };
+
+  const getTemplateInfo = (typeCode: string) => {
+    const fileName = `Template_${typeCode.toUpperCase()}.docx`;
+    return templates.find(t => t.name === fileName);
+  };
+
+  return (
+    <div className="space-y-4 bg-white p-4 rounded-xl border border-gray-150">
+      <h3 className="text-xs font-black uppercase text-gray-500 tracking-wider">Kelola Template Laporan Word (.docx)</h3>
+      <p className="text-[11px] text-gray-400">Unggah template dokumen Word dengan penanda tag seperti <code>{`{companyName}`}</code>. File template harus dinamai <code>Template_[CODE].docx</code> di Drive.</p>
+      
+      {loading ? (
+        <div className="text-center py-4 text-xs font-bold text-gray-400">Memeriksa status template di Google Drive...</div>
+      ) : (
+        <div className="space-y-3">
+          {[
+            { code: 'IL', name: 'Instalasi Listrik' },
+            { code: 'IPP', name: 'Penyalur Petir' }
+          ].map(t => {
+            const info = getTemplateInfo(t.code);
+            return (
+              <div key={t.code} className="p-3.5 border border-gray-100 rounded-xl flex flex-col sm:flex-row justify-between sm:items-center gap-3 bg-gray-50/50">
+                <div>
+                  <h4 className="text-xs font-bold text-gray-800">{t.name} ({t.code})</h4>
+                  {info ? (
+                    <p className="text-[10px] text-emerald-600 font-bold mt-0.5">
+                      ✓ Aktif di Drive (Diunggah: {new Date(info.createdTime).toLocaleDateString('id-ID')})
+                    </p>
+                  ) : (
+                    <p className="text-[10px] text-rose-500 font-bold mt-0.5">
+                      ✗ Belum ada template di Drive
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <input
+                    type="file"
+                    accept=".docx"
+                    id={`file-${t.code}`}
+                    style={{ display: 'none' }}
+                    onChange={e => {
+                      const file = e.target.files?.[0];
+                      if (file) handleUpload(t.code, file);
+                    }}
+                  />
+                  <button
+                    disabled={uploading === t.code}
+                    onClick={() => document.getElementById(`file-${t.code}`)?.click()}
+                    className="text-xs font-bold text-white bg-emerald-600 border border-emerald-600 px-3 py-1.5 rounded-lg hover:bg-emerald-700 active:scale-95 transition-all"
+                  >
+                    {uploading === t.code ? 'Mengunggah...' : 'Unggah File .docx'}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

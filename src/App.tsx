@@ -46,9 +46,11 @@ import { ClientPicker, type PickedUnit } from './components/ClientPicker';
 import { useResponsive } from './hooks/useResponsive';
 import { uploadProfilePhoto, getProfilePhoto } from './services/profilePhotoService';
 import { convertHeicToJpeg } from './utils/heicConvert';
+import { ReportDashboard } from './components/report/ReportDashboard';
+import { ReportWizard } from './components/report/ReportWizard';
 // ─── TYPES ───────────────────────────────────────────────────────────────────
 
-type View = 'HOME' | 'PICK_UNIT' | 'FORM' | 'SYNC_HUB' | 'HISTORY' | 'ADMIN';
+type View = 'HOME' | 'PICK_UNIT' | 'FORM' | 'SYNC_HUB' | 'HISTORY' | 'ADMIN' | 'REPORT_DASHBOARD' | 'REPORT_WIZARD';
 type FormMode = 'create' | 'edit';
 type FieldType = 'text' | 'number' | 'select' | 'textarea';
 
@@ -513,6 +515,7 @@ export default function App() {
   }, []);
 
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [selectedReportId, setSelectedReportId] = useState<number | null>(null);
   const [currentUserEmail, setCurrentUserEmail] = useState('');
   const [currentUserName, setCurrentUserName] = useState('');
   const [roleChecked, setRoleChecked] = useState(false);
@@ -1348,6 +1351,7 @@ const handleDelete = async (id: string) => {
               { id: 'HOME', icon: ICONS.home, label: 'Beranda' },
               { id: 'HISTORY', icon: ICONS.clipboard, label: 'Riwayat' },
               { id: 'SYNC_HUB', icon: ICONS.cloudUp, label: 'Sinkronisasi', badge: drafts.length },
+              { id: 'REPORT_DASHBOARD', icon: '📄', label: 'Laporan K3' },
               { id: 'ADMIN', icon: ICONS.shield, label: 'Admin Panel' },
             ].map((item) => (
               <button
@@ -1392,7 +1396,7 @@ const handleDelete = async (id: string) => {
           /* Desktop Header - Page Title */
           <>
             <h2 style={{ fontSize: 20, fontWeight: 600, color: T.textPrimary }}>
-              {view === 'HOME' ? 'Dashboard' : view === 'HISTORY' ? 'Riwayat Inspeksi' : view === 'SYNC_HUB' ? 'Sinkronisasi' : view === 'ADMIN' ? 'Admin Panel' : 'Aksara Inspect'}
+              {view === 'HOME' ? 'Dashboard' : view === 'HISTORY' ? 'Riwayat Inspeksi' : view === 'SYNC_HUB' ? 'Sinkronisasi' : view === 'ADMIN' ? 'Admin Panel' : view === 'REPORT_DASHBOARD' ? 'Laporan K3' : view === 'REPORT_WIZARD' ? 'Wizard Laporan' : 'Aksara Inspect'}
             </h2>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 20, background: isOnline ? '#ECFDF5' : '#FEF2F2', border: `1px solid ${isOnline ? '#6EE7B7' : '#FCA5A5'}` }}>
@@ -1661,12 +1665,33 @@ const handleDelete = async (id: string) => {
           <AdminPanel currentUserEmail={currentUserEmail} onClose={goBack} />
         )}
 
+        {view === 'REPORT_DASHBOARD' && (
+          <ReportDashboard
+            onNewReport={() => navigateTo('REPORT_WIZARD')}
+            onEditReport={(id) => {
+              setSelectedReportId(id);
+              navigateTo('REPORT_WIZARD');
+            }}
+            setCurrentView={navigateTo}
+          />
+        )}
+
+        {view === 'REPORT_WIZARD' && (
+          <ReportWizard
+            reportId={selectedReportId}
+            onClose={() => {
+              setSelectedReportId(null);
+              goBack();
+            }}
+          />
+        )}
+
       </main>
 
 
 
       {/* BOTTOM NAV + FAB - Only for Mobile */}
-      {!isDesktop && (view === 'HOME' || view === 'HISTORY' || view === 'SYNC_HUB' || view === 'ADMIN') && (
+      {!isDesktop && (view === 'HOME' || view === 'HISTORY' || view === 'SYNC_HUB' || view === 'ADMIN' || view === 'REPORT_DASHBOARD') && (
         <nav style={{ position: 'fixed', bottom: 0, left: 0, right: 0, background: darkMode ? 'rgba(15,23,42,0.97)' : 'rgba(255,255,255,0.97)', backdropFilter: 'blur(8px)', borderTop: `0.5px solid ${T.border}`, padding: '8px 16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-around', maxWidth: 640, margin: '0 auto', zIndex: 40 }}>
           <NavTab icon={ICONS.home} label="Beranda" active={view === 'HOME'} onClick={() => { resetForm(); setScreenStack(['HOME']); }} />
           <NavTab icon={ICONS.clipboard} label="Riwayat" active={view === 'HISTORY'} onClick={() => setScreenStack(['HISTORY'])} />
@@ -1676,8 +1701,8 @@ const handleDelete = async (id: string) => {
             </button>
             <span style={{ fontSize: 9, fontWeight: 700, color: T.emerald500, letterSpacing: '0.02em' }}>Inspeksi</span>
           </div>
+          <NavTab icon={<span style={{ fontSize: 18 }}>📄</span>} label="Laporan" active={view === 'REPORT_DASHBOARD'} onClick={() => setScreenStack(['REPORT_DASHBOARD'])} />
           <NavTab icon={ICONS.cloudUp} label="Sync" active={view === 'SYNC_HUB'} onClick={() => setScreenStack(['SYNC_HUB'])} />
-          <NavTab icon={ICONS.shield} label="Admin" active={view === 'ADMIN'} onClick={() => setScreenStack(['ADMIN'])} />
         </nav>
       )}
 

@@ -75,6 +75,12 @@ export class MyDatabase extends Dexie {
   client_templates!: Table<ClientTemplate>;
   unit_templates!: Table<UnitTemplate>;
   user_roles!: Table<UserRole>;
+  reports!: Table<any>;
+  templateConfigs!: Table<any>;
+  masterComponents!: Table<any>;
+  auditLogs!: Table<any>;
+  sequenceCounters!: Table<any>;
+  reportJobs!: Table<any>;
 
   constructor() {
     super('AksaraDB');
@@ -116,6 +122,19 @@ export class MyDatabase extends Dexie {
       client_templates: 'id, name, createdAt, createdBy, deleted',
       unit_templates: 'id, clientId, objectType, createdAt, createdBy, deleted',
       user_roles: 'id, role, createdAt',
+    });
+    this.version(10).stores({
+      inspection_sessions: 'id, clientName, status, createdAt, templateClientId, inspectorEmail, driveFolderId, uploadStatus',
+      inspection_photos: 'id, sessionId, createdAt, driveFileId, fileName',
+      client_templates: 'id, name, createdAt, createdBy, deleted',
+      unit_templates: 'id, clientId, objectType, createdAt, createdBy, deleted',
+      user_roles: 'id, role, createdAt',
+      reports: '++id, inspectionId, reportNumber, inspectionTypeCode, status, createdAt',
+      templateConfigs: '++id, inspectionTypeCode, version, isActive',
+      masterComponents: '++id, componentId, inspectionTypeCode, categoryId, isActive',
+      auditLogs: '++id, entityType, entityId, action, timestamp, syncedToDrive',
+      sequenceCounters: '++id, inspectionTypeCode, year, month',
+      reportJobs: '++id, jobId, reportId, status, createdAt',
     });
   }
 }
