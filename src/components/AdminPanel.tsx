@@ -242,6 +242,16 @@ export function AdminPanel({ currentUserEmail, onClose }: AdminPanelProps) {
       {tab === 'clients' && <ClientManager currentUserEmail={currentUserEmail} />}
       {tab === 'roles' && <RoleManager currentUserEmail={currentUserEmail} />}
       {tab === 'templates' && <TemplateManager />}
+
+      {/* Bottom Close Button for Mobile */}
+      <div className="pt-4 border-t border-gray-100 flex justify-end md:hidden">
+        <button
+          onClick={onClose}
+          className="w-full py-3 bg-gray-100 text-gray-700 text-xs font-black rounded-xl hover:bg-gray-200 transition-all active:scale-[0.98] flex items-center justify-center gap-1.5"
+        >
+          ✕ Tutup Panel Admin
+        </button>
+      </div>
     </div>
   );
 }

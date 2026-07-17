@@ -927,45 +927,65 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
       </div>
 
       {/* Navigation Footer */}
-      {currentStep > 1 && !isGenerating && !genLink && (
-        <div className="bg-gray-50 border-t border-gray-100 p-4 flex justify-between">
-          <button
-            onClick={() => setCurrentStep(prev => prev - 1)}
-            className="text-xs font-bold text-gray-500 border border-gray-250 bg-white px-4 py-2.5 rounded-lg hover:bg-gray-50"
-          >
-            ← Kembali
-          </button>
+      {!isGenerating && !genLink && (
+        <div className="bg-gray-50 border-t border-gray-100 p-4 flex justify-between gap-2">
+          {currentStep === 1 ? (
+            <button
+              onClick={onClose}
+              className="text-xs font-bold text-rose-600 border border-rose-200 bg-white px-4 py-3 rounded-xl hover:bg-rose-50 flex-1 text-center active:scale-[0.98] transition-all"
+            >
+              ❌ Batalkan & Tutup Wizard
+            </button>
+          ) : (
+            <>
+              <div className="flex gap-2">
+                <button
+                  onClick={onClose}
+                  className="text-xs font-bold text-rose-600 border border-rose-200 bg-white px-3.5 py-2.5 rounded-xl hover:bg-rose-50 active:scale-95 transition-all"
+                  title="Batalkan Wizard"
+                >
+                  ❌ Batal
+                </button>
+                <button
+                  onClick={() => setCurrentStep(prev => prev - 1)}
+                  className="text-xs font-bold text-gray-550 border border-gray-250 bg-white px-4 py-2.5 rounded-xl hover:bg-gray-50 active:scale-95 transition-all"
+                >
+                  ← Kembali
+                </button>
+              </div>
 
-          {currentStep === 5 ? (
-            <button
-              onClick={handleProceedToCalculations}
-              className="text-xs font-bold text-white bg-emerald-600 border border-emerald-600 px-5 py-2.5 rounded-lg hover:bg-emerald-700 active:scale-95 transition-all"
-            >
-              Uji & Hitung K3 →
-            </button>
-          ) : currentStep === 6 ? (
-            <div className="flex gap-2">
-              <button
-                onClick={skipToManualNarrative}
-                className="text-xs font-bold text-gray-700 border border-gray-250 bg-white px-4 py-2.5 rounded-lg hover:bg-gray-50"
-              >
-                Tulis Manual (Tanpa AI)
-              </button>
-              <button
-                onClick={generateNarrative}
-                className="text-xs font-bold text-white bg-emerald-600 border border-emerald-600 px-5 py-2.5 rounded-lg hover:bg-emerald-700 active:scale-95 transition-all"
-              >
-                Generate AI Narasi (Gemini) →
-              </button>
-            </div>
-          ) : currentStep < 9 ? (
-            <button
-              onClick={() => setCurrentStep(prev => prev + 1)}
-              className="text-xs font-bold text-white bg-emerald-600 border border-emerald-600 px-5 py-2.5 rounded-lg hover:bg-emerald-700 active:scale-95 transition-all"
-            >
-              Lanjutkan →
-            </button>
-          ) : null}
+              {currentStep === 5 ? (
+                <button
+                  onClick={handleProceedToCalculations}
+                  className="text-xs font-bold text-white bg-emerald-600 border border-emerald-600 px-5 py-2.5 rounded-xl hover:bg-emerald-700 active:scale-95 transition-all"
+                >
+                  Uji & Hitung K3 →
+                </button>
+              ) : currentStep === 6 ? (
+                <div className="flex gap-2">
+                  <button
+                    onClick={skipToManualNarrative}
+                    className="text-xs font-bold text-gray-700 border border-gray-250 bg-white px-4 py-2.5 rounded-xl hover:bg-gray-50 active:scale-95 transition-all"
+                  >
+                    Tulis Manual (Tanpa AI)
+                  </button>
+                  <button
+                    onClick={generateNarrative}
+                    className="text-xs font-bold text-white bg-emerald-600 border border-emerald-600 px-5 py-2.5 rounded-xl hover:bg-emerald-700 active:scale-95 transition-all"
+                  >
+                    Generate AI Narasi (Gemini) →
+                  </button>
+                </div>
+              ) : currentStep < 9 ? (
+                <button
+                  onClick={() => setCurrentStep(prev => prev + 1)}
+                  className="text-xs font-bold text-white bg-emerald-600 border border-emerald-600 px-5 py-2.5 rounded-xl hover:bg-emerald-700 active:scale-95 transition-all"
+                >
+                  Lanjutkan →
+                </button>
+              ) : null}
+            </>
+          )}
         </div>
       )}
     </div>

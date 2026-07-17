@@ -506,6 +506,14 @@ function PhotoGallery({ photos, initialIndex, onClose, onDeleteOne, onDeleteAll 
         background: 'rgba(0,0,0,0.85)', borderTop: '1px solid rgba(255,255,255,0.07)',
         display: 'flex', gap: 10, justifyContent: 'center', flexShrink: 0,
       }}>
+        {/* Tutup Galeri */}
+        <button
+          onClick={onClose}
+          style={btnStyle('rgba(255,255,255,0.15)', '#fff', '1px solid rgba(255,255,255,0.25)')}
+        >
+          ✕ Tutup
+        </button>
+
         {/* Hapus foto ini */}
         <button
           onClick={() => {
@@ -1108,9 +1116,9 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           gap: 16, flexShrink: 0,
         }}>
-          {/* Kiri: Simpan */}
-          <div style={{ width: 120, display: 'flex', justifyContent: 'flex-end' }}>
-            {photos.length > 0 && (
+          {/* Kiri: Simpan atau Batal */}
+          <div style={{ width: 120, display: 'flex', justifyContent: 'flex-start' }}>
+            {photos.length > 0 ? (
               <button onClick={handleSave} style={{
                 background: 'linear-gradient(135deg, #1D4ED8, #3B82F6)',
                 border: 'none', borderRadius: 12,
@@ -1119,6 +1127,15 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
                 boxShadow: '0 4px 14px rgba(59,130,246,0.4)',
               }}>
                 💾 Simpan ({photos.length})
+              </button>
+            ) : (
+              <button onClick={onClose} style={{
+                background: 'rgba(255, 255, 255, 0.1)',
+                border: 'none', borderRadius: 12,
+                padding: '11px 16px', color: '#fff', fontSize: 13, fontWeight: 600,
+                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
+              }}>
+                ✕ Batal
               </button>
             )}
           </div>
