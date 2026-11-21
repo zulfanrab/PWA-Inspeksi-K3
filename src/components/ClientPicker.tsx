@@ -1,9 +1,18 @@
 // src/components/ClientPicker.tsx
-// NEW: Komponen picker klien → unit untuk ahli K3 di lapangan
-// Max 3 tap sebelum form terbuka (pilih klien → pilih unit → form)
+// REVISI QUICK PHOTO / PICKER UNIT:
+// 1. Pilihan 1 (Tab "Unit Baru / Siap Foto"): Langsung menampilkan unit yang baru diinput di Admin Panel / masih kosongan fotonya.
+// 2. Pilihan 2 (Tab "Per Perusahaan"): Menampilkan daftar perusahaan yang diurutkan dari yang terbaru diinput Admin.
+// 3. Status "Belum Ada Foto / Kosongan" vs "Sudah Difoto" terlihat jelas untuk memudahkan inspeksi lapangan.
+// 4. Support Dark Mode & Responsif.
 
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { ClientRepository, UnitRepository, type ClientTemplate, type UnitTemplate } from '../db/db';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import {
+  ClientRepository,
+  UnitRepository,
+  type ClientTemplate,
+  type UnitTemplate,
+  type UnitWithMeta,
+} from '../db/db';
 
 // ==========================================
 // TYPES
@@ -20,10 +29,11 @@ interface ClientPickerProps {
   onCancel: () => void;
 }
 
-type PickerStep = 'client' | 'unit';
+type PickerTab = 'recentUnits' | 'byClient';
+type UnitFilterMode = 'all' | 'pendingPhotos';
 
 // ==========================================
-// OBJECT TYPES (untuk tombol inspeksi manual)
+// OBJECT TYPES (untuk tombol inspeksi manual & icon)
 // ==========================================
 
 const OBJECT_TYPES = [
@@ -37,328 +47,6 @@ const OBJECT_TYPES = [
   { key: 'Proteksi Kebakaran', label: 'Proteksi Kebakaran', desc: 'Instalasi Proteksi Kebakaran', icon: '🧯' },
 ];
 
-// ==========================================
-// HELPERS
-// ==========================================
-
-function Spinner() {
-  return (
-    <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-    </svg>
-  );
-}
-
-// ==========================================
-// MAIN COMPONENT
-// ==========================================
-
-export function ClientPicker({ onPick, onManual, onCancel }: ClientPickerProps) {
-  const [step, setStep] = useState<PickerStep>('client');
-  const [showManual, setShowManual] = useState(false);
-
-  // Client step state
-  const [clients, setClients] = useState<ClientTemplate[]>([]);
-  const [clientSearch, setClientSearch] = useState('');
-  const [clientLoading, setClientLoading] = useState(true);
-  const [selectedClient, setSelectedClient] = useState<ClientTemplate | null>(null);
-
-  // Unit step state
-  const [units, setUnits] = useState<UnitTemplate[]>([]);
-  const [unitSearch, setUnitSearch] = useState('');
-  const [unitLoading, setUnitLoading] = useState(false);
-
-  const clientSearchRef = useRef<HTMLInputElement>(null);
-  const unitSearchRef = useRef<HTMLInputElement>(null);
-
-  // ---- Load clients ----
-  const loadClients = useCallback(async () => {
-    setClientLoading(true);
-    try {
-      const data = await ClientRepository.search(clientSearch);
-      setClients(data);
-    } finally {
-      setClientLoading(false);
-    }
-  }, [clientSearch]);
-
-  // ---- Load units ----
-  const loadUnits = useCallback(async () => {
-    if (!selectedClient) return;
-    setUnitLoading(true);
-    try {
-      const data = await UnitRepository.searchByClient(selectedClient.id, unitSearch);
-      setUnits(data);
-    } finally {
-      setUnitLoading(false);
-    }
-  }, [selectedClient, unitSearch]);
-
-  useEffect(() => { loadClients(); }, [loadClients]);
-  useEffect(() => {
-    if (step === 'client') {
-      setTimeout(() => clientSearchRef.current?.focus(), 100);
-    }
-  }, [step]);
-  useEffect(() => {
-    if (step === 'unit') {
-      loadUnits();
-      setTimeout(() => unitSearchRef.current?.focus(), 100);
-    }
-  }, [step, loadUnits]);
-
-  // ---- Handlers ----
-
-  const handleSelectClient = (c: ClientTemplate) => {
-    setSelectedClient(c);
-    setUnitSearch('');
-    setStep('unit');
-  };
-
-  const handleSelectUnit = (u: UnitTemplate) => {
-    if (!selectedClient) return;
-    onPick({ client: selectedClient, unit: u });
-  };
-
-  const handleBackToClient = () => {
-    setSelectedClient(null);
-    setStep('client');
-    setUnitSearch('');
-  };
-
-  // ==========================================
-  // RENDER - CLIENT STEP
-  // ==========================================
-
-  if (showManual) {
-    return (
-      <div className="space-y-4">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => setShowManual(false)}
-            className="w-8 h-8 rounded-lg bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-all text-gray-600"
-          >
-            ←
-          </button>
-          <div>
-            <h2 className="text-base font-black text-gray-900">Inspeksi Manual</h2>
-            <p className="text-xs text-gray-400">Pilih jenis objek K3 tanpa template</p>
-          </div>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          {OBJECT_TYPES.map(obj => (
-            <button
-              key={obj.key}
-              onClick={() => onManual(obj.key)}
-              className="bg-white border border-gray-200 hover:border-emerald-400 hover:shadow-md rounded-xl p-4 text-left transition-all group active:scale-95"
-            >
-              <div className="text-2xl mb-2 group-hover:scale-110 transition-transform">{obj.icon}</div>
-              <p className="text-sm font-black text-gray-900">{obj.label}</p>
-              <p className="text-[10px] text-gray-400 font-medium mt-0.5">{obj.desc}</p>
-            </button>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  if (step === 'client') {
-    return (
-      <div className="space-y-4">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-base font-black text-gray-900">Pilih Klien</h2>
-            <p className="text-xs text-gray-400 font-medium mt-0.5">
-              Tap 1 dari 2 — lalu pilih unit
-            </p>
-          </div>
-          <button
-            onClick={onCancel}
-            className="w-8 h-8 rounded-lg bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-all text-gray-500"
-          >
-            ✕
-          </button>
-        </div>
-
-        {/* Search */}
-        <div className="relative">
-          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">🔍</span>
-          <input
-            ref={clientSearchRef}
-            type="text"
-            value={clientSearch}
-            onChange={e => setClientSearch(e.target.value)}
-            placeholder="Cari nama perusahaan klien..."
-            className="w-full pl-9 pr-4 py-3 bg-white border border-emerald-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 rounded-xl text-sm outline-none transition-all"
-          />
-          {clientSearch && (
-            <button
-              onClick={() => setClientSearch('')}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-            >
-              ✕
-            </button>
-          )}
-        </div>
-
-        {/* Client List */}
-        {clientLoading ? (
-          <div className="flex items-center justify-center py-12 gap-2 text-gray-400">
-            <Spinner /> <span className="text-sm">Memuat klien...</span>
-          </div>
-        ) : clients.length === 0 ? (
-          <div className="flex flex-col items-center py-12 text-center">
-            {clientSearch ? (
-              <>
-                <div className="text-4xl mb-3 opacity-40">🔍</div>
-                <p className="text-sm font-bold text-gray-500">Tidak ditemukan</p>
-                <p className="text-xs text-gray-400 mt-1">Coba kata kunci lain</p>
-              </>
-            ) : (
-              <>
-                <div className="text-4xl mb-3 opacity-40">🏢</div>
-                <p className="text-sm font-bold text-gray-500">Belum ada klien</p>
-                <p className="text-xs text-gray-400 mt-1">Admin perlu menambahkan klien terlebih dahulu</p>
-              </>
-            )}
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {clients.map(c => (
-              <button
-                key={c.id}
-                onClick={() => handleSelectClient(c)}
-                className="w-full bg-white border border-gray-200 hover:border-emerald-400 hover:shadow-sm rounded-xl px-4 py-3.5 text-left transition-all active:scale-[0.98] group"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-lg bg-emerald-50 group-hover:bg-emerald-100 flex items-center justify-center text-lg transition-all flex-shrink-0">
-                    🏢
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-black text-gray-900 truncate">{c.name}</p>
-                    {c.address && <p className="text-[10px] text-gray-400 truncate mt-0.5">{c.address}</p>}
-                  </div>
-                  <span className="text-gray-300 group-hover:text-emerald-400 transition-all flex-shrink-0">›</span>
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* Manual entry option */}
-        <div className="pt-2 border-t border-gray-100">
-          <button
-            onClick={() => setShowManual(true)}
-            className="w-full py-2.5 text-xs font-bold text-gray-500 hover:text-emerald-600 transition-all flex items-center justify-center gap-1.5"
-          >
-            Inspeksi tanpa template (isi manual) →
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // ==========================================
-  // RENDER - UNIT STEP
-  // ==========================================
-
-  return (
-    <div className="space-y-4">
-      {/* Header + Back */}
-      <div className="flex items-center gap-3">
-        <button
-          onClick={handleBackToClient}
-          className="w-8 h-8 rounded-lg bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-all text-gray-600"
-        >
-          ←
-        </button>
-        <div className="flex-1 min-w-0">
-          <h2 className="text-base font-black text-gray-900">Pilih Unit</h2>
-          <p className="text-xs text-emerald-600 font-bold truncate">{selectedClient?.name}</p>
-        </div>
-        <button
-          onClick={onCancel}
-          className="w-8 h-8 rounded-lg bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-all text-gray-500"
-        >
-          ✕
-        </button>
-      </div>
-
-      {/* Progress indicator */}
-      <div className="flex items-center gap-2">
-        <div className="flex-1 h-1.5 rounded-full bg-emerald-500" />
-        <div className="flex-1 h-1.5 rounded-full bg-emerald-200" />
-        <p className="text-[10px] font-bold text-gray-400 ml-1">Tap 2 dari 2</p>
-      </div>
-
-      {/* Search */}
-      <div className="relative">
-        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">🔍</span>
-        <input
-          ref={unitSearchRef}
-          type="text"
-          value={unitSearch}
-          onChange={e => setUnitSearch(e.target.value)}
-          placeholder="Cari nama unit, nomor seri..."
-          className="w-full pl-9 pr-4 py-3 bg-white border border-emerald-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 rounded-xl text-sm outline-none transition-all"
-        />
-        {unitSearch && (
-          <button
-            onClick={() => setUnitSearch('')}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-          >
-            ✕
-          </button>
-        )}
-      </div>
-
-      {/* Unit List */}
-      {unitLoading ? (
-        <div className="flex items-center justify-center py-12 gap-2 text-gray-400">
-          <Spinner /> <span className="text-sm">Memuat unit...</span>
-        </div>
-      ) : units.length === 0 ? (
-        <div className="flex flex-col items-center py-12 text-center">
-          {unitSearch ? (
-            <>
-              <div className="text-4xl mb-3 opacity-40">🔍</div>
-              <p className="text-sm font-bold text-gray-500">Tidak ditemukan</p>
-              <p className="text-xs text-gray-400 mt-1">Coba kata kunci lain</p>
-            </>
-          ) : (
-            <>
-              <div className="text-4xl mb-3 opacity-40">📦</div>
-              <p className="text-sm font-bold text-gray-500">Belum ada unit template</p>
-              <p className="text-xs text-gray-400 mt-1">Admin perlu menambahkan unit untuk klien ini</p>
-            </>
-          )}
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {/* Group by objectType */}
-          <UnitListGrouped units={units} onSelect={handleSelectUnit} />
-        </div>
-      )}
-
-      {/* Skip to manual */}
-      <div className="pt-2 border-t border-gray-100">
-        <button
-          onClick={() => setShowManual(true)}
-          className="w-full py-2.5 text-xs font-bold text-gray-500 hover:text-emerald-600 transition-all flex items-center justify-center gap-1.5"
-        >
-          Isi manual tanpa template →
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ==========================================
-// UNIT LIST GROUPED BY OBJECT TYPE
-// ==========================================
-
 const OBJECT_TYPE_MAP: Record<string, { label: string; icon: string }> = {
   'Angkur':             { label: 'Angkur',             icon: '⚓' },
   'PAA':                { label: 'PAA',                icon: '🏗️' },
@@ -370,107 +58,700 @@ const OBJECT_TYPE_MAP: Record<string, { label: string; icon: string }> = {
   'Proteksi Kebakaran': { label: 'Proteksi Kebakaran', icon: '🧯' },
 };
 
-function UnitListGrouped({
-  units,
-  onSelect,
-}: {
-  units: UnitTemplate[];
-  onSelect: (u: UnitTemplate) => void;
-}) {
-  // Group by objectType
-  const grouped: Record<string, UnitTemplate[]> = {};
-  for (const u of units) {
-    if (!grouped[u.objectType]) grouped[u.objectType] = [];
-    grouped[u.objectType].push(u);
-  }
+function formatRelativeTime(timestamp?: number): string {
+  if (!timestamp) return '';
+  const now = Date.now();
+  const diffSec = Math.floor((now - timestamp) / 1000);
+  if (diffSec < 60) return 'Baru saja';
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)} menit lalu`;
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)} jam lalu`;
+  const diffDays = Math.floor(diffSec / 86400);
+  if (diffDays === 1) return 'Kemarin';
+  if (diffDays < 7) return `${diffDays} hari lalu`;
+  return new Date(timestamp).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
+}
 
-  // If all same type, show flat
-  const keys = Object.keys(grouped);
-  if (keys.length === 1) {
-    return (
-      <>
-        {grouped[keys[0]].map(u => (
-          <UnitPickerCard key={u.id} unit={u} onSelect={() => onSelect(u)} />
-        ))}
-      </>
-    );
-  }
-
-  // Multiple types: show grouped
+function Spinner() {
   return (
-    <>
-      {keys.map(type => (
-        <div key={type}>
-          <div className="flex items-center gap-1.5 mb-1.5 px-1">
-            <span className="text-sm">{OBJECT_TYPE_MAP[type]?.icon || '📦'}</span>
-            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-              {OBJECT_TYPE_MAP[type]?.label || type}
-            </p>
-          </div>
-          <div className="space-y-2 mb-3">
-            {grouped[type].map(u => (
-              <UnitPickerCard key={u.id} unit={u} onSelect={() => onSelect(u)} />
-            ))}
-          </div>
-        </div>
-      ))}
-    </>
+    <svg className="w-4 h-4 animate-spin text-emerald-500" fill="none" viewBox="0 0 24 24">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+    </svg>
   );
 }
 
-function UnitPickerCard({
-  unit,
-  onSelect,
-}: {
-  unit: UnitTemplate;
-  onSelect: () => void;
-}) {
-  const meta = OBJECT_TYPE_MAP[unit.objectType];
+// ==========================================
+// MAIN COMPONENT
+// ==========================================
 
-  return (
-    <button
-      onClick={onSelect}
-      className="w-full bg-white border border-gray-200 hover:border-emerald-400 hover:shadow-sm rounded-xl px-4 py-3.5 text-left transition-all active:scale-[0.98] group"
-    >
-      <div className="flex items-center gap-3">
-        <div className="w-9 h-9 rounded-lg bg-slate-50 group-hover:bg-emerald-50 flex items-center justify-center text-lg transition-all flex-shrink-0">
-          {meta?.icon || '📦'}
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-black text-gray-900 truncate">{unit.label}</p>
-          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-            {unit.unitData?.nomorSeri && (
-              <span className="text-[10px] text-gray-400">S/N: {unit.unitData.nomorSeri}</span>
-            )}
-            {unit.unitData?.lokasiUnit && (
-              <span className="text-[10px] text-emerald-500 font-medium truncate max-w-[120px]">
-                📍 {unit.unitData.lokasiUnit}
-              </span>
-            )}
+export function ClientPicker({ onPick, onManual, onCancel }: ClientPickerProps) {
+  // Mode Tab: 'recentUnits' (Unit Baru) | 'byClient' (Per Perusahaan)
+  const [activeTab, setActiveTab] = useState<PickerTab>(() => {
+    return (localStorage.getItem('aksara_quick_picker_tab') as PickerTab) || 'recentUnits';
+  });
+
+  // Save preference
+  useEffect(() => {
+    localStorage.setItem('aksara_quick_picker_tab', activeTab);
+  }, [activeTab]);
+
+  const [showManual, setShowManual] = useState(false);
+
+  // Data State
+  const [recentUnits, setRecentUnits] = useState<UnitWithMeta[]>([]);
+  const [clients, setClients] = useState<ClientTemplate[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Filter & Search
+  const [unitFilter, setUnitFilter] = useState<UnitFilterMode>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Selected client for drilling down in 'byClient' tab
+  const [selectedClient, setSelectedClient] = useState<ClientTemplate | null>(null);
+  const [clientUnits, setClientUnits] = useState<UnitTemplate[]>([]);
+  const [clientUnitsLoading, setClientUnitsLoading] = useState(false);
+  const [clientUnitSearch, setClientUnitSearch] = useState('');
+
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // ---- Load Data Awal ----
+  const loadInitialData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [unitsData, clientsData] = await Promise.all([
+        UnitRepository.getAllRecentWithMeta(),
+        ClientRepository.getAll('recent'),
+      ]);
+      setRecentUnits(unitsData);
+      setClients(clientsData);
+    } catch (err) {
+      console.error('[ClientPicker] Error loading data:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadInitialData();
+  }, [loadInitialData]);
+
+  // ---- Load All Units for Selected Client (Dimuat sekali saat klien dipilih) ----
+  useEffect(() => {
+    if (!selectedClient) {
+      setClientUnits([]);
+      return;
+    }
+    let isCancelled = false;
+    setClientUnitsLoading(true);
+    UnitRepository.getByClient(selectedClient.id)
+      .then((units) => {
+        if (!isCancelled) {
+          setClientUnits(units);
+          setClientUnitsLoading(false);
+        }
+      })
+      .catch((err) => {
+        console.error('[ClientPicker] Error load client units:', err);
+        if (!isCancelled) setClientUnitsLoading(false);
+      });
+    return () => {
+      isCancelled = true;
+    };
+  }, [selectedClient]);
+
+  // Filter unit milik klien secara in-memory (bebas jitter/spinner saat mengetik)
+  const filteredClientUnits = useMemo(() => {
+    const q = clientUnitSearch.toLowerCase().trim();
+    if (!q) return clientUnits;
+    return clientUnits.filter(
+      (u) =>
+        u.label.toLowerCase().includes(q) ||
+        u.objectType.toLowerCase().includes(q) ||
+        (u.unitData?.nomorSeri || '').toLowerCase().includes(q) ||
+        (u.unitData?.lokasiUnit || '').toLowerCase().includes(q)
+    );
+  }, [clientUnits, clientUnitSearch]);
+
+  // Statistik per Klien
+  const clientStatsMap = useMemo(() => {
+    const map = new Map<string, { total: number; pendingPhotos: number }>();
+    for (const u of recentUnits) {
+      const prev = map.get(u.clientId) || { total: 0, pendingPhotos: 0 };
+      map.set(u.clientId, {
+        total: prev.total + 1,
+        pendingPhotos: prev.pendingPhotos + (u.hasPhotos ? 0 : 1),
+      });
+    }
+    return map;
+  }, [recentUnits]);
+
+  // Filtered Recent Units
+  const filteredUnits = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
+    return recentUnits.filter((u) => {
+      // Filter status foto
+      if (unitFilter === 'pendingPhotos' && u.hasPhotos) {
+        return false;
+      }
+      // Search
+      if (!q) return true;
+      const matchLabel = u.label.toLowerCase().includes(q);
+      const matchClient = u.clientName.toLowerCase().includes(q);
+      const matchType = u.objectType.toLowerCase().includes(q);
+      const matchSn = (u.unitData?.nomorSeri || '').toLowerCase().includes(q);
+      const matchLokasi = (u.unitData?.lokasiUnit || '').toLowerCase().includes(q);
+      const matchModel = (u.unitData?.merekModel || '').toLowerCase().includes(q);
+      return matchLabel || matchClient || matchType || matchSn || matchLokasi || matchModel;
+    });
+  }, [recentUnits, unitFilter, searchQuery]);
+
+  // Filtered Clients (Diurutkan terbaru diinput Admin)
+  const filteredClients = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return clients;
+    return clients.filter((c) => {
+      return (
+        c.name.toLowerCase().includes(q) ||
+        (c.address && c.address.toLowerCase().includes(q))
+      );
+    });
+  }, [clients, searchQuery]);
+
+  // Hitung berapa unit yang masih kosongan fotonya secara global
+  const totalPendingUnits = useMemo(() => {
+    return recentUnits.filter((u) => !u.hasPhotos).length;
+  }, [recentUnits]);
+
+  // ---- Handlers ----
+  const handleSelectRecentUnit = (u: UnitWithMeta) => {
+    if (u.client) {
+      onPick({ client: u.client, unit: u });
+    } else {
+      ClientRepository.getById(u.clientId).then((foundClient) => {
+        if (foundClient) {
+          onPick({ client: foundClient, unit: u });
+        } else {
+          onPick({
+            client: {
+              id: u.clientId,
+              name: u.clientName,
+              createdBy: 'system',
+              createdAt: Date.now(),
+            },
+            unit: u,
+          });
+        }
+      });
+    }
+  };
+
+  const handleSelectClient = (c: ClientTemplate) => {
+    setSelectedClient(c);
+    setClientUnitSearch('');
+  };
+
+  const handleBackFromClient = () => {
+    setSelectedClient(null);
+    setClientUnitSearch('');
+  };
+
+  const handleSelectDrilledUnit = (u: UnitTemplate) => {
+    if (!selectedClient) return;
+    onPick({ client: selectedClient, unit: u });
+  };
+
+  // ==========================================
+  // VIEW: MANUAL INSPECTION (TANPA TEMPLATE)
+  // ==========================================
+  if (showManual) {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowManual(false)}
+            className="w-8 h-8 rounded-lg bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 flex items-center justify-center transition-all text-gray-600 dark:text-gray-200"
+          >
+            ←
+          </button>
+          <div>
+            <h2 className="text-base font-black text-gray-900 dark:text-white">Inspeksi Manual</h2>
+            <p className="text-xs text-gray-400">Pilih jenis objek K3 tanpa template</p>
           </div>
         </div>
-        <div className="flex-shrink-0">
-          <span className="w-8 h-8 rounded-full bg-emerald-500 group-hover:bg-emerald-600 text-white text-sm flex items-center justify-center transition-all shadow-sm">
-            ›
-          </span>
+        <div className="grid grid-cols-2 gap-3">
+          {OBJECT_TYPES.map((obj) => (
+            <button
+              key={obj.key}
+              onClick={() => onManual(obj.key)}
+              className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 hover:border-emerald-400 dark:hover:border-emerald-500 hover:shadow-md rounded-xl p-4 text-left transition-all group active:scale-95"
+            >
+              <div className="text-2xl mb-2 group-hover:scale-110 transition-transform">{obj.icon}</div>
+              <p className="text-sm font-black text-gray-900 dark:text-white">{obj.label}</p>
+              <p className="text-[10px] text-gray-400 font-medium mt-0.5">{obj.desc}</p>
+            </button>
+          ))}
         </div>
       </div>
+    );
+  }
 
-      {/* Preview fields */}
-      {(unit.unitData?.merekModel || unit.unitData?.nomorUnit) && (
-        <div className="mt-2 ml-12 flex items-center gap-3">
-          {unit.unitData?.merekModel && (
-            <span className="text-[10px] text-gray-400">
-              <span className="font-bold">Merek:</span> {unit.unitData.merekModel}
+  // ==========================================
+  // VIEW: DRILL-DOWN UNITS MILIK KLIEN TERTENTU
+  // ==========================================
+  if (selectedClient) {
+    return (
+      <div className="space-y-4">
+        {/* Header + Back */}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleBackFromClient}
+            className="w-8 h-8 rounded-lg bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 flex items-center justify-center transition-all text-gray-600 dark:text-gray-200"
+          >
+            ←
+          </button>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-base font-black text-gray-900 dark:text-white truncate">Pilih Unit Klien</h2>
+            <p className="text-xs text-emerald-600 dark:text-emerald-400 font-bold truncate flex items-center gap-1">
+              <span>🏢</span> {selectedClient.name}
+            </p>
+          </div>
+          <button
+            onClick={onCancel}
+            className="w-8 h-8 rounded-lg bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 flex items-center justify-center transition-all text-gray-500 dark:text-gray-400"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Search in client units */}
+        <div className="relative">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">🔍</span>
+          <input
+            type="text"
+            value={clientUnitSearch}
+            onChange={(e) => setClientUnitSearch(e.target.value)}
+            placeholder="Cari nama unit, nomor seri di klien ini..."
+            className="w-full pl-9 pr-4 py-2.5 bg-white dark:bg-slate-800 border border-emerald-200 dark:border-slate-700 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 rounded-xl text-sm outline-none transition-all text-gray-900 dark:text-white"
+          />
+          {clientUnitSearch && (
+            <button
+              onClick={() => setClientUnitSearch('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+
+        {/* List Units */}
+        {clientUnitsLoading ? (
+          <div className="flex items-center justify-center py-12 gap-2 text-gray-400">
+            <Spinner /> <span className="text-sm">Memuat unit klien...</span>
+          </div>
+        ) : filteredClientUnits.length === 0 ? (
+          <div className="flex flex-col items-center py-12 text-center bg-white dark:bg-slate-800 rounded-2xl border border-gray-100 dark:border-slate-700 p-6">
+            <div className="text-4xl mb-2 opacity-50">📦</div>
+            <p className="text-sm font-bold text-gray-700 dark:text-gray-200">
+              {clientUnitSearch ? 'Unit tidak ditemukan' : 'Belum ada unit untuk klien ini'}
+            </p>
+            <p className="text-xs text-gray-400 mt-1 max-w-xs">
+              {clientUnitSearch
+                ? 'Coba gunakan kata kunci pencarian yang lain'
+                : `Admin belum menambahkan unit template pada perusahaan ${selectedClient.name}.`}
+            </p>
+            {!clientUnitSearch && (
+              <button
+                onClick={() => setShowManual(true)}
+                className="mt-4 px-4 py-2 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 text-xs font-bold rounded-xl transition-all"
+              >
+                Inspeksi Manual (Ketik Sendiri) →
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {filteredClientUnits.map((u) => {
+              const meta = OBJECT_TYPE_MAP[u.objectType];
+              const fullMeta = recentUnits.find((ru) => ru.id === u.id);
+              const hasPhotos = fullMeta?.hasPhotos ?? false;
+
+              return (
+                <button
+                  key={u.id}
+                  onClick={() => handleSelectDrilledUnit(u)}
+                  className="w-full bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 hover:border-emerald-500 dark:hover:border-emerald-500 hover:shadow-md rounded-2xl p-4 text-left transition-all active:scale-[0.99] group relative"
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-slate-50 dark:bg-slate-700/60 group-hover:bg-emerald-50 dark:group-hover:bg-emerald-950/40 flex items-center justify-center text-xl flex-shrink-0 transition-colors">
+                      {meta?.icon || '📦'}
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap mb-1">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-gray-300">
+                          {u.objectType}
+                        </span>
+                        {!hasPhotos ? (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                            Belum Ada Foto
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 flex items-center gap-1">
+                            ✓ Ada Foto
+                          </span>
+                        )}
+                      </div>
+
+                      <h4 className="text-sm font-black text-gray-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors truncate">
+                        {u.label}
+                      </h4>
+
+                      <div className="flex items-center gap-3 mt-1.5 text-[11px] text-gray-400 flex-wrap">
+                        {u.unitData?.nomorSeri && (
+                          <span>S/N: <strong className="text-gray-600 dark:text-gray-300">{u.unitData.nomorSeri}</strong></span>
+                        )}
+                        {u.unitData?.lokasiUnit && (
+                          <span className="truncate max-w-[140px]">📍 {u.unitData.lokasiUnit}</span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex-shrink-0 self-center">
+                      <div className="w-9 h-9 rounded-full bg-emerald-500 group-hover:bg-emerald-600 text-white flex items-center justify-center shadow-sm transition-all group-hover:scale-105">
+                        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                          <circle cx="12" cy="13" r="4" />
+                        </svg>
+                      </div>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ==========================================
+  // MAIN VIEW: TABS (UNIT BARU vs PER PERUSAHAAN)
+  // ==========================================
+  return (
+    <div className="space-y-4">
+      {/* Top Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-black text-gray-900 dark:text-white flex items-center gap-2">
+            <span>⚡</span> Quick Photo & Inspeksi
+          </h2>
+          <p className="text-xs text-gray-400 font-medium mt-0.5">
+            Pilih unit baru atau perusahaan yang baru diinput Admin
+          </p>
+        </div>
+        <button
+          onClick={onCancel}
+          className="w-8 h-8 rounded-lg bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 flex items-center justify-center transition-all text-gray-500 dark:text-gray-400"
+          title="Tutup"
+        >
+          ✕
+        </button>
+      </div>
+
+      {/* Two Tabs Switcher (Persis seperti di Riwayat) */}
+      <div className="flex gap-2 bg-gray-100 dark:bg-slate-800 p-1 rounded-2xl">
+        <button
+          onClick={() => {
+            setActiveTab('recentUnits');
+            setSearchQuery('');
+          }}
+          className={`flex-1 py-2.5 px-3 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 ${
+            activeTab === 'recentUnits'
+              ? 'bg-white dark:bg-slate-700 text-gray-900 dark:text-white shadow-sm'
+              : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+          }`}
+        >
+          <span>⚡ Unit Baru / Siap Foto</span>
+          {totalPendingUnits > 0 && (
+            <span className="bg-amber-500 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full leading-none">
+              {totalPendingUnits}
             </span>
           )}
-          {unit.unitData?.nomorUnit && (
-            <span className="text-[10px] text-gray-400">
-              <span className="font-bold">Kode:</span> {unit.unitData.nomorUnit}
-            </span>
+        </button>
+        <button
+          onClick={() => {
+            setActiveTab('byClient');
+            setSearchQuery('');
+          }}
+          className={`flex-1 py-2.5 px-3 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 ${
+            activeTab === 'byClient'
+              ? 'bg-white dark:bg-slate-700 text-gray-900 dark:text-white shadow-sm'
+              : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+          }`}
+        >
+          <span>🏢 Per Perusahaan</span>
+          <span className="text-[10px] text-gray-400 font-bold">
+            ({clients.length})
+          </span>
+        </button>
+      </div>
+
+      {/* Search Input */}
+      <div className="relative">
+        <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400">🔍</span>
+        <input
+          ref={searchInputRef}
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder={
+            activeTab === 'recentUnits'
+              ? 'Cari nama unit, nomor seri, jenis objek, atau klien...'
+              : 'Cari nama perusahaan klien baru...'
+          }
+          className="w-full pl-9 pr-4 py-2.5 bg-white dark:bg-slate-800 border border-emerald-200 dark:border-slate-700 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 rounded-xl text-sm outline-none transition-all placeholder:text-gray-400 text-gray-900 dark:text-white"
+        />
+        {searchQuery && (
+          <button
+            onClick={() => setSearchQuery('')}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+          >
+            ✕
+          </button>
+        )}
+      </div>
+
+      {/* ============================================================== */}
+      {/* TAB 1: UNIT BARU / SIAP FOTO (DIRECT UNIT LIST)                */}
+      {/* ============================================================== */}
+      {activeTab === 'recentUnits' && (
+        <div className="space-y-3">
+          {/* Filter Sub-Chips: Semua vs Belum Difoto */}
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+            <button
+              onClick={() => setUnitFilter('all')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+                unitFilter === 'all'
+                  ? 'bg-gray-900 dark:bg-emerald-600 text-white'
+                  : 'bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-slate-700'
+              }`}
+            >
+              Semua Unit ({recentUnits.length})
+            </button>
+            <button
+              onClick={() => setUnitFilter('pendingPhotos')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5 ${
+                unitFilter === 'pendingPhotos'
+                  ? 'bg-amber-500 text-white'
+                  : 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 hover:bg-amber-100 border border-amber-200 dark:border-amber-800'
+              }`}
+            >
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+              Belum Ada Foto ({totalPendingUnits})
+            </button>
+          </div>
+
+          {/* List Units */}
+          {loading ? (
+            <div className="flex items-center justify-center py-12 gap-2 text-gray-400">
+              <Spinner /> <span className="text-sm">Memuat unit terbaru...</span>
+            </div>
+          ) : filteredUnits.length === 0 ? (
+            <div className="flex flex-col items-center py-12 text-center bg-white dark:bg-slate-800 rounded-2xl border border-gray-100 dark:border-slate-700 p-6">
+              <div className="text-4xl mb-2 opacity-50">✨</div>
+              <p className="text-sm font-bold text-gray-700 dark:text-gray-200">
+                {unitFilter === 'pendingPhotos'
+                  ? 'Semua unit sudah memiliki foto / data!'
+                  : searchQuery
+                  ? 'Tidak ada unit yang cocok'
+                  : 'Belum ada unit yang diinput'}
+              </p>
+              <p className="text-xs text-gray-400 mt-1 max-w-xs">
+                {searchQuery
+                  ? 'Coba gunakan kata kunci pencarian yang lain'
+                  : 'Admin dapat menambahkan klien & unit baru di Admin Panel.'}
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2.5">
+              {filteredUnits.map((u) => {
+                const meta = OBJECT_TYPE_MAP[u.objectType];
+                const relativeTime = formatRelativeTime(u.updatedAt || u.createdAt);
+
+                return (
+                  <button
+                    key={u.id}
+                    onClick={() => handleSelectRecentUnit(u)}
+                    className="w-full bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 hover:border-emerald-500 dark:hover:border-emerald-500 hover:shadow-md rounded-2xl p-4 text-left transition-all active:scale-[0.99] group relative"
+                  >
+                    <div className="flex items-start gap-3">
+                      {/* Icon Objek K3 */}
+                      <div className="w-11 h-11 rounded-xl bg-slate-50 dark:bg-slate-700/60 group-hover:bg-emerald-50 dark:group-hover:bg-emerald-950/40 flex items-center justify-center text-xl flex-shrink-0 transition-colors border border-gray-100 dark:border-slate-700 group-hover:border-emerald-200">
+                        {meta?.icon || '📦'}
+                      </div>
+
+                      {/* Info Unit */}
+                      <div className="flex-1 min-w-0">
+                        {/* Header Badges */}
+                        <div className="flex items-center gap-2 flex-wrap mb-1">
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 truncate max-w-[150px]">
+                            🏢 {u.clientName}
+                          </span>
+                          {!u.hasPhotos ? (
+                            <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-800 flex items-center gap-1 shadow-sm">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                              Belum Ada Foto
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-gray-300">
+                              📷 {u.photoCount} Foto
+                            </span>
+                          )}
+                          {relativeTime && (
+                            <span className="text-[10px] text-gray-400 ml-auto">
+                              {relativeTime}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Nama Unit */}
+                        <h4 className="text-sm font-black text-gray-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors truncate">
+                          {u.label}
+                        </h4>
+
+                        {/* Detail Spesifik */}
+                        <div className="flex items-center gap-3 mt-1.5 text-[11px] text-gray-400 flex-wrap">
+                          <span className="text-gray-500 dark:text-gray-400 font-medium">
+                            Jenis: <strong className="text-gray-700 dark:text-gray-300">{u.objectType}</strong>
+                          </span>
+                          {u.unitData?.nomorSeri && (
+                            <span>
+                              S/N: <strong className="text-gray-700 dark:text-gray-300">{u.unitData.nomorSeri}</strong>
+                            </span>
+                          )}
+                          {u.unitData?.lokasiUnit && (
+                            <span className="text-emerald-600 dark:text-emerald-400 truncate max-w-[130px]">
+                              📍 {u.unitData.lokasiUnit}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Tombol Kamera Cepat */}
+                      <div className="flex-shrink-0 self-center pl-1">
+                        <div className="w-10 h-10 rounded-full bg-emerald-500 group-hover:bg-emerald-600 text-white flex items-center justify-center shadow-md transition-all group-hover:scale-105">
+                          <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                            <circle cx="12" cy="13" r="4" />
+                          </svg>
+                        </div>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
           )}
         </div>
       )}
-    </button>
+
+      {/* ============================================================== */}
+      {/* TAB 2: PER PERUSAHAAN (KLIEN BARU ADMIN FIRST)                */}
+      {/* ============================================================== */}
+      {activeTab === 'byClient' && (
+        <div className="space-y-2.5">
+          {loading ? (
+            <div className="flex items-center justify-center py-12 gap-2 text-gray-400">
+              <Spinner /> <span className="text-sm">Memuat daftar perusahaan...</span>
+            </div>
+          ) : filteredClients.length === 0 ? (
+            <div className="flex flex-col items-center py-12 text-center bg-white dark:bg-slate-800 rounded-2xl border border-gray-100 dark:border-slate-700 p-6">
+              <div className="text-4xl mb-2 opacity-50">🏢</div>
+              <p className="text-sm font-bold text-gray-700 dark:text-gray-200">
+                {searchQuery ? 'Perusahaan tidak ditemukan' : 'Belum ada perusahaan'}
+              </p>
+              <p className="text-xs text-gray-400 mt-1 max-w-xs">
+                Tambahkan perusahaan dan unit baru melalui Admin Panel.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2.5">
+              {filteredClients.map((c) => {
+                const stats = clientStatsMap.get(c.id) || { total: 0, pendingPhotos: 0 };
+                const relativeTime = formatRelativeTime(c.updatedAt || c.createdAt);
+                const isNew = Date.now() - (c.createdAt || 0) < 3 * 86400 * 1000; // diinput 3 hari terakhir
+
+                return (
+                  <button
+                    key={c.id}
+                    onClick={() => handleSelectClient(c)}
+                    className="w-full bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 hover:border-emerald-500 dark:hover:border-emerald-500 hover:shadow-md rounded-2xl p-4 text-left transition-all active:scale-[0.99] group"
+                  >
+                    <div className="flex items-center gap-3.5">
+                      {/* Icon Perusahaan */}
+                      <div className="w-11 h-11 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 group-hover:bg-emerald-100 dark:group-hover:bg-emerald-900/50 flex items-center justify-center text-xl flex-shrink-0 transition-colors">
+                        🏢
+                      </div>
+
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <h4 className="text-sm font-black text-gray-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors truncate">
+                            {c.name}
+                          </h4>
+                          {isNew && (
+                            <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-emerald-500 text-white leading-none">
+                              Baru
+                            </span>
+                          )}
+                        </div>
+
+                        {c.address && (
+                          <p className="text-[11px] text-gray-400 truncate mb-1">
+                            📍 {c.address}
+                          </p>
+                        )}
+
+                        <div className="flex items-center gap-2 mt-1 flex-wrap">
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-gray-300">
+                            {stats.total} Unit Terdaftar
+                          </span>
+                          {stats.pendingPhotos > 0 && (
+                            <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                              {stats.pendingPhotos} Belum Difoto
+                            </span>
+                          )}
+                          {relativeTime && (
+                            <span className="text-[10px] text-gray-400 ml-auto">
+                              {relativeTime}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <span className="text-gray-300 group-hover:text-emerald-500 transition-all text-xl flex-shrink-0">
+                        ›
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Manual Inspection Option Footer */}
+      <div className="pt-3 border-t border-gray-100 dark:border-slate-800 text-center">
+        <button
+          onClick={() => setShowManual(true)}
+          className="text-xs font-bold text-gray-500 dark:text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors py-1 inline-flex items-center gap-1"
+        >
+          <span>Inspeksi tanpa template (isi manual)</span>
+          <span>→</span>
+        </button>
+      </div>
+    </div>
   );
 }

@@ -61,6 +61,14 @@ export interface UnitTemplate {
   deletedAt?: string;
 }
 
+export interface UnitWithMeta extends UnitTemplate {
+  clientName: string;
+  client?: ClientTemplate;
+  hasPhotos: boolean;
+  photoCount: number;
+  sessionCount: number;
+}
+
 export interface UserRole {
   id: string;
   role: 'admin' | 'ahli';
@@ -197,16 +205,20 @@ export const SessionRepository = {
 };
 
 export const ClientRepository = {
-  getAll: async (): Promise<ClientTemplate[]> => {
+  getAll: async (sortBy: 'alpha' | 'recent' = 'alpha'): Promise<ClientTemplate[]> => {
     // FIX: Ambil semua dulu, baru filter manual. Data lama yang gak punya field 'deleted' bakal aman dan muncul!
     const all = await db.client_templates.toArray();
-    return all.filter(c => c.deleted !== true).sort((a, b) => a.name.localeCompare(b.name));
+    const valid = all.filter(c => c.deleted !== true);
+    if (sortBy === 'recent') {
+      return valid.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+    }
+    return valid.sort((a, b) => a.name.localeCompare(b.name));
   },
-  search: async (query: string): Promise<ClientTemplate[]> => {
+  search: async (query: string, sortBy: 'alpha' | 'recent' = 'alpha'): Promise<ClientTemplate[]> => {
     const q = query.toLowerCase().trim();
-    const all = await ClientRepository.getAll();
+    const all = await ClientRepository.getAll(sortBy);
     if (!q) return all;
-    return all.filter((c) => c.name.toLowerCase().includes(q));
+    return all.filter((c) => c.name.toLowerCase().includes(q) || (c.address && c.address.toLowerCase().includes(q)));
   },
   getById: async (id: string): Promise<ClientTemplate | undefined> => {
     const client = await db.client_templates.get(id);
@@ -245,6 +257,73 @@ export const UnitRepository = {
     const q = query.toLowerCase().trim();
     if (!q) return units;
     return units.filter((u) => u.label.toLowerCase().includes(q) || u.objectType.toLowerCase().includes(q) || (u.unitData?.nomorSeri || '').toLowerCase().includes(q));
+  },
+  getAllRecentWithMeta: async (): Promise<UnitWithMeta[]> => {
+    const [allUnits, allClients, allSessions, allPhotos] = await Promise.all([
+      db.unit_templates.toArray(),
+      db.client_templates.toArray(),
+      db.inspection_sessions.toArray(),
+      db.inspection_photos.toArray(),
+    ]);
+
+    const validClients = new Map(allClients.filter(c => c.deleted !== true).map(c => [c.id, c]));
+
+    // Map photo count by sessionId
+    const photoCountBySession = new Map<string, number>();
+    for (const p of allPhotos) {
+      photoCountBySession.set(p.sessionId, (photoCountBySession.get(p.sessionId) || 0) + 1);
+    }
+
+    // Map sessions to templateUnitId
+    const unitSessionMap = new Map<string, { sessionCount: number; totalPhotos: number }>();
+    for (const s of allSessions) {
+      const photos = Math.max(photoCountBySession.get(s.id) || 0, s.drivePhotoIds?.length || 0, s.photosUploaded || 0);
+      if (s.templateUnitId) {
+        const prev = unitSessionMap.get(s.templateUnitId) || { sessionCount: 0, totalPhotos: 0 };
+        unitSessionMap.set(s.templateUnitId, {
+          sessionCount: prev.sessionCount + 1,
+          totalPhotos: prev.totalPhotos + photos,
+        });
+      }
+    }
+
+    const validUnits: UnitWithMeta[] = allUnits
+      .filter(u => u.deleted !== true && validClients.has(u.clientId))
+      .map(u => {
+        const client = validClients.get(u.clientId);
+        let stats = unitSessionMap.get(u.id);
+
+        if (!stats) {
+          const matchingSessions = allSessions.filter(s =>
+            !s.templateUnitId &&
+            s.clientName?.toLowerCase().trim() === client?.name?.toLowerCase().trim() &&
+            (s.unitData?.namaUnit?.toLowerCase().trim() === u.label?.toLowerCase().trim() ||
+             (u.unitData?.nomorSeri && s.unitData?.nomorSeri === u.unitData?.nomorSeri))
+          );
+          if (matchingSessions.length > 0) {
+            let totalP = 0;
+            for (const ms of matchingSessions) {
+              totalP += Math.max(photoCountBySession.get(ms.id) || 0, ms.drivePhotoIds?.length || 0, ms.photosUploaded || 0);
+            }
+            stats = { sessionCount: matchingSessions.length, totalPhotos: totalP };
+          }
+        }
+
+        const totalPhotos = stats?.totalPhotos || 0;
+        const sessionCount = stats?.sessionCount || 0;
+
+        return {
+          ...u,
+          client,
+          clientName: client?.name || 'Klien Tanpa Nama',
+          hasPhotos: totalPhotos > 0,
+          photoCount: totalPhotos,
+          sessionCount,
+        };
+      })
+      .sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+
+    return validUnits;
   },
   getById: async (id: string): Promise<UnitTemplate | undefined> => {
     const unit = await db.unit_templates.get(id);
