@@ -13,6 +13,7 @@ import {
   type UnitTemplate,
   type UnitWithMeta,
 } from '../db/db';
+import { pullTemplatesFromDrive } from '../services/syncService';
 
 // ==========================================
 // TYPES
@@ -118,15 +119,29 @@ export function ClientPicker({ onPick, onManual, onCancel }: ClientPickerProps) 
   const loadInitialData = useCallback(async () => {
     setLoading(true);
     try {
+      // 1. Tampilkan data lokal dulu agar instan dibuka
       const [unitsData, clientsData] = await Promise.all([
         UnitRepository.getAllRecentWithMeta(),
         ClientRepository.getAll('recent'),
       ]);
       setRecentUnits(unitsData);
       setClients(clientsData);
+      setLoading(false);
+
+      // 2. Jika online, auto-pull Drive Mirroring agar data yang dihapus device lain langsung lenyap
+      if (navigator.onLine) {
+        const syncResult = await pullTemplatesFromDrive().catch(() => null);
+        if (syncResult && (syncResult.purgedClients > 0 || syncResult.purgedUnits > 0 || syncResult.pulledClients > 0)) {
+          const [updatedUnits, updatedClients] = await Promise.all([
+            UnitRepository.getAllRecentWithMeta(),
+            ClientRepository.getAll('recent'),
+          ]);
+          setRecentUnits(updatedUnits);
+          setClients(updatedClients);
+        }
+      }
     } catch (err) {
       console.error('[ClientPicker] Error loading data:', err);
-    } finally {
       setLoading(false);
     }
   }, []);

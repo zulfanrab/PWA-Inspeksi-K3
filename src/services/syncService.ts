@@ -20,10 +20,14 @@ export async function pushTemplatesToDrive(): Promise<void> {
     const clientTemplates = await db.client_templates.toArray();
     const unitTemplates = await db.unit_templates.toArray();
 
+    // HANYA kirim template yang aktif (bukan yang bertanda deleted: true)
+    const activeClients = clientTemplates.filter(c => c.deleted !== true);
+    const activeUnits = unitTemplates.filter(u => u.deleted !== true);
+
     const payload = {
       adminEmail: import.meta.env.VITE_OWNER_EMAIL || '',
-      client_templates: clientTemplates,
-      unit_templates: unitTemplates,
+      client_templates: activeClients,
+      unit_templates: activeUnits,
     };
 
     const res = await fetch(apiUrl('/api/sync-templates'), {
@@ -43,24 +47,57 @@ export async function pushTemplatesToDrive(): Promise<void> {
 }
 
 // ==========================================
-// TEMPLATES — PULL 
+// TEMPLATES — PULL (TRUE DRIVE MIRRORING)
 // ==========================================
-export async function pullTemplatesFromDrive(): Promise<void> {
+export async function pullTemplatesFromDrive(): Promise<{ pulledClients: number; pulledUnits: number; purgedClients: number; purgedUnits: number }> {
   try {
-    const res = await fetch(apiUrl('/api/sync-templates'), { method: 'GET' });
-    if (!res.ok) return;
+    const res = await fetch(apiUrl(`/api/sync-templates?t=${Date.now()}`), {
+      method: 'GET',
+      headers: { 'Cache-Control': 'no-cache' },
+    });
+    if (!res.ok) return { pulledClients: 0, pulledUnits: 0, purgedClients: 0, purgedUnits: 0 };
 
     const payload = await res.json();
-    const clientTemplates = payload.client_templates || [];
-    const unitTemplates = payload.unit_templates || [];
+    const clientTemplates: any[] = payload.client_templates || [];
+    const unitTemplates: any[] = payload.unit_templates || [];
 
+    // 1. Kumpulkan ID aktif dari Drive (yang tidak ditandai deleted)
+    const driveActiveClientIds = new Set(
+      clientTemplates.filter((c: any) => c.deleted !== true).map((c: any) => c.id)
+    );
+    const driveActiveUnitIds = new Set(
+      unitTemplates.filter((u: any) => u.deleted !== true).map((u: any) => u.id)
+    );
+
+    let purgedClients = 0;
+    let purgedUnits = 0;
+
+    // 2. TRUE MIRRORING: Bersihkan data lokal yang TIDAK ADA di Drive atau sudah dihapus
+    const localClients = await db.client_templates.toArray();
+    for (const local of localClients) {
+      if (!driveActiveClientIds.has(local.id)) {
+        await db.client_templates.delete(local.id);
+        purgedClients++;
+      }
+    }
+
+    const localUnits = await db.unit_templates.toArray();
+    for (const local of localUnits) {
+      if (!driveActiveUnitIds.has(local.id)) {
+        await db.unit_templates.delete(local.id);
+        purgedUnits++;
+      }
+    }
+
+    // 3. Simpan / Perbarui data aktif dari Drive ke IndexedDB lokal
     for (const template of clientTemplates) {
-      if (template.deleted === true) {
-        await db.client_templates.where('id').equals(template.id).delete();
-      } else {
+      if (template.deleted !== true) {
         await db.client_templates.put({
           id: template.id,
           name: template.name,
+          address: template.address,
+          contact: template.contact,
+          notes: template.notes,
           updatedAt: template.updatedAt,
           createdBy: template.createdBy || 'admin',
           createdAt: template.createdAt || Date.now(),
@@ -70,15 +107,14 @@ export async function pullTemplatesFromDrive(): Promise<void> {
     }
 
     for (const template of unitTemplates) {
-      if (template.deleted === true) {
-        await db.unit_templates.where('id').equals(template.id).delete();
-      } else {
+      if (template.deleted !== true) {
         await db.unit_templates.put({
           id: template.id,
           clientId: template.clientId,
           objectType: template.objectType,
           unitData: template.unitData,
           label: template.label,
+          notes: template.notes,
           updatedAt: template.updatedAt,
           createdBy: template.createdBy || 'admin',
           createdAt: template.createdAt || Date.now(),
@@ -86,8 +122,16 @@ export async function pullTemplatesFromDrive(): Promise<void> {
         });
       }
     }
+
+    return {
+      pulledClients: driveActiveClientIds.size,
+      pulledUnits: driveActiveUnitIds.size,
+      purgedClients,
+      purgedUnits,
+    };
   } catch (err) {
     console.error('[syncService] pullTemplatesFromDrive error:', err);
+    return { pulledClients: 0, pulledUnits: 0, purgedClients: 0, purgedUnits: 0 };
   }
 }
 

@@ -11,7 +11,7 @@ import {
   type UserRole,
 } from '../db/db';
 
-import { pushTemplatesToDrive } from '../services/syncService';
+import { pushTemplatesToDrive, pullTemplatesFromDrive } from '../services/syncService';
 import { getValidToken } from '../services/driveService';
 import { UNIT_NAME_SUGGESTIONS } from '../config/suggestions';
 import { getApiBaseUrl } from '../config';
@@ -418,6 +418,7 @@ function ClientManager({ currentUserEmail }: { currentUserEmail: string }) {
   const [unitObjectType, setUnitObjectType] = useState('');
   const [unitData, setUnitData] = useState<Record<string, string>>({});
   const [savingUnit, setSavingUnit] = useState(false);
+  const [refreshingDrive, setRefreshingDrive] = useState(false);
 
   const loadClients = useCallback(async () => {
     setLoading(true);
@@ -437,6 +438,36 @@ function ClientManager({ currentUserEmail }: { currentUserEmail: string }) {
 
   useEffect(() => { loadClients(); }, [loadClients]);
   useEffect(() => { loadUnits(); }, [loadUnits]);
+
+  // Auto-pull dari Drive saat buka Admin Panel agar data yang dihapus di device lain langsung hilang
+  useEffect(() => {
+    if (navigator.onLine) {
+      pullTemplatesFromDrive()
+        .then((res) => {
+          if (res.purgedClients > 0 || res.purgedUnits > 0 || res.pulledClients > 0) {
+            loadClients();
+          }
+        })
+        .catch(console.warn);
+    }
+  }, [loadClients]);
+
+  const handleRefreshFromDrive = async () => {
+    setRefreshingDrive(true);
+    try {
+      const res = await pullTemplatesFromDrive();
+      await loadClients();
+      if (res.purgedClients > 0 || res.purgedUnits > 0) {
+        alert(`✅ Sinkronisasi bersih! ${res.purgedClients} klien dan ${res.purgedUnits} unit yang telah dihapus di server berhasil dibersihkan dari perangkat ini.`);
+      } else {
+        alert(`✅ Sinkronisasi selesai: ${res.pulledClients} klien aktif terverifikasi dari server Google Drive.`);
+      }
+    } catch (e: any) {
+      alert('Gagal sync dari Drive: ' + e.message);
+    } finally {
+      setRefreshingDrive(false);
+    }
+  };
 
   // ---- Client CRUD ----
 
@@ -477,7 +508,7 @@ function ClientManager({ currentUserEmail }: { currentUserEmail: string }) {
       }
       await loadClients();
       setSubView('list');
-      pushTemplatesToDrive().catch(console.warn);
+      await pushTemplatesToDrive().catch(console.warn);
     } catch (err: any) {
       alert('Gagal menyimpan: ' + err.message);
     } finally {
@@ -491,9 +522,17 @@ function ClientManager({ currentUserEmail }: { currentUserEmail: string }) {
       ? `Hapus klien "${c.name}"? Ini juga akan menghapus ${units.length} unit template di dalamnya.`
       : `Hapus klien "${c.name}"?`;
     if (!confirm(msg)) return;
-    await ClientRepository.delete(c.id);
-    await loadClients();
-      pushTemplatesToDrive().catch(console.warn);
+    setSavingClient(true);
+    try {
+      await ClientRepository.delete(c.id);
+      await loadClients();
+      await pushTemplatesToDrive();
+    } catch (err: any) {
+      console.warn('[AdminPanel] Gagal sync hapus ke Drive:', err);
+      alert('Klien dihapus di perangkat ini. Namun ada kendala ke server: ' + (err.message || 'Gagal'));
+    } finally {
+      setSavingClient(false);
+    }
   };
 
   // ---- Unit management ----
@@ -554,9 +593,17 @@ function ClientManager({ currentUserEmail }: { currentUserEmail: string }) {
 
   const deleteUnit = async (u: UnitTemplate) => {
     if (!confirm(`Hapus unit "${u.label}"?`)) return;
-    await UnitRepository.delete(u.id);
-    await loadUnits();
-    pushTemplatesToDrive().catch(console.warn);
+    setSavingUnit(true);
+    try {
+      await UnitRepository.delete(u.id);
+      await loadUnits();
+      await pushTemplatesToDrive();
+    } catch (err: any) {
+      console.warn('[AdminPanel] Gagal sync hapus unit ke Drive:', err);
+      alert('Unit dihapus di perangkat ini. Namun ada kendala ke server: ' + (err.message || 'Gagal'));
+    } finally {
+      setSavingUnit(false);
+    }
   };
 
   const specificFields = SPECIFIC_FIELDS[unitObjectType] || [];
@@ -569,7 +616,7 @@ function ClientManager({ currentUserEmail }: { currentUserEmail: string }) {
   if (subView === 'list') {
     return (
       <div className="space-y-4">
-        {/* Search + Add */}
+        {/* Search + Refresh + Add */}
         <div className="flex gap-2">
           <div className="relative flex-1">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">🔍</span>
@@ -581,6 +628,15 @@ function ClientManager({ currentUserEmail }: { currentUserEmail: string }) {
               className="w-full pl-9 pr-4 py-2.5 bg-white border border-gray-200 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20 rounded-xl text-sm outline-none transition-all"
             />
           </div>
+          <button
+            onClick={handleRefreshFromDrive}
+            disabled={refreshingDrive}
+            title="Tarik ulang data bersih dari Google Drive & bersihkan data terhapus"
+            className="px-3 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-bold rounded-xl transition-all shadow-sm flex items-center gap-1.5 whitespace-nowrap"
+          >
+            <span>{refreshingDrive ? '⏳' : '🔄'}</span>
+            <span className="hidden sm:inline">Sync Drive</span>
+          </button>
           <button
             onClick={openAddClient}
             className="px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold rounded-xl transition-all shadow-sm whitespace-nowrap"
