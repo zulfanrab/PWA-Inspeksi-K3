@@ -95,9 +95,31 @@ function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number)
   return lines;
 }
 
-// ─── WATERMARK RENDERER ───────────────────────────────────────────────────────
-// Posisi: pojok kiri bawah. Style: profesional survey lapangan.
-// Semua ukuran relatif terhadap H canvas → proporsional portrait & landscape.
+// ─── WATERMARK RENDERER (Option 1: Compact Corner Badge) ──────────────────────
+// Posisi: pojok kiri bawah.
+// Sangat ringkas, tidak menutupi objek inspeksi (~5-8% luas foto vs sebelumnya ~30%).
+
+let cachedLogoImg: HTMLImageElement | null = null;
+let logoLoadAttempted = false;
+
+function loadWatermarkLogo(): Promise<HTMLImageElement | null> {
+  if (cachedLogoImg) return Promise.resolve(cachedLogoImg);
+  if (logoLoadAttempted && !cachedLogoImg) return Promise.resolve(null);
+
+  logoLoadAttempted = true;
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      cachedLogoImg = img;
+      resolve(img);
+    };
+    img.onerror = () => resolve(null);
+    img.src = '/icons/icon-512.png';
+    setTimeout(() => resolve(null), 500);
+  });
+}
+
 async function drawWatermark(
   ctx: CanvasRenderingContext2D,
   W: number,
@@ -105,168 +127,201 @@ async function drawWatermark(
   gps: GpsData | null,
   loc: LocationDetail
 ) {
-  // ── Token ukuran — satu sumber kebenaran
-  const unit = Math.max(1, H / 90);  // baseline: ~1.1% tinggi foto
-  const F_LABEL = unit * 1.0;           // label abu kecil (TANGGAL / JAM / dll)
-  const F_VALUE = unit * 1.4;           // nilai utama tiap baris
-  const F_TITLE = unit * 1.4;           // judul app — SAMA dengan F_VALUE biar tidak norak
-  const F_SUB = unit * 0.95;          // sub-label di bawah judul
-  const PAD_X = unit * 2.2;
-  const PAD_Y = unit * 1.8;
-  const LOGO_SZ = F_TITLE * 2.2;
-  const MARGIN = unit * 2.2;
-  const STRIPE_W = unit * 0.65;
-  const ICON_COL = F_VALUE * 1.55;       // lebar kolom emoji (tetap, tidak campur dengan teks)
+  const isPortrait = H > W;
+  const refDim = isPortrait ? W : H;
+  const unit = Math.max(1, refDim / 76);
+
+  // Typography & Layout tokens
+  const F_HEADER = Math.round(unit * 0.95);
+  const F_TEXT = Math.round(unit * 0.82);
+  const LOGO_SZ = Math.round(unit * 1.35);
+  const PAD_X = Math.round(unit * 1.3);
+  const PAD_Y = Math.round(unit * 1.05);
+  const MARGIN = Math.round(unit * 1.25);
+  const STRIPE_W = Math.max(2, Math.round(unit * 0.35));
+  const RADIUS = Math.round(unit * 0.85);
+  const ICON_COL_W = Math.round(unit * 1.4);
+  const LINE_H = Math.round(F_TEXT * 1.45);
+  const ROW_GAP = Math.round(unit * 0.35);
+  const GAP_HEADER = Math.round(unit * 0.6);
 
   const FONT = (size: number, bold = false) => {
-    ctx.font = `${bold ? '600 ' : ''}${size}px 'SF Pro Text','Segoe UI',system-ui,sans-serif`;
+    ctx.font = `${bold ? '600 ' : '400 '}${size}px 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
   };
 
-  // ── Data
+  // ── 1. Siapkan Data Ringkas & Padat
   const now = new Date();
   const dateStr = now.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
   const timeStr = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  const coordStr = gps ? `${gps.lat.toFixed(6)}, ${gps.lng.toFixed(6)}` : null;
-  const accStr = gps ? `±${Math.round(gps.acc)} m` : null;
 
-  // ── Struktur baris: setiap baris punya label kecil di atas + value di bawah (dengan auto wrap)
-  type Row = { icon: string; label: string; value: string; valueColor: string };
-  const rawRows: Row[] = [];
+  interface CompactRow {
+    icon: string;
+    text: string;
+    color: string;
+  }
 
-  rawRows.push({ icon: '📅', label: 'TANGGAL', value: dateStr, valueColor: '#E2E8F0' });
-  rawRows.push({ icon: '🕐', label: 'WAKTU', value: timeStr, valueColor: '#E2E8F0' });
+  const rawRows: CompactRow[] = [
+    {
+      icon: '📅',
+      text: `${dateStr} • ${timeStr}`,
+      color: '#F8FAFC',
+    },
+  ];
 
-  if (gps && coordStr) {
-    rawRows.push({ icon: '📍', label: 'KOORDINAT', value: coordStr, valueColor: '#34D399' });
-    rawRows.push({ icon: '  ', label: 'AKURASI', value: accStr!, valueColor: '#94A3B8' });
+  if (gps) {
+    const acc = Math.round(gps.acc);
+    rawRows.push({
+      icon: '📍',
+      text: `${gps.lat.toFixed(6)}, ${gps.lng.toFixed(6)} (±${acc}m)`,
+      color: '#34D399',
+    });
   } else {
-    rawRows.push({ icon: '📍', label: 'GPS', value: 'Tidak tersedia', valueColor: '#F59E0B' });
+    rawRows.push({
+      icon: '📍',
+      text: 'GPS tidak tersedia',
+      color: '#F59E0B',
+    });
   }
 
-  if (loc.poiName) rawRows.push({ icon: '🏢', label: 'LOKASI', value: loc.poiName, valueColor: '#93C5FD' });
-  if (loc.areaName) rawRows.push({ icon: '🗺', label: 'WILAYAH', value: loc.areaName, valueColor: '#6EE7B7' });
+  // Lokasi POI & Wilayah (jika ada)
+  if (loc.poiName || loc.areaName) {
+    const parts = [loc.poiName, loc.areaName].filter(Boolean);
+    rawRows.push({
+      icon: '🏢',
+      text: parts.join(' · '),
+      color: '#93C5FD',
+    });
+  }
 
-  // ── Hitung lebar box (Dinaikkan dari 60% ke 75% W agar teks panjang punya lebih banyak ruang)
-  const boxW = Math.round(W * 0.75);
-  const maxTextW = boxW - STRIPE_W - PAD_X * 2 - ICON_COL;
+  // ── 2. Hitung Ukuran Box secara Dinamis & Adaptif
+  const maxBoxW = Math.round(isPortrait ? W * 0.48 : W * 0.34);
+  const minBoxW = Math.round(isPortrait ? W * 0.32 : W * 0.22);
+  const maxTextW = maxBoxW - STRIPE_W - (PAD_X * 2) - ICON_COL_W;
 
-  // Proses wrapping untuk setiap baris
-  const rows: (Row & { lines: string[] })[] = [];
+  // Wrap text baris jika melebihi batas (khususnya lokasi panjang)
+  interface ProcessedRow {
+    icon: string;
+    lines: string[];
+    color: string;
+  }
+  const rows: ProcessedRow[] = [];
+
   for (const r of rawRows) {
-    FONT(F_VALUE, true);
-    const lines = wrapText(ctx, r.value, maxTextW);
-    rows.push({ ...r, lines });
+    FONT(F_TEXT, false);
+    const lines = wrapText(ctx, r.text, maxTextW);
+    // Batasi baris lokasi maksimal 2 baris agar badge tetap compact
+    rows.push({
+      icon: r.icon,
+      lines: lines.slice(0, 2),
+      color: r.color,
+    });
   }
 
-  // Hitung total tinggi yang dibutuhkan secara dinamis
-  const HEADER_H = LOGO_SZ + PAD_Y * 0.6;
-  const DIVIDER_H = unit * 1.6;
+  // Ukur lebar maksimum yang dibutuhkan
+  FONT(F_HEADER, true);
+  const aksaraW = ctx.measureText('AKSARA').width;
+  const inspectW = ctx.measureText(' INSPECT').width;
+  const headerTextW = LOGO_SZ + Math.round(unit * 0.6) + aksaraW + inspectW;
+
+  let maxContentW = headerTextW;
+  FONT(F_TEXT, false);
+  for (const r of rows) {
+    for (const line of r.lines) {
+      const lineW = ICON_COL_W + ctx.measureText(line).width;
+      if (lineW > maxContentW) maxContentW = lineW;
+    }
+  }
+
+  const calculatedW = maxContentW + STRIPE_W + (PAD_X * 2) + Math.round(unit * 0.5);
+  const boxW = Math.max(minBoxW, Math.min(maxBoxW, Math.round(calculatedW)));
 
   let rowsHeight = 0;
-  for (const r of rows) {
-    const lineCount = r.lines.length;
-    rowsHeight += F_LABEL + (lineCount * F_VALUE * 1.25) + unit * 1.2;
+  for (let i = 0; i < rows.length; i++) {
+    rowsHeight += rows[i].lines.length * LINE_H;
+    if (i < rows.length - 1) rowsHeight += ROW_GAP;
   }
 
-  const boxH = PAD_Y * 2 + HEADER_H + DIVIDER_H + rowsHeight;
+  const boxH = Math.round((PAD_Y * 2) + LOGO_SZ + GAP_HEADER + rowsHeight);
 
-  // ── Posisi kiri bawah
+  // Posisi: pojok kiri bawah dengan margin
   const bx = MARGIN;
   const by = H - MARGIN - boxH;
 
-  // ── Background
+  // ── 3. Render Background Pill
   ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,0.3)';
-  ctx.shadowBlur = unit * 3;
-  ctx.shadowOffsetY = unit * 1.0;
-  ctx.fillStyle = 'rgba(8, 14, 24, 0.38)';
-  rrect(ctx, bx, by, boxW, boxH, unit * 1.0);
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
+  ctx.shadowBlur = Math.round(unit * 1.2);
+  ctx.shadowOffsetY = Math.round(unit * 0.4);
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.72)'; // Sleek modern slate-900 glass
+  rrect(ctx, bx, by, boxW, boxH, RADIUS);
+  ctx.fill();
+
+  // Halus border glassmorphism
+  ctx.shadowColor = 'transparent';
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+  ctx.lineWidth = Math.max(1, Math.round(unit * 0.08));
+  rrect(ctx, bx, by, boxW, boxH, RADIUS);
+  ctx.stroke();
+
+  // Stripe hijau emerald di sisi kiri
+  ctx.fillStyle = '#10B981';
+  rrect(ctx, bx, by, STRIPE_W, boxH, { tl: RADIUS, bl: RADIUS, tr: 0, br: 0 });
   ctx.fill();
   ctx.restore();
 
-  // Stripe hijau kiri
-  ctx.fillStyle = '#10B981';
-  rrect(ctx, bx, by, STRIPE_W, boxH, { tl: unit, bl: unit, tr: 0, br: 0 });
-  ctx.fill();
-
-  // BORDER DIHAPUS (Sesuai request user: "kalo bisa hilangkan border juga boleh yang penting informasi timestampnya lengkap dan bagus")
-
-  // ── Konten
+  // ── 4. Render Konten
   const cx = bx + STRIPE_W + PAD_X;
   let cy = by + PAD_Y;
 
-  // — Header: logo + nama app (judul sama size dengan value, tidak oversized)
-  try {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    await new Promise<void>((ok, fail) => {
-      img.onload = () => ok();
-      img.onerror = fail;
-      img.src = '/icons/icon-512.png';
-      setTimeout(fail, 700);
-    });
-    ctx.drawImage(img, cx, cy + (LOGO_SZ - LOGO_SZ) / 2, LOGO_SZ, LOGO_SZ);
-  } catch {
-    // Fallback kotak hijau dengan huruf A
+  // Render Logo
+  const logoImg = await loadWatermarkLogo();
+  if (logoImg) {
+    ctx.drawImage(logoImg, cx, cy, LOGO_SZ, LOGO_SZ);
+  } else {
+    // Fallback badge huruf A
     ctx.fillStyle = '#10B981';
-    rrect(ctx, cx, cy, LOGO_SZ, LOGO_SZ, unit * 0.5);
+    rrect(ctx, cx, cy, LOGO_SZ, LOGO_SZ, Math.round(unit * 0.3));
     ctx.fill();
-    FONT(LOGO_SZ * 0.58, true);
-    ctx.fillStyle = '#fff';
-    ctx.fillText('A', cx + LOGO_SZ * 0.26, cy + LOGO_SZ * 0.73);
+    FONT(Math.round(LOGO_SZ * 0.62), true);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillText('A', cx + Math.round(LOGO_SZ * 0.24), cy + Math.round(LOGO_SZ * 0.74));
   }
 
-  const tx = cx + LOGO_SZ + unit * 1.5;
+  // Header Brand: AKSARA INSPECT
+  const tx = cx + LOGO_SZ + Math.round(unit * 0.6);
+  ctx.save();
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.75)';
+  ctx.shadowBlur = Math.round(unit * 0.2);
+  ctx.shadowOffsetY = 1;
 
-  // Nama app — bold, tapi ukuran = F_TITLE (sama dengan F_VALUE, tidak besar-besaran)
-  FONT(F_TITLE, true);
+  FONT(F_HEADER, true);
   ctx.fillStyle = '#10B981';
-  ctx.fillText('AKSARA', tx, cy + F_TITLE * 1.0);
-  const aksaraW = ctx.measureText('AKSARA').width;
+  ctx.fillText('AKSARA', tx, cy + Math.round(F_HEADER * 0.9));
   ctx.fillStyle = '#FFFFFF';
-  ctx.fillText(' INSPECT', tx + aksaraW, cy + F_TITLE * 1.0);
+  ctx.fillText(' INSPECT', tx + aksaraW, cy + Math.round(F_HEADER * 0.9));
 
-  // Sub-label kecil
-  FONT(F_SUB);
-  ctx.fillStyle = 'rgba(100,116,139,0.85)';
-  ctx.fillText('Survey Field Documentation', tx, cy + F_TITLE * 1.0 + F_SUB * 1.7);
+  cy += LOGO_SZ + GAP_HEADER;
 
-  cy += HEADER_H;
+  // Render Baris Data
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const rowY = cy;
 
-  // — Divider
-  ctx.strokeStyle = 'rgba(148,163,184,0.15)';
-  ctx.lineWidth = Math.max(0.4, unit * 0.07);
-  ctx.beginPath();
-  ctx.moveTo(cx, cy + DIVIDER_H * 0.5);
-  ctx.lineTo(bx + boxW - PAD_X * 0.5, cy + DIVIDER_H * 0.5);
-  ctx.stroke();
-  cy += DIVIDER_H;
+    // Emoji Icon
+    FONT(Math.round(F_TEXT * 1.05));
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+    ctx.fillText(row.icon, cx, rowY + Math.round(F_TEXT * 0.9));
 
-  // — Baris data: label kecil abu di atas, value bold di bawah (bisa multi-line)
-  for (const row of rows) {
-    const baseX = cx + ICON_COL;
-
-    // Emoji
-    FONT(F_VALUE);
-    ctx.fillStyle = 'rgba(148,163,184,0.85)';
-    ctx.fillText(row.icon, cx, cy + F_LABEL + F_VALUE * 0.85);
-
-    // Label kecil
-    FONT(F_LABEL);
-    ctx.fillStyle = 'rgba(100,116,139,0.8)';
-    ctx.fillText(row.label, baseX, cy + F_LABEL);
-
-    // Value
-    FONT(F_VALUE, true);
-    ctx.fillStyle = row.valueColor;
-
+    // Value Text
+    FONT(F_TEXT, false);
+    ctx.fillStyle = row.color;
     for (let li = 0; li < row.lines.length; li++) {
-      ctx.fillText(row.lines[li], baseX, cy + F_LABEL + F_VALUE * (1.1 + li * 1.25));
+      ctx.fillText(row.lines[li], cx + ICON_COL_W, rowY + Math.round(F_TEXT * 0.9) + (li * LINE_H));
     }
 
-    // Hitung tinggi yang telah dipakai baris ini
-    cy += F_LABEL + (row.lines.length * F_VALUE * 1.25) + unit * 1.2;
+    cy += (row.lines.length * LINE_H) + (i < rows.length - 1 ? ROW_GAP : 0);
   }
+  ctx.restore();
 }
 
 // ── Helper roundRect cross-browser
