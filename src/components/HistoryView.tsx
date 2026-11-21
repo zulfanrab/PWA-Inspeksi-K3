@@ -704,34 +704,84 @@ function LightboxViewer({
 
   return (
     <div
-      className="absolute inset-0 z-20 flex flex-col items-center justify-center outline-none"
-      style={{ background: 'rgba(0,0,0,0.96)' }}
-      onClick={onClose}
+      className="fixed inset-0 z-[100] flex flex-col justify-between outline-none select-none"
+      style={{ background: 'rgba(5, 5, 10, 0.98)' }}
       onWheel={handleWheel}
       onKeyDown={handleKeyDown}
       tabIndex={0}
     >
-      {/* Close button - top right */}
-      <button
-        onClick={onClose}
-        className="absolute top-4 right-4 z-30 w-10 h-10 rounded-full flex items-center justify-center transition-all"
-        style={{ background: 'rgba(255,255,255,0.1)', backdropFilter: 'blur(10px)', border: '1px solid rgba(255,255,255,0.15)' }}
+      {/* ─── Top Bar with Safe Area ─── */}
+      <div
+        className="w-full flex items-center justify-between px-4 py-2.5 flex-shrink-0 z-30"
+        style={{
+          paddingTop: 'calc(10px + env(safe-area-inset-top, 0px))',
+          background: 'rgba(15, 23, 42, 0.88)',
+          backdropFilter: 'blur(16px)',
+          borderBottom: '1px solid rgba(255,255,255,0.08)',
+        }}
+        onClick={(e) => e.stopPropagation()}
       >
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round">
-          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-        </svg>
-      </button>
+        {/* Tombol Tutup Kiri */}
+        <button
+          onClick={onClose}
+          className="h-9 px-3.5 rounded-xl flex items-center gap-1.5 text-white text-xs font-semibold transition-all hover:bg-white/15 active:scale-95"
+          style={{
+            background: 'rgba(255,255,255,0.1)',
+            backdropFilter: 'blur(8px)',
+            border: '1px solid rgba(255,255,255,0.15)',
+          }}
+          aria-label="Tutup foto"
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="15 18 9 12 15 6" />
+          </svg>
+          <span>Tutup</span>
+        </button>
 
-      {/* Counter - top center */}
-      <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 px-4 py-1.5 rounded-full text-white text-xs font-bold"
-        style={{ background: 'rgba(255,255,255,0.1)', backdropFilter: 'blur(10px)', border: '1px solid rgba(255,255,255,0.1)' }}>
-        {index + 1} / {total}
+        {/* Counter & Unit Title */}
+        <div className="flex flex-col items-center">
+          <div
+            className="px-3.5 py-1 rounded-full text-white text-xs font-bold"
+            style={{
+              background: 'rgba(255,255,255,0.12)',
+              backdropFilter: 'blur(10px)',
+              border: '1px solid rgba(255,255,255,0.12)',
+            }}
+          >
+            {index + 1} / {total}
+          </div>
+          {unitName && (
+            <span className="text-gray-400 text-[10px] mt-0.5 max-w-[180px] truncate font-medium">
+              {unitName}
+            </span>
+          )}
+        </div>
+
+        {/* Tombol Close Kanan */}
+        <button
+          onClick={onClose}
+          className="w-9 h-9 rounded-xl flex items-center justify-center text-white transition-all hover:bg-white/15 active:scale-95"
+          style={{
+            background: 'rgba(255,255,255,0.1)',
+            backdropFilter: 'blur(8px)',
+            border: '1px solid rgba(255,255,255,0.15)',
+          }}
+          aria-label="Tutup"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round">
+            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
       </div>
 
       {/* Photo area */}
       <div
         className="flex-1 flex items-center justify-center w-full relative overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          if (e.target === e.currentTarget && zoom === 1) {
+            onClose();
+          }
+        }}
         onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
         onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUpOrLeave} onMouseLeave={onMouseUpOrLeave}
         style={{ touchAction: 'none', cursor: dragging ? 'grabbing' : 'grab' }}
@@ -743,8 +793,11 @@ function LightboxViewer({
           style={{
             transform: `scale(${zoom}) translate(${offset.x / zoom}px, ${offset.y / zoom}px)`,
             transition: dragging ? 'none' : 'transform 0.2s ease-out',
-            maxWidth: '92vw', maxHeight: '72vh', objectFit: 'contain',
-            borderRadius: 8, boxShadow: '0 8px 40px rgba(0,0,0,0.6)',
+            maxWidth: '96vw',
+            maxHeight: 'calc(100vh - 180px)',
+            objectFit: 'contain',
+            borderRadius: 8,
+            boxShadow: '0 8px 40px rgba(0,0,0,0.6)',
           }}
           draggable={false}
           onDoubleClick={handleDoubleClick}
@@ -800,9 +853,16 @@ function LightboxViewer({
       )}
 
       {/* Floating toolbar - bottom */}
-      <div className="flex items-center gap-2 px-4 py-3 mb-4 mx-3 rounded-2xl flex-shrink-0"
+      <div
+        className="flex items-center gap-2 px-4 py-3 mx-3 rounded-2xl flex-shrink-0 self-center"
         onClick={(e) => e.stopPropagation()}
-        style={{ background: 'rgba(30,30,30,0.8)', backdropFilter: 'blur(20px)', border: '1px solid rgba(255,255,255,0.08)' }}>
+        style={{
+          background: 'rgba(30,30,30,0.85)',
+          backdropFilter: 'blur(20px)',
+          border: '1px solid rgba(255,255,255,0.08)',
+          marginBottom: 'calc(12px + env(safe-area-inset-bottom, 0px))',
+        }}
+      >
 
         <button onClick={() => setZoom((p) => Math.max(0.5, p - 0.2))}
           className="w-9 h-9 rounded-xl flex items-center justify-center text-white hover:bg-white/10 transition-all">
@@ -989,9 +1049,10 @@ function PhotoGalleryModal({
             </>
           )}
           <button onClick={onClose}
-            className="w-8 h-8 rounded-lg flex items-center justify-center transition-all hover:bg-white/10"
-            style={{ background: 'rgba(255,255,255,0.06)' }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" strokeWidth="2.5" strokeLinecap="round">
+            className="w-9 h-9 rounded-xl flex items-center justify-center transition-all hover:bg-white/15 active:scale-95"
+            style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.12)' }}
+            aria-label="Tutup galeri">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#E2E8F0" strokeWidth="2.5" strokeLinecap="round">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
           </button>

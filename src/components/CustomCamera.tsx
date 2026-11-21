@@ -129,24 +129,26 @@ async function drawWatermark(
 ) {
   const isPortrait = H > W;
   const refDim = isPortrait ? W : H;
-  const unit = Math.max(1, refDim / 76);
+  // Baseline unit proporsional (~2% dari dimensi referensi)
+  // Menghasilkan ukuran font yang jelas dibaca di layar HP/laporan tanpa menutupi objek
+  const unit = Math.max(1, refDim / 50);
 
   // Typography & Layout tokens
-  const F_HEADER = Math.round(unit * 0.95);
-  const F_TEXT = Math.round(unit * 0.82);
-  const LOGO_SZ = Math.round(unit * 1.35);
-  const PAD_X = Math.round(unit * 1.3);
-  const PAD_Y = Math.round(unit * 1.05);
-  const MARGIN = Math.round(unit * 1.25);
-  const STRIPE_W = Math.max(2, Math.round(unit * 0.35));
-  const RADIUS = Math.round(unit * 0.85);
-  const ICON_COL_W = Math.round(unit * 1.4);
-  const LINE_H = Math.round(F_TEXT * 1.45);
-  const ROW_GAP = Math.round(unit * 0.35);
-  const GAP_HEADER = Math.round(unit * 0.6);
+  const F_HEADER = Math.round(unit * 1.05);
+  const F_TEXT = Math.round(unit * 0.92);
+  const LOGO_SZ = Math.round(unit * 1.4);
+  const PAD_X = Math.round(unit * 1.25);
+  const PAD_Y = Math.round(unit * 1.0);
+  const MARGIN = Math.round(unit * 1.2);
+  const STRIPE_W = Math.max(3, Math.round(unit * 0.28));
+  const RADIUS = Math.round(unit * 0.75);
+  const ICON_COL_W = Math.round(unit * 1.35);
+  const LINE_H = Math.round(F_TEXT * 1.4);
+  const ROW_GAP = Math.round(unit * 0.32);
+  const GAP_HEADER = Math.round(unit * 0.55);
 
   const FONT = (size: number, bold = false) => {
-    ctx.font = `${bold ? '600 ' : '400 '}${size}px 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
+    ctx.font = `${bold ? '700 ' : '500 '}${size}px -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif`;
   };
 
   // ── 1. Siapkan Data Ringkas & Padat
@@ -194,8 +196,8 @@ async function drawWatermark(
   }
 
   // ── 2. Hitung Ukuran Box secara Dinamis & Adaptif
-  const maxBoxW = Math.round(isPortrait ? W * 0.48 : W * 0.34);
-  const minBoxW = Math.round(isPortrait ? W * 0.32 : W * 0.22);
+  const maxBoxW = Math.round(isPortrait ? W * 0.58 : W * 0.40);
+  const minBoxW = Math.round(isPortrait ? W * 0.38 : W * 0.25);
   const maxTextW = maxBoxW - STRIPE_W - (PAD_X * 2) - ICON_COL_W;
 
   // Wrap text baris jika melebihi batas (khususnya lokasi panjang)
@@ -252,13 +254,13 @@ async function drawWatermark(
   ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
   ctx.shadowBlur = Math.round(unit * 1.2);
   ctx.shadowOffsetY = Math.round(unit * 0.4);
-  ctx.fillStyle = 'rgba(15, 23, 42, 0.72)'; // Sleek modern slate-900 glass
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.74)'; // Sleek modern slate-900 glass
   rrect(ctx, bx, by, boxW, boxH, RADIUS);
   ctx.fill();
 
   // Halus border glassmorphism
   ctx.shadowColor = 'transparent';
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
   ctx.lineWidth = Math.max(1, Math.round(unit * 0.08));
   rrect(ctx, bx, by, boxW, boxH, RADIUS);
   ctx.stroke();
@@ -290,8 +292,8 @@ async function drawWatermark(
   // Header Brand: AKSARA INSPECT
   const tx = cx + LOGO_SZ + Math.round(unit * 0.6);
   ctx.save();
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.75)';
-  ctx.shadowBlur = Math.round(unit * 0.2);
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
+  ctx.shadowBlur = Math.round(unit * 0.25);
   ctx.shadowOffsetY = 1;
 
   FONT(F_HEADER, true);
