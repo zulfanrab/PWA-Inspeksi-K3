@@ -520,6 +520,22 @@ export default function App() {
   const [isSaving, setIsSaving] = useState(false);
   const [uploadingId, setUploadingId] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<{ percentage: number; loaded: number; total: number } | null>(null);
+  
+  // Mutex lock untuk mencegah sinkronisasi ganda / race condition
+  const isSyncingRef = useRef(false);
+
+  // Background Sync Floating Pill State (Non-Blocking)
+  const [bgSync, setBgSync] = useState<{
+    isActive: boolean;
+    totalUnits: number;
+    currentUnitIndex: number;
+    clientName: string;
+    objectType: string;
+    photoLoaded: number;
+    photoTotal: number;
+    photoPercent: number;
+  } | null>(null);
+
   const [tokenError, setTokenError] = useState<string | null>(null);
   const [pullStatus, setPullStatus] = useState<string | null>(null);
   const [darkMode, setDarkMode] = useState(() => {
@@ -686,7 +702,7 @@ const doPullInspections = useCallback(async () => {
 
 const triggerAutoSync = useCallback(async () => {
     if (!isAuthenticated) {
-      console.log('[BulkSync] Batal: Belum terautentikasi (belum login)');
+      console.log('[BulkSync] Batal: Belum login');
       return;
     }
     
@@ -694,49 +710,113 @@ const triggerAutoSync = useCallback(async () => {
       console.log('[BulkSync] Batal: Offline');
       return;
     }
-    
-    // Fetch state awal untuk di-looping
-    const currentDrafts = await SessionRepository.getDrafts();
-    if (currentDrafts.length === 0) return;
-    
-    setPullingDataMessage("Sinkronisasi otomatis draft...");
-    console.log(`[BulkSync] Memulai upload massal untuk ${currentDrafts.length} draft...`);
-    
-    try {
-      for (const draft of currentDrafts) {
-        try {
-          setUploadingId(draft.id);
-          setUploadProgress(null);
-          
-          const { folderId } = await uploadToDrive(draft, draft.photos, (p) => flushSync(() => setUploadProgress(p)), null);
-          
-          // Tandai sukses di DB
-          await SessionRepository.markSynced(draft.id, folderId);
-          
-          // Clear status uploading
-          setUploadingId(null);  
-          setUploadProgress(null);
 
-          // 🔥 FIX: Panggil refreshData() DI SINI (di dalam loop)
-          // Memaksa state 'drafts' update & re-render, item langsung ilang dari UI
-          await refreshData(); 
-          
-        } catch (err: unknown) {
-          console.error(`[BulkSync] Gagal upload draft ${draft.id}:`, err);
-          // Reset id kalau error biar UI gak nyangkut
-          setUploadingId(null); 
-          setUploadProgress(null);
-        }
-      }
-    } finally {
-      setPullingDataMessage(null);
+    if (isSyncingRef.current) {
+      console.log('[BulkSync] Batal: Upload massal sudah berjalan di antrean');
+      return;
+    }
+    isSyncingRef.current = true;
+    
+    const initialDrafts = await SessionRepository.getDrafts();
+    if (initialDrafts.length === 0) {
+      isSyncingRef.current = false;
+      return;
     }
     
-    // Opsional: jaga-jaga panggil lagi setelah loop selesai total
-    await refreshData();
-    console.log('[BulkSync] Proses upload massal selesai');
-    
-  }, [refreshData, isAuthenticated]);
+    console.log(`[BulkSync] Memulai background sync untuk ${initialDrafts.length} draft...`);
+    let successCount = 0;
+    const failedDraftIds: string[] = [];
+
+    const uploadSingleDraft = async (draftId: string, unitIndex: number, totalUnits: number) => {
+      const freshDraft = await SessionRepository.getById(draftId);
+      if (!freshDraft || freshDraft.status === 'synced') return true;
+
+      setUploadingId(draftId);
+      setBgSync({
+        isActive: true,
+        totalUnits,
+        currentUnitIndex: unitIndex,
+        clientName: freshDraft.clientName,
+        objectType: freshDraft.objectType,
+        photoLoaded: 0,
+        photoTotal: freshDraft.photos.length,
+        photoPercent: 0,
+      });
+
+      const { folderId } = await uploadToDrive(
+        freshDraft,
+        freshDraft.photos,
+        (p) => flushSync(() => {
+          setUploadProgress(p);
+          setBgSync(prev => prev ? {
+            ...prev,
+            photoLoaded: p.loaded,
+            photoTotal: p.total,
+            photoPercent: p.percentage,
+          } : null);
+        }),
+        null
+      );
+
+      await SessionRepository.markSynced(draftId, folderId);
+      setUploadingId(null);
+      setUploadProgress(null);
+      await refreshData();
+      return true;
+    };
+
+    try {
+      // SWEEP 1: Upload semua unit secara berurutan
+      for (let i = 0; i < initialDrafts.length; i++) {
+        const draft = initialDrafts[i];
+        try {
+          await uploadSingleDraft(draft.id, i + 1, initialDrafts.length);
+          successCount++;
+        } catch (err: unknown) {
+          console.warn(`[BulkSync] Draft ${draft.id} tertunda di sweep 1:`, err);
+          setUploadingId(null);
+          setUploadProgress(null);
+          failedDraftIds.push(draft.id);
+        }
+      }
+
+      // SWEEP 2: Otomatis coba ulang (second-chance sweep) untuk draft yang sempat gagal
+      if (failedDraftIds.length > 0 && navigator.onLine) {
+        console.log(`[BulkSync] Menjalankan Second-Chance Sweep untuk ${failedDraftIds.length} draft...`);
+        await new Promise(r => setTimeout(r, 2000));
+        
+        const remainingFailed: string[] = [];
+        for (let j = 0; j < failedDraftIds.length; j++) {
+          const draftId = failedDraftIds[j];
+          try {
+            await uploadSingleDraft(draftId, initialDrafts.length - failedDraftIds.length + j + 1, initialDrafts.length);
+            successCount++;
+          } catch (retryErr: unknown) {
+            console.error(`[BulkSync] Retry sweep gagal untuk draft ${draftId}:`, retryErr);
+            setUploadingId(null);
+            setUploadProgress(null);
+            remainingFailed.push(draftId);
+          }
+        }
+        failedDraftIds.length = 0;
+        failedDraftIds.push(...remainingFailed);
+      }
+
+      if (successCount > 0 && failedDraftIds.length === 0) {
+        showToast(`✅ Berhasil mengupload semua ${successCount} unit ke Google Drive!`, 'success');
+      } else if (successCount > 0 && failedDraftIds.length > 0) {
+        showToast(`⚠️ ${successCount} unit berhasil diunggah, ${failedDraftIds.length} unit tertunda (coba lagi nanti)`, 'warn');
+      } else if (failedDraftIds.length > 0) {
+        showToast(`⚠️ Gagal mengunggah ${failedDraftIds.length} unit. Periksa koneksi internet.`, 'error');
+      }
+    } finally {
+      setUploadingId(null);
+      setUploadProgress(null);
+      setBgSync(null);
+      isSyncingRef.current = false;
+      await refreshData();
+    }
+  }, [refreshData, isAuthenticated, showToast]);
   // 🔄 TRIGGER AUTO-SYNC SAAT APLIKASI BARU DIBUKA (VERSI ANTI-GAGAL)
   useEffect(() => {
     if (isAuthenticated && isOnline && autoSync) {
@@ -926,7 +1006,6 @@ const triggerAutoSync = useCallback(async () => {
       return;
     }
     setIsSaving(true);
-    setGlobalLoading("Sedang mengamankan data inspeksi Anda...");
     try {
       // Pastikan klien dan unit masuk ke template unit di admin panel (jika diinput manual)
       const { clientId, unitId } = await ensureClientAndUnitTemplates(
@@ -968,52 +1047,11 @@ const triggerAutoSync = useCallback(async () => {
           }
         }
 
+        // Selesai edit
+        showToast('✅ Data berhasil diperbarui!');
         if (isOnline) {
-  // 🔥 FIX: Set uploadingId DULU, baru await yang lain
-  setUploadingId(editingId);
-  setUploadProgress({ percentage: 0, loaded: 0, total: newPhotos.length });
-  
-  // Yield ke event loop biar React sempat render
-  await new Promise(resolve => setTimeout(resolve, 50));
-  
-  try {
-
-            // Ambil session yang sudah diupdate dari IndexedDB
-            const updatedSession = await SessionRepository.getById(editingId);
-            if (updatedSession) {
-              // FIXED: Konversi newPhotos (string dataUrl) ke InspectionPhoto
-              // agar bisa dipakai sebagai onlyNewPhotos parameter
-              // Kita filter session.photos yang baru (createdAt mendekati sekarang)
-              // Cara paling akurat: pakai foto dari updatedSession yang tidak ada di existingPhotos
-              const existingPhotoIds = new Set(existingPhotos.map(p => p.id));
-              const onlyNewPhotoObjects = updatedSession.photos.filter(
-                p => !existingPhotoIds.has(p.id)
-              );
-
-              // FIXED: Kirim onlyNewPhotoObjects (bukan null/undefined)
-              // api/upload.ts akan countExistingPhotos dan lanjut penomoran
-              const { folderId } = await uploadToDrive(
-                updatedSession,
-                updatedSession.photos,
-                (p) => flushSync(() => setUploadProgress(p)),  // ← tambah flushSync
-                onlyNewPhotoObjects
-              );
-
-              // FIXED: markSynced dipanggil SETELAH uploadToDrive sukses
-              await SessionRepository.markSynced(editingId, folderId);
-            }
-          } catch (uploadErr: any) {
-            console.warn('[App] Re-upload setelah edit gagal:', uploadErr);
-            showToast('⚠️ Data tersimpan di laci lokal. Akan disinkronkan nanti.', 'warn');
-          } finally {
-            setUploadingId(null);
-            setUploadProgress(null);
-          }
-        } else {
-          // Offline → tetap draft, user sync manual nanti
-          showToast('✅ Data berhasil diperbarui! (Offline — akan di-sync saat online)');
+          setTimeout(() => triggerAutoSync(), 300);
         }
-
       } else {
         // Create baru — status draft, tunggu manual sync atau auto sync
         await SessionRepository.create(
@@ -1046,54 +1084,110 @@ const triggerAutoSync = useCallback(async () => {
       }
     } finally {
       setIsSaving(false);
-      setGlobalLoading(null);
     }
   };
 
-  // handleSync dari SyncHub — create baru, kirim semua foto
+  // handleSync dari SyncHub — upload satu unit di latar belakang (non-blocking)
   const handleSync = async (id: string) => {
+    if (isSyncingRef.current) {
+      showToast('⚠️ Sedang ada proses upload lain yang berjalan.', 'warn');
+      return;
+    }
+    isSyncingRef.current = true;
     setUploadingId(id);
     setUploadProgress(null);
-    setGlobalLoading("Sedang menyinkronkan data...");
     try {
       const session = await SessionRepository.getById(id);
       if (!session) throw new Error('Sesi tidak ditemukan');
-      // Sync dari SyncHub = draft baru, kirim semua foto (onlyNewPhotos = null)
-      const { folderId } = await uploadToDrive(session, session.photos, (progress) => flushSync(() => setUploadProgress(progress)), null);
+
+      setBgSync({
+        isActive: true,
+        totalUnits: 1,
+        currentUnitIndex: 1,
+        clientName: session.clientName,
+        objectType: session.objectType,
+        photoLoaded: 0,
+        photoTotal: session.photos.length,
+        photoPercent: 0,
+      });
+
+      const { folderId } = await uploadToDrive(
+        session,
+        session.photos,
+        (progress) => flushSync(() => {
+          setUploadProgress(progress);
+          setBgSync(prev => prev ? {
+            ...prev,
+            photoLoaded: progress.loaded,
+            photoTotal: progress.total,
+            photoPercent: progress.percentage,
+          } : null);
+        }),
+        null
+      );
       await SessionRepository.markSynced(id, folderId);
       await refreshData();
-      setUploadProgress(null);
-      showToast('✅ Data berhasil disinkronkan ke Drive!');
+      showToast(`✅ ${session.clientName} (${session.objectType}) berhasil diunggah!`, 'success');
     } catch (err: any) {
-      setUploadProgress(null);
-      showToast('⚠️ Gagal sinkronisasi: ' + err.message, 'error');
+      showToast(`⚠️ Gagal sinkronisasi: ${err.message}`, 'error');
     } finally {
       setUploadingId(null);
-      setGlobalLoading(null);
+      setUploadProgress(null);
+      setBgSync(null);
+      isSyncingRef.current = false;
     }
   };
 
-  // handleReSyncFromHistory — upload ulang dari History, kirim semua foto
+  // handleReSyncFromHistory — upload ulang dari History (non-blocking)
   const handleReSyncFromHistory = async (id: string) => {
     if (!isOnline) { showToast('⚠️ Tidak ada koneksi internet.', 'warn'); return; }
+    if (isSyncingRef.current) {
+      showToast('⚠️ Sedang ada proses upload lain yang berjalan.', 'warn');
+      return;
+    }
+    isSyncingRef.current = true;
     setUploadingId(id);
     setUploadProgress(null);
-    setGlobalLoading("Mengunggah ulang berkas inspeksi...");
     try {
       const session = await SessionRepository.getById(id);
       if (!session) throw new Error('Data tidak ditemukan');
-      // Re-sync dari History = kirim semua foto (onlyNewPhotos = null)
-      // api/upload.ts akan countExistingPhotos dan skip yang sudah ada
-      const { folderId } = await uploadToDrive(session, session.photos, (progress) => flushSync(() => setUploadProgress(progress)), null);
+
+      setBgSync({
+        isActive: true,
+        totalUnits: 1,
+        currentUnitIndex: 1,
+        clientName: session.clientName,
+        objectType: session.objectType,
+        photoLoaded: 0,
+        photoTotal: session.photos.length,
+        photoPercent: 0,
+      });
+
+      const { folderId } = await uploadToDrive(
+        session,
+        session.photos,
+        (progress) => flushSync(() => {
+          setUploadProgress(progress);
+          setBgSync(prev => prev ? {
+            ...prev,
+            photoLoaded: progress.loaded,
+            photoTotal: progress.total,
+            photoPercent: progress.percentage,
+          } : null);
+        }),
+        null
+      );
       await SessionRepository.markSynced(id, folderId);
       setUploadProgress(null);
-      showToast('✅ Data berhasil diupload ulang ke Drive!');
+      showToast(`✅ Data ${session.clientName} berhasil diupload ulang ke Drive!`, 'success');
     } catch (err: any) {
       setUploadProgress(null);
-      showToast('⚠️ Gagal upload ulang: ' + err.message, 'error');
+      showToast(`⚠️ Gagal upload ulang: ${err.message}`, 'error');
     } finally {
       setUploadingId(null);
-      setGlobalLoading(null);
+      setUploadProgress(null);
+      setBgSync(null);
+      isSyncingRef.current = false;
     }
   };
 
@@ -1616,6 +1710,129 @@ const handleDelete = async (id: string) => {
 
       {globalLoading && (
         <GlobalFunnyLoader message={globalLoading} />
+      )}
+
+      {/* ── Background Sync Floating Pill ── */}
+      {bgSync && bgSync.isActive && (
+        <div
+          onClick={() => {
+            if (view !== 'SYNC_HUB') {
+              navigateTo('SYNC_HUB');
+            }
+          }}
+          style={{
+            position: 'fixed',
+            top: isDesktop ? 20 : 12,
+            right: isDesktop ? 24 : 'auto',
+            left: isDesktop ? 'auto' : '50%',
+            transform: isDesktop ? 'none' : 'translateX(-50%)',
+            zIndex: 9999,
+            width: isDesktop ? 340 : 'min(92vw, 360px)',
+            background: darkMode ? 'rgba(15, 23, 42, 0.95)' : 'rgba(255, 255, 255, 0.96)',
+            backdropFilter: 'blur(12px)',
+            WebkitBackdropFilter: 'blur(12px)',
+            border: `1px solid ${darkMode ? '#334155' : '#CBD5E1'}`,
+            boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.25), 0 8px 10px -6px rgba(0, 0, 0, 0.15)',
+            borderRadius: 16,
+            padding: '10px 14px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 6,
+            cursor: 'pointer',
+            transition: 'all 0.2s ease',
+            pointerEvents: 'auto',
+          }}
+          role="button"
+          tabIndex={0}
+          title="Klik untuk membuka Sync Hub"
+        >
+          {/* Header Row */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+              <div
+                style={{
+                  width: 14,
+                  height: 14,
+                  border: '2px solid rgba(16, 185, 129, 0.25)',
+                  borderTopColor: '#10B981',
+                  borderRadius: '50%',
+                  animation: 'spin 0.8s linear infinite',
+                  flexShrink: 0,
+                }}
+              />
+              <span
+                style={{
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: darkMode ? '#F8FAFC' : '#0F172A',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                {`Mengunggah Latar Belakang (${bgSync.currentUnitIndex}/${bgSync.totalUnits})`}
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+              <span
+                style={{
+                  fontSize: 10,
+                  fontWeight: 600,
+                  padding: '2px 6px',
+                  borderRadius: 6,
+                  background: 'rgba(16, 185, 129, 0.15)',
+                  color: '#10B981',
+                }}
+              >
+                {`${bgSync.photoPercent}%`}
+              </span>
+              <span style={{ fontSize: 11, color: '#94A3B8' }}>›</span>
+            </div>
+          </div>
+
+          {/* Subtitle / Unit Info */}
+          <div
+            style={{
+              fontSize: 11,
+              color: darkMode ? '#94A3B8' : '#64748B',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+            }}
+          >
+            <span style={{ fontWeight: 600 }}>{bgSync.clientName || 'Unit K3'}</span>
+            <span>• {bgSync.objectType}</span>
+            {bgSync.photoTotal > 0 && (
+              <span>({bgSync.photoLoaded}/{bgSync.photoTotal} foto)</span>
+            )}
+          </div>
+
+          {/* Mini Progress Bar */}
+          <div
+            style={{
+              height: 4,
+              width: '100%',
+              background: darkMode ? '#334155' : '#E2E8F0',
+              borderRadius: 2,
+              overflow: 'hidden',
+              marginTop: 2,
+            }}
+          >
+            <div
+              style={{
+                height: '100%',
+                width: `${Math.max(5, bgSync.photoPercent)}%`,
+                background: 'linear-gradient(90deg, #10B981, #3B82F6)',
+                borderRadius: 2,
+                transition: 'width 0.25s ease',
+              }}
+            />
+          </div>
+        </div>
       )}
 
       {/* ── Global Toast Notification ── */}

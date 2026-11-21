@@ -107,6 +107,41 @@ export function trySilentRefresh(clientId: string, redirectUri: string): void {
 }
 
 // ==========================================
+// ROBUST FETCH WITH EXPONENTIAL RETRY
+// ==========================================
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  maxRetries = 3,
+  baseDelayMs = 1200
+): Promise<Response> {
+  let lastError: any = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const res = await fetch(url, options);
+      // Jika server terkena rate limit (429) atau transient server error (500, 502, 503, 504)
+      if (res.status === 429 || (res.status >= 500 && res.status <= 504)) {
+        if (attempt < maxRetries) {
+          const delay = baseDelayMs * Math.pow(2, attempt) + Math.random() * 300;
+          console.warn(`[fetchWithRetry] HTTP ${res.status} pada ${url}. Percobaan ulang (${attempt + 1}/${maxRetries}) dalam ${Math.round(delay)}ms...`);
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+      }
+      return res;
+    } catch (err: any) {
+      lastError = err;
+      if (attempt < maxRetries) {
+        const delay = baseDelayMs * Math.pow(2, attempt) + Math.random() * 300;
+        console.warn(`[fetchWithRetry] Gangguan koneksi (${err?.message || 'timeout'}) pada ${url}. Mencoba ulang (${attempt + 1}/${maxRetries}) dalam ${Math.round(delay)}ms...`);
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastError || new Error(`Gagal menghubungi server setelah ${maxRetries} percobaan`);
+}
+
+// ==========================================
 // MAIN UPLOAD FUNCTION (SEQUENTIAL QUEUE)
 // ==========================================
 
@@ -139,7 +174,7 @@ export const uploadToDrive = async (
       });
 
       const apiBase = getApiBaseUrl();
-      const metaRes = await fetch(`${apiBase}/api/upload`, {
+      const metaRes = await fetchWithRetry(`${apiBase}/api/upload`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -157,7 +192,7 @@ export const uploadToDrive = async (
             inspectorEmail: session.inspectorEmail ?? null,
           }
         }),
-      });
+      }, 3, 1500);
 
       if (!metaRes.ok) {
         const errData = await metaRes.json().catch(() => ({}));
@@ -173,74 +208,74 @@ export const uploadToDrive = async (
       });
     }
 
-    // ── PHASE 2: Upload Foto (Antrean Satu per Satu) ──
+    // ── PHASE 2: Upload Foto (Antrean Satu per Satu dengan Auto-Resume) ──
     // Kalau sebelumnya gagal di tengah jalan (partial_failed), kita lanjutin dari index terakhir
     const startIdx = session.uploadStatus === 'partial_failed' ? (session.photosUploaded || 0) : 0;
 
-for (let i = startIdx; i < totalPhotos; i++) {
-  const photo = photosToUpload[i];
-  
-  // KUNCI FIX: Jika foto sudah memiliki driveFileId (sudah terupload), lewati upload ulang!
-  if (photo.driveFileId) {
-    await db.inspection_sessions.update(session.id, {
-      photosUploaded: i + 1
-    });
-    onProgress?.({
-      percentage: Math.round(((i + 1) / totalPhotos) * 100),
-      loaded: i + 1,
-      total: totalPhotos,
-    });
-    continue;
-  }
-  
-  // Panggil progress SEBELUM fetch (tapi belum di-render)
-  onProgress?.({
-    percentage: Math.ceil(((i + 1) / totalPhotos) * 100),
-    loaded: i,
-    total: totalPhotos,
-  });
+    for (let i = startIdx; i < totalPhotos; i++) {
+      const photo = photosToUpload[i];
+      
+      // KUNCI FIX: Jika foto sudah memiliki driveFileId (sudah terupload), lewati upload ulang!
+      if (photo.driveFileId) {
+        await db.inspection_sessions.update(session.id, {
+          photosUploaded: i + 1
+        });
+        onProgress?.({
+          percentage: Math.round(((i + 1) / totalPhotos) * 100),
+          loaded: i + 1,
+          total: totalPhotos,
+        });
+        continue;
+      }
+      
+      // Panggil progress SEBELUM fetch (tapi belum di-render)
+      onProgress?.({
+        percentage: Math.ceil(((i + 1) / totalPhotos) * 100),
+        loaded: i,
+        total: totalPhotos,
+      });
 
-  // KUNCI FIX: Kasih React time untuk render
-  await new Promise(resolve => setTimeout(resolve, 10));
+      // Kasih jeda ringan agar browser & React render lancar
+      await new Promise(resolve => setTimeout(resolve, 60));
 
-  const apiBase = getApiBaseUrl();
-  const photoRes = await fetch(`${apiBase}/api/upload-photo`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      folderId: folderId,
-      photoBase64: photo.dataUrl,
-      photoIndex: i
-    }),
-  });
+      const apiBase = getApiBaseUrl();
+      const photoRes = await fetchWithRetry(`${apiBase}/api/upload-photo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          folderId: folderId,
+          photoBase64: photo.dataUrl,
+          photoIndex: i
+        }),
+      }, 3, 1000);
 
-  if (!photoRes.ok) {
-    const errData = await photoRes.json().catch(() => ({}));
-    throw new Error(errData?.error || `Gagal upload foto ke-${i + 1}`);
-  }
+      if (!photoRes.ok) {
+        const errData = await photoRes.json().catch(() => ({}));
+        throw new Error(errData?.error || `Gagal upload foto ke-${i + 1}`);
+      }
 
-  const photoData = await photoRes.json().catch(() => ({}));
-  if (photoData.fileId && photo.id) {
-    await db.inspection_photos.update(photo.id, {
-      driveFileId: photoData.fileId,
-      fileName: photoData.fileName,
-    });
-  }
+      const photoData = await photoRes.json().catch(() => ({}));
+      if (photoData.fileId && photo.id) {
+        await db.inspection_photos.update(photo.id, {
+          driveFileId: photoData.fileId,
+          fileName: photoData.fileName,
+        });
+      }
 
-  await db.inspection_sessions.update(session.id, {
-    photosUploaded: i + 1
-  });
+      await db.inspection_sessions.update(session.id, {
+        photosUploaded: i + 1
+      });
 
-  // Panggil progress SETELAH foto berhasil
-  onProgress?.({
-    percentage: Math.round(((i + 1) / totalPhotos) * 100),
-    loaded: i + 1,
-    total: totalPhotos,
-  });
+      // Panggil progress SETELAH foto berhasil
+      onProgress?.({
+        percentage: Math.round(((i + 1) / totalPhotos) * 100),
+        loaded: i + 1,
+        total: totalPhotos,
+      });
 
-// LAGI: Kasih React time untuk render
-  await new Promise(resolve => setTimeout(resolve, 10));
-}
+      // Pacing halus untuk mencegah rate-limit Google Drive API
+      await new Promise(resolve => setTimeout(resolve, 80));
+    }
 
     // ── PHASE 3: Selesai Semua ──
     onProgress?.({
