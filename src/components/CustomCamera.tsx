@@ -673,6 +673,7 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Watermark HARUS SELALU OFF secara default (opsional, hanya aktif jika dicentang manual oleh user)
   const [watermark, setWatermark] = useState(false);
   const [gps, setGps] = useState<GpsData | null>(() => getStoredGpsCache()?.gps ?? null);
   const [location, setLocation] = useState<LocationDetail>(() => getStoredGpsCache()?.location ?? { poiName: null, areaName: null });
