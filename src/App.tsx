@@ -23,12 +23,8 @@ import {
 } from './db/db';
 import {
   uploadToDrive,
-  getValidToken,
   saveToken,
   clearToken,
-  TokenExpiredError,
-  isTokenExpiringSoon,
-  trySilentRefresh,
   type UploadProgress,
   deletePhotoFromDrive,
 } from './services/driveService';
@@ -482,11 +478,23 @@ export default function App() {
     };
   }, []);
 
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [currentUserEmail, setCurrentUserEmail] = useState<string>(() => localStorage.getItem('aksara_user_email') || '');
+  const [currentUserName, setCurrentUserName] = useState<string>(() => localStorage.getItem('aksara_user_name') || '');
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => !!localStorage.getItem('aksara_user_email'));
   const [selectedReportId, setSelectedReportId] = useState<number | null>(null);
-  const [currentUserEmail, setCurrentUserEmail] = useState('');
-  const [currentUserName, setCurrentUserName] = useState('');
   const [roleChecked, setRoleChecked] = useState(false);
+
+  // Global Non-Blocking Toast
+  const [toast, setToast] = useState<{ message: string; type?: 'success' | 'warn' | 'error' } | null>(null);
+  const showToast = useCallback((message: string, type: 'success' | 'warn' | 'error' = 'success') => {
+    setToast({ message, type });
+  }, []);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 3200);
+    return () => clearTimeout(timer);
+  }, [toast]);
 
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [autoSync, setAutoSync] = useState(() => {
@@ -647,23 +655,15 @@ const doPullInspections = useCallback(async () => {
         });
       }
     } else {
-      try {
-        getValidToken();
+      const cachedEmail = localStorage.getItem('aksara_user_email') || '';
+      const cachedName = localStorage.getItem('aksara_user_name') || '';
+      if (cachedEmail) {
         setIsAuthenticated(true);
-        const cachedEmail = localStorage.getItem('aksara_user_email') || '';
-        const cachedName = localStorage.getItem('aksara_user_name') || '';
         setCurrentUserEmail(cachedEmail);
         setCurrentUserName(cachedName);
-        if (cachedEmail) {
-          setupRole(cachedEmail, cachedName);
-        } else {
-          setRoleChecked(true);
-        }
-      } catch (err) {
-        if (err instanceof TokenExpiredError) {
-          setIsAuthenticated(false);
-          setTokenError('Sesi Google Drive berakhir. Silakan login ulang.');
-        }
+        setupRole(cachedEmail, cachedName);
+      } else {
+        setIsAuthenticated(false);
         setRoleChecked(true);
       }
     }
@@ -681,19 +681,6 @@ const doPullInspections = useCallback(async () => {
     }
     localStorage.setItem('aksara_dark_mode', String(darkMode));
   }, [darkMode]);
-  // Auto silent refresh — cek tiap 10 menit, refresh kalau token mau expired
-useEffect(() => {
-    if (!isAuthenticated) return;
-    const interval = setInterval(() => {
-      if (isTokenExpiringSoon(15)) {
-        trySilentRefresh(
-          GOOGLE_CONFIG.clientId,
-          getGoogleRedirectUri()
-        );
-      }
-    }, 10 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, [isAuthenticated]);
 
   // ── Auto sync ──────────────────────────────────────────────────────────────
 
@@ -739,12 +726,6 @@ const triggerAutoSync = useCallback(async () => {
           // Reset id kalau error biar UI gak nyangkut
           setUploadingId(null); 
           setUploadProgress(null);
-          
-          if (err instanceof TokenExpiredError) {
-            setIsAuthenticated(false);
-            setTokenError((err as Error).message);
-            break; // Stop semua jika token mati
-          }
         }
       }
     } finally {
@@ -784,16 +765,6 @@ const triggerAutoSync = useCallback(async () => {
       window.removeEventListener('offline', handleOffline);
     };
   }, [triggerAutoSync, doPullInspections]);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (isAuthenticated && isTokenExpiringSoon(10)) {
-        setTokenError('Sesi akan berakhir. Login ulang untuk lanjut sync.');
-        setIsAuthenticated(false);
-      }
-    }, 5 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, [isAuthenticated]);
 
   const handleAutoSyncToggle = (val: boolean) => {
     setAutoSync(val);
@@ -843,6 +814,8 @@ const triggerAutoSync = useCallback(async () => {
     setCurrentUserName('');
     localStorage.removeItem('aksara_user_email');
     localStorage.removeItem('aksara_user_name');
+    localStorage.removeItem('aksara_user_role');
+    showToast('Berhasil logout.');
   };
 
   const handleStartInspection = () => { resetForm(); navigateTo('PICK_UNIT'); };
@@ -1031,21 +1004,14 @@ const triggerAutoSync = useCallback(async () => {
             }
           } catch (uploadErr: any) {
             console.warn('[App] Re-upload setelah edit gagal:', uploadErr);
-            // Upload gagal → status tetap 'draft', user bisa sync manual
-            if (uploadErr instanceof TokenExpiredError) {
-              setIsAuthenticated(false);
-              setTokenError(uploadErr.message);
-              alert('⚠️ Sesi Drive berakhir. Data disimpan sebagai draft, sync manual nanti.');
-            } else {
-              alert('⚠️ Data tersimpan tapi gagal upload ke Drive. Sync manual dari Sync Hub.');
-            }
+            showToast('⚠️ Data tersimpan di laci lokal. Akan disinkronkan nanti.', 'warn');
           } finally {
             setUploadingId(null);
             setUploadProgress(null);
           }
         } else {
           // Offline → tetap draft, user sync manual nanti
-          alert('✅ Data berhasil diperbarui! (Offline — akan di-sync saat online)');
+          showToast('✅ Data berhasil diperbarui! (Offline — akan di-sync saat online)');
         }
 
       } else {
@@ -1062,7 +1028,7 @@ const triggerAutoSync = useCallback(async () => {
           },
           newPhotos
         );
-        alert('✅ Data berhasil disimpan!');
+        showToast('✅ Data berhasil disimpan!');
       }
 
       await refreshData();
@@ -1074,9 +1040,9 @@ const triggerAutoSync = useCallback(async () => {
       }
     } catch (err: any) {
       if (err?.name === 'QuotaExceededError' || err?.inner?.name === 'QuotaExceededError') {
-        alert('⚠️ Penyimpanan penuh! Hapus draft lama atau sync ke Drive.');
+        showToast('⚠️ Penyimpanan penuh! Hapus draft lama atau sync ke Drive.', 'warn');
       } else {
-        alert('Gagal menyimpan: ' + err.message);
+        showToast('Gagal menyimpan: ' + err.message, 'error');
       }
     } finally {
       setIsSaving(false);
@@ -1097,15 +1063,10 @@ const triggerAutoSync = useCallback(async () => {
       await SessionRepository.markSynced(id, folderId);
       await refreshData();
       setUploadProgress(null);
+      showToast('✅ Data berhasil disinkronkan ke Drive!');
     } catch (err: any) {
       setUploadProgress(null);
-      if (err instanceof TokenExpiredError) {
-        setIsAuthenticated(false);
-        setTokenError(err.message);
-        alert(`⚠️ ${err.message}`);
-      } else {
-        alert('Gagal sinkronisasi: ' + err.message);
-      }
+      showToast('⚠️ Gagal sinkronisasi: ' + err.message, 'error');
     } finally {
       setUploadingId(null);
       setGlobalLoading(null);
@@ -1114,7 +1075,7 @@ const triggerAutoSync = useCallback(async () => {
 
   // handleReSyncFromHistory — upload ulang dari History, kirim semua foto
   const handleReSyncFromHistory = async (id: string) => {
-    if (!isOnline) { alert('⚠️ Tidak ada koneksi internet.'); return; }
+    if (!isOnline) { showToast('⚠️ Tidak ada koneksi internet.', 'warn'); return; }
     setUploadingId(id);
     setUploadProgress(null);
     setGlobalLoading("Mengunggah ulang berkas inspeksi...");
@@ -1126,16 +1087,10 @@ const triggerAutoSync = useCallback(async () => {
       const { folderId } = await uploadToDrive(session, session.photos, (progress) => flushSync(() => setUploadProgress(progress)), null);
       await SessionRepository.markSynced(id, folderId);
       setUploadProgress(null);
-      alert('✅ Data berhasil diupload ulang ke Drive!');
+      showToast('✅ Data berhasil diupload ulang ke Drive!');
     } catch (err: any) {
       setUploadProgress(null);
-      if (err instanceof TokenExpiredError) {
-        setIsAuthenticated(false);
-        setTokenError(err.message);
-        alert(`⚠️ ${err.message}`);
-      } else {
-        alert('Gagal upload ulang: ' + err.message);
-      }
+      showToast('⚠️ Gagal upload ulang: ' + err.message, 'error');
     } finally {
       setUploadingId(null);
       setGlobalLoading(null);
@@ -1183,7 +1138,7 @@ const handleDelete = async (id: string) => {
 
   } catch (err: any) {
     refreshData(); // Kembalikan data ke UI jika gagal
-    alert(`⚠️ Gagal hapus: ${err.message}`);
+    showToast(`⚠️ Gagal hapus: ${err.message}`, 'error');
   }
 };
 
@@ -1395,16 +1350,6 @@ const handleDelete = async (id: string) => {
       {/* Alerts & User Bar - Desktop has its own section, mobile inline */}
       {!isDesktop && (
         <>
-          {tokenError && !isAuthenticated && (
-            <div style={{ maxWidth: 640, margin: '10px auto 0', padding: '0 16px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: T.redLight, border: `0.5px solid ${T.redBorder}`, borderRadius: 10, padding: '10px 12px' }}>
-                <span style={{ fontSize: 14 }}>⚠️</span>
-                <p style={{ flex: 1, fontSize: 12, fontWeight: 500, color: T.redText }}>{tokenError}</p>
-                <button onClick={handleLogin} style={{ fontSize: 11, fontWeight: 700, color: T.redText, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>Login ulang</button>
-              </div>
-            </div>
-          )}
-
           {pullStatus && (
             <div style={{ maxWidth: 640, margin: '8px auto 0', padding: '0 16px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: T.emeraldLight, border: `0.5px solid ${T.emeraldBorder}`, borderRadius: 10, padding: '8px 12px' }}>
@@ -1461,14 +1406,6 @@ const handleDelete = async (id: string) => {
         {/* Desktop Alerts - Visible across all views on Desktop */}
         {isDesktop && (
           <>
-            {tokenError && !isAuthenticated && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: T.redLight, border: `1px solid ${T.redBorder}`, borderRadius: 12, padding: '12px 16px', maxWidth: 600 }}>
-                <span style={{ fontSize: 16 }}>⚠️</span>
-                <p style={{ flex: 1, fontSize: 13, fontWeight: 500, color: T.redText, margin: 0 }}>{tokenError}</p>
-                <button onClick={handleLogin} style={{ fontSize: 12, fontWeight: 600, color: T.redText, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>Login ulang</button>
-              </div>
-            )}
-
             {pullStatus && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: T.emeraldLight, border: `1px solid ${T.emeraldBorder}`, borderRadius: 12, padding: '12px 16px', maxWidth: 600 }}>
                 <p style={{ fontSize: 13, fontWeight: 600, color: T.emeraldText, margin: 0 }}>{pullStatus}</p>
@@ -1679,6 +1616,52 @@ const handleDelete = async (id: string) => {
 
       {globalLoading && (
         <GlobalFunnyLoader message={globalLoading} />
+      )}
+
+      {/* ── Global Toast Notification ── */}
+      {toast && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: isDesktop ? 32 : 86,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 99999,
+            maxWidth: '92vw',
+            width: 'max-content',
+            padding: '10px 18px',
+            borderRadius: 16,
+            background: toast.type === 'error' ? 'rgba(185, 28, 28, 0.95)' : toast.type === 'warn' ? 'rgba(180, 83, 9, 0.95)' : 'rgba(15, 23, 42, 0.92)',
+            color: '#fff',
+            fontSize: 13,
+            fontWeight: 600,
+            boxShadow: '0 8px 30px rgba(0,0,0,0.3)',
+            backdropFilter: 'blur(8px)',
+            border: `1px solid ${toast.type === 'error' ? '#EF4444' : toast.type === 'warn' ? '#F59E0B' : '#10B981'}`,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            pointerEvents: 'auto',
+            animation: 'fadeInUp 0.22s ease-out',
+          }}
+        >
+          <span>{toast.type === 'error' ? '❌' : toast.type === 'warn' ? '⚠️' : '✅'}</span>
+          <span style={{ lineHeight: 1.4 }}>{toast.message}</span>
+          <button
+            onClick={() => setToast(null)}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: '#94A3B8',
+              cursor: 'pointer',
+              fontSize: 13,
+              padding: '0 0 0 6px',
+              lineHeight: 1,
+            }}
+          >
+            ✕
+          </button>
+        </div>
       )}
     </div>
   );

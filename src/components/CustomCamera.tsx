@@ -73,6 +73,53 @@ async function reverseGeocode(lat: number, lng: number): Promise<LocationDetail>
   return result;
 }
 
+// ─── GPS & GEOCODING CACHE (Persistent across unit captures & sessions) ──────
+interface StoredGpsCache {
+  gps: GpsData;
+  location: LocationDetail;
+  timestamp: number;
+}
+
+let memoryGpsCache: StoredGpsCache | null = null;
+
+function getStoredGpsCache(): StoredGpsCache | null {
+  if (memoryGpsCache) return memoryGpsCache;
+  try {
+    const raw = sessionStorage.getItem('aksara_gps_cache') || localStorage.getItem('aksara_last_gps_cache');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed?.gps?.lat && parsed?.gps?.lng) {
+        memoryGpsCache = parsed;
+        return parsed;
+      }
+    }
+  } catch {
+    // silent
+  }
+  return null;
+}
+
+function saveGpsCache(gps: GpsData, location: LocationDetail) {
+  const item: StoredGpsCache = { gps, location, timestamp: Date.now() };
+  memoryGpsCache = item;
+  try {
+    sessionStorage.setItem('aksara_gps_cache', JSON.stringify(item));
+    localStorage.setItem('aksara_last_gps_cache', JSON.stringify(item));
+  } catch {
+    // silent
+  }
+}
+
+function calculateDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371e3;
+  const p1 = (lat1 * Math.PI) / 180;
+  const p2 = (lat2 * Math.PI) / 180;
+  const dp = ((lat2 - lat1) * Math.PI) / 180;
+  const dl = ((lon2 - lon1) * Math.PI) / 180;
+  const a = Math.sin(dp / 2) * Math.sin(dp / 2) + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) * Math.sin(dl / 2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 // ─── WATERMARK RENDERER ───────────────────────────────────────────────────────
 // Posisi: pojok kiri bawah. Style: profesional survey lapangan.
 // Semua ukuran relatif terhadap H canvas → proporsional portrait & landscape.
@@ -627,8 +674,8 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [watermark, setWatermark] = useState(false);
-  const [gps, setGps] = useState<GpsData | null>(null);
-  const [location, setLocation] = useState<LocationDetail>({ poiName: null, areaName: null });
+  const [gps, setGps] = useState<GpsData | null>(() => getStoredGpsCache()?.gps ?? null);
+  const [location, setLocation] = useState<LocationDetail>(() => getStoredGpsCache()?.location ?? { poiName: null, areaName: null });
   const [locationLoading, setLocationLoading] = useState(false);
   const [capturing, setCapturing] = useState(false);
   const [facing, setFacing] = useState<'environment' | 'user'>('environment');
@@ -845,25 +892,77 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
   };
 
 
-  // ─── GPS + GEOCODING ─────────────────────────────────────────────────────
-  const doGeocode = useCallback(async (lat: number, lng: number) => {
-    setLocationLoading(true);
-    const result = await reverseGeocode(lat, lng);
-    setLocation(result);
-    setLocationLoading(false);
-  }, []);
-
+  // ─── GPS + GEOCODING (Smart Cache & Zero-Nag) ──────────────────────────
   useEffect(() => {
-    navigator.geolocation.getCurrentPosition(
-      p => {
-        const pos = { lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy };
-        setGps(pos);
-        doGeocode(pos.lat, pos.lng);
-      },
-      () => { },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
-    );
-  }, [doGeocode]);
+    if (typeof navigator === 'undefined' || !('geolocation' in navigator)) return;
+
+    let isMounted = true;
+    const cache = getStoredGpsCache();
+    const now = Date.now();
+    // Cache valid 15 menit untuk inspeksi di satu area/fasilitas
+    const isCacheVeryFresh = cache && (now - cache.timestamp < 15 * 60 * 1000);
+
+    // Jika cache masih sangat baru (< 15 menit), jangan query hardware sensor lagi!
+    // Ini menghentikan pop-up izin browser & notifikasi indikator lokasi yang berulang kali muncul
+    if (isCacheVeryFresh) {
+      if (!gps && cache.gps) setGps(cache.gps);
+      if (!location.poiName && cache.location) setLocation(cache.location);
+      return;
+    }
+
+    const requestPosition = () => {
+      navigator.geolocation.getCurrentPosition(
+        async (p) => {
+          if (!isMounted) return;
+          const pos: GpsData = { lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy };
+          setGps(pos);
+
+          const prev = getStoredGpsCache();
+          // Jika lokasi bergerak < 50m, gunakan kembali nama tempat sebelumnya (hemat kuota & anti-rate-limit)
+          if (prev?.location?.poiName && calculateDistanceMeters(prev.gps.lat, prev.gps.lng, pos.lat, pos.lng) < 50) {
+            setLocation(prev.location);
+            saveGpsCache(pos, prev.location);
+          } else {
+            setLocationLoading(true);
+            const locResult = await reverseGeocode(pos.lat, pos.lng);
+            if (!isMounted) return;
+            setLocation(locResult);
+            setLocationLoading(false);
+            saveGpsCache(pos, locResult);
+          }
+        },
+        (err) => {
+          if (!isMounted) return;
+          console.warn('[GPS] Gagal ambil koordinat GPS:', err.message);
+          setLocationLoading(false);
+        },
+        // maximumAge 5 menit: browser memakai posisi ter-cache OS tanpa memicu dialog izin ulang
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 300000 }
+      );
+    };
+
+    // Cek permission status tanpa memicu popup jika browser mendukung Permissions API
+    if (typeof navigator !== 'undefined' && 'permissions' in navigator && navigator.permissions?.query) {
+      navigator.permissions.query({ name: 'geolocation' as PermissionName })
+        .then((perm) => {
+          if (!isMounted) return;
+          if (perm.state === 'denied') {
+            console.log('[GPS] Izin lokasi ditolak user sebelumnya. Menggunakan fallback offline.');
+            return;
+          }
+          requestPosition();
+        })
+        .catch(() => {
+          if (isMounted) requestPosition();
+        });
+    } else {
+      requestPosition();
+    }
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // ─── CAPTURE ─────────────────────────────────────────────────────────────
   const capture = async () => {
