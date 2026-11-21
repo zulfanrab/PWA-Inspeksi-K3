@@ -52,6 +52,7 @@ interface FormViewProps {
   onClientSuggestionSelect: (name: string) => void;
   onFieldChange: (name: string, value: string) => void;
   onAddPhoto: (dataUrl: string) => void;
+  onAddPhotos?: (dataUrls: string[]) => void;
   onGalleryClick: () => void;
   onRemoveExistingPhoto: (id: string) => void;
   onRemoveNewPhoto: (idx: number) => void;
@@ -83,6 +84,7 @@ export function FormView({
   onClientSuggestionSelect,
   onFieldChange,
   onAddPhoto,
+  onAddPhotos,
   onGalleryClick,
   onRemoveExistingPhoto,
   onRemoveNewPhoto,
@@ -103,12 +105,32 @@ export function FormView({
     <div className="space-y-6 pb-12 relative">
       {/* ── OVERLAY LOADING GALERI ── */}
       {isProcessingGallery && (
-        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white/80 backdrop-blur-sm rounded-2xl">
-          <div className="w-16 h-16 border-4 border-[#10B981]/30 border-t-[#10B981] rounded-full animate-spin mb-4" />
-          <h3 className="text-[#064E3B] font-bold text-lg mb-1">Memproses Foto...</h3>
-          <p className="text-gray-600 font-medium text-sm">
-            {galleryProcessProgress?.current} dari {galleryProcessProgress?.total}
-          </p>
+        <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-black/60 backdrop-blur-md px-6 animate-in fade-in duration-200">
+          <div className="bg-white/95 border border-white/40 p-6 rounded-3xl shadow-2xl flex flex-col items-center max-w-xs w-full text-center">
+            <div className="w-14 h-14 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin mb-4" />
+            <h3 className="text-gray-900 font-bold text-base mb-1">
+              Memproses Foto...
+            </h3>
+            <p className="text-emerald-700 font-semibold text-xs mb-3">
+              Foto {galleryProcessProgress?.current || 0} dari {galleryProcessProgress?.total || 0}
+            </p>
+            {/* Progress bar line */}
+            <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden border border-gray-200/50">
+              <div
+                className="bg-emerald-500 h-full transition-all duration-150 rounded-full"
+                style={{
+                  width: `${
+                    galleryProcessProgress?.total
+                      ? Math.round(((galleryProcessProgress.current) / galleryProcessProgress.total) * 100)
+                      : 0
+                  }%`,
+                }}
+              />
+            </div>
+            <span className="text-[10px] text-gray-500 mt-2 font-medium">
+              Kompresi otomatis hemat memori & ringan
+            </span>
+          </div>
         </div>
       )}
 
@@ -275,7 +297,8 @@ export function FormView({
                   <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors" />
                   <button
                     onClick={() => onRemoveExistingPhoto(photo.id)}
-                    className="absolute top-2 right-2 w-7 h-7 rounded-full bg-red-500 hover:bg-red-600 text-white text-xs flex items-center justify-center opacity-0 scale-75 group-hover:opacity-100 group-hover:scale-100 transition-all duration-200 shadow-lg active:scale-90"
+                    className="absolute top-2 right-2 w-7 h-7 rounded-full bg-red-500 hover:bg-red-600 text-white text-xs flex items-center justify-center opacity-90 md:opacity-0 md:group-hover:opacity-100 transition-all duration-200 shadow-md active:scale-90"
+                    aria-label="Hapus foto"
                   >
                     ✕
                   </button>
@@ -297,7 +320,8 @@ export function FormView({
                   <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors" />
                   <button
                     onClick={() => onRemoveNewPhoto(idx)}
-                    className="absolute top-2 right-2 w-7 h-7 rounded-full bg-red-500 hover:bg-red-600 text-white text-xs flex items-center justify-center opacity-0 scale-75 group-hover:opacity-100 group-hover:scale-100 transition-all duration-200 shadow-lg active:scale-90"
+                    className="absolute top-2 right-2 w-7 h-7 rounded-full bg-red-500 hover:bg-red-600 text-white text-xs flex items-center justify-center opacity-90 md:opacity-0 md:group-hover:opacity-100 transition-all duration-200 shadow-md active:scale-90"
+                    aria-label="Hapus foto baru"
                   >
                     ✕
                   </button>
@@ -327,7 +351,11 @@ export function FormView({
       {showCustomCamera && (
         <CustomCamera
           onCapture={(dataUrls) => {
-            dataUrls.forEach(url => onAddPhoto(url));
+            if (onAddPhotos) {
+              onAddPhotos(dataUrls);
+            } else {
+              dataUrls.forEach(url => onAddPhoto(url));
+            }
             setShowCustomCamera(false);
           }}
           onClose={() => setShowCustomCamera(false)}

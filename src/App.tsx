@@ -46,6 +46,7 @@ import { ClientPicker, type PickedUnit } from './components/ClientPicker';
 import { useResponsive } from './hooks/useResponsive';
 import { uploadProfilePhoto, getProfilePhoto } from './services/profilePhotoService';
 import { convertHeicToJpeg } from './utils/heicConvert';
+import { compressFileToDataUrl, compressDataUrl, yieldToMain } from './utils/photoCompressor';
 import { ReportDashboard } from './components/report/ReportDashboard';
 import { ReportWizard } from './components/report/ReportWizard';
 // ─── TYPES ───────────────────────────────────────────────────────────────────
@@ -325,42 +326,9 @@ function getRoleBadge(email: string): 'Admin' | 'Ahli K3' {
   return email === OWNER_EMAIL ? 'Admin' : 'Ahli K3';
 }
 
-// PR #4: Compress foto ke max 1MB menggunakan canvas
+// Compress foto menggunakan canvas ultra-ringan
 async function compressPhoto(dataUrl: string): Promise<string> {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      // 1. Turunin batas maksimal ke 1080px (Resolusi ideal & tajam buat laporan PDF)
-      const MAX_DIMENSION = 1080;
-      let { width, height } = img;
-      
-      if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
-        if (width > height) {
-          height = Math.round((height * MAX_DIMENSION) / width);
-          width = MAX_DIMENSION;
-        } else {
-          width = Math.round((width * MAX_DIMENSION) / height);
-          height = MAX_DIMENSION;
-        }
-      }
-      
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      
-      if (!ctx) { resolve(dataUrl); return; }
-      ctx.drawImage(img, 0, 0, width, height);
-      
-      // 2. Hapus looping (while) yang bikin HP kerja paksa.
-      // Langsung tembak quality 0.6. Ini sweet spot: file super kecil, visual tetap jelas!
-      const result = canvas.toDataURL('image/jpeg', 0.6);
-      resolve(result);
-    };
-    
-    img.onerror = () => resolve(dataUrl);
-    img.src = dataUrl;
-  });
+  return compressDataUrl(dataUrl);
 }
 
 // ─── DESIGN TOKENS ───────────────────────────────────────────────────────────
@@ -939,29 +907,20 @@ const triggerAutoSync = useCallback(async () => {
     const processedPhotos: string[] = [];
 
     for (let i = 0; i < rawFiles.length; i++) {
-      let file = rawFiles[i];
+      const file = rawFiles[i];
       
-      // Render progress update
+      // Update progress bar & yield ke event loop agar browser me-render UI mulus 60fps
       setGalleryProcessProgress({ current: i + 1, total: rawFiles.length });
-      await new Promise(res => setTimeout(res, 20)); // Kasih napas buat UI
+      await yieldToMain();
 
       try {
-        file = await convertHeicToJpeg(file);
+        const compressed = await compressFileToDataUrl(file);
+        if (compressed) {
+          processedPhotos.push(compressed);
+        }
       } catch (err) {
-        console.error('Failed to convert HEIC:', err);
+        console.error('Failed to compress photo from gallery:', err);
       }
-
-      const dataUrl = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = async () => {
-          const original = reader.result as string;
-          const compressed = await compressPhoto(original);
-          resolve(compressed);
-        };
-        reader.readAsDataURL(file);
-      });
-
-      processedPhotos.push(dataUrl);
     }
 
     setNewPhotos((prev) => [...prev, ...processedPhotos]);
@@ -1633,6 +1592,9 @@ const handleDelete = async (id: string) => {
             onAddPhoto={async (dataUrl) => {
               const compressed = await compressPhoto(dataUrl);
               setNewPhotos((prev) => [...prev, compressed]);
+            }}
+            onAddPhotos={(urls) => {
+              setNewPhotos((prev) => [...prev, ...urls]);
             }}
             onGalleryClick={() => galleryInputRef.current?.click()}
             onRemoveExistingPhoto={removeExistingPhoto}

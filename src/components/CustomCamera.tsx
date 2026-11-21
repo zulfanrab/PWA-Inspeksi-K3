@@ -888,7 +888,7 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
       }
       
       if (watermark) await drawWatermark(ctx, W, H, gps, location);
-      const dataUrl = c.toDataURL('image/jpeg', 0.92);
+      const dataUrl = c.toDataURL('image/jpeg', 0.82);
       setPhotos(prev => [...prev, dataUrl]);
     } catch (e) { console.error('Capture error:', e); }
     finally { setTimeout(() => setCapturing(false), 180); }
