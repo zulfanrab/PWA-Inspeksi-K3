@@ -9,11 +9,15 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   ClientRepository,
   UnitRepository,
+  SessionRepository,
+  db,
   type ClientTemplate,
   type UnitTemplate,
   type UnitWithMeta,
+  type InspectionSession,
 } from '../db/db';
 import { pullTemplatesFromDrive } from '../services/syncService';
+import { CustomCamera } from './CustomCamera';
 
 // ==========================================
 // TYPES
@@ -28,6 +32,8 @@ interface ClientPickerProps {
   onPick: (picked: PickedUnit) => void;         // dipanggil saat unit dipilih → langsung ke form
   onManual: (objectType: string) => void;        // ahli pilih manual tanpa template
   onCancel: () => void;
+  currentUserEmail?: string;
+  onDraftCreated?: () => void;
 }
 
 type PickerTab = 'recentUnits' | 'byClient';
@@ -85,7 +91,7 @@ function Spinner() {
 // MAIN COMPONENT
 // ==========================================
 
-export function ClientPicker({ onPick, onManual, onCancel }: ClientPickerProps) {
+export function ClientPicker({ onPick, onManual, onCancel, currentUserEmail, onDraftCreated }: ClientPickerProps) {
   // Mode Tab: 'recentUnits' (Unit Baru) | 'byClient' (Per Perusahaan)
   const [activeTab, setActiveTab] = useState<PickerTab>(() => {
     return (localStorage.getItem('aksara_quick_picker_tab') as PickerTab) || 'recentUnits';
@@ -97,6 +103,16 @@ export function ClientPicker({ onPick, onManual, onCancel }: ClientPickerProps) 
   }, [activeTab]);
 
   const [showManual, setShowManual] = useState(false);
+
+  // Quick Camera & Feedback States
+  const [quickCameraUnit, setQuickCameraUnit] = useState<PickedUnit | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!toastMessage) return;
+    const t = setTimeout(() => setToastMessage(null), 3500);
+    return () => clearTimeout(t);
+  }, [toastMessage]);
 
   // Data State
   const [recentUnits, setRecentUnits] = useState<UnitWithMeta[]>([]);
@@ -260,6 +276,27 @@ export function ClientPicker({ onPick, onManual, onCancel }: ClientPickerProps) 
     }
   };
 
+  const handleQuickCameraRecent = async (u: UnitWithMeta) => {
+    if (u.client) {
+      setQuickCameraUnit({ client: u.client, unit: u });
+    } else {
+      const foundClient = await ClientRepository.getById(u.clientId);
+      if (foundClient) {
+        setQuickCameraUnit({ client: foundClient, unit: u });
+      } else {
+        setQuickCameraUnit({
+          client: {
+            id: u.clientId,
+            name: u.clientName,
+            createdBy: 'system',
+            createdAt: Date.now(),
+          },
+          unit: u,
+        });
+      }
+    }
+  };
+
   const handleSelectClient = (c: ClientTemplate) => {
     setSelectedClient(c);
     setClientUnitSearch('');
@@ -273,6 +310,62 @@ export function ClientPicker({ onPick, onManual, onCancel }: ClientPickerProps) 
   const handleSelectDrilledUnit = (u: UnitTemplate) => {
     if (!selectedClient) return;
     onPick({ client: selectedClient, unit: u });
+  };
+
+  const handleQuickCameraDrilled = (u: UnitTemplate) => {
+    if (!selectedClient) return;
+    setQuickCameraUnit({ client: selectedClient, unit: u });
+  };
+
+  // Simpan foto langsung ke draft (Auto-Drafting)
+  const handleSaveQuickPhotos = async (target: PickedUnit, capturedPhotos: string[]) => {
+    if (capturedPhotos.length === 0) return;
+    try {
+      // 1. Cek apakah draft untuk unit ini sudah ada
+      const allDrafts = await db.inspection_sessions
+        .where('status')
+        .equals('draft')
+        .toArray();
+
+      const existingDraft = allDrafts.find((s) => s.templateUnitId === target.unit.id);
+
+      if (existingDraft) {
+        // Tambahkan foto ke draft yang sudah ada
+        await SessionRepository.update(existingDraft.id, { updatedAt: Date.now() }, capturedPhotos, []);
+        setToastMessage(`✓ ${capturedPhotos.length} foto baru ditambahkan ke draft ${target.unit.label}`);
+      } else {
+        // Buat draft baru otomatis dengan data dari template Admin Panel
+        const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Jakarta' });
+        const sessionData: Omit<InspectionSession, 'id' | 'createdAt'> = {
+          clientName: target.client.name,
+          objectType: target.unit.objectType,
+          unitData: {
+            tanggal_inspeksi: today,
+            sifat_pemeriksaan: target.unit.unitData?.sifat_pemeriksaan || 'Baru',
+            ...target.unit.unitData,
+          },
+          status: 'draft',
+          templateClientId: target.client.id,
+          templateUnitId: target.unit.id,
+          inspectorEmail: currentUserEmail || '',
+          uploadStatus: 'pending_upload',
+          photosUploaded: 0,
+        };
+        await SessionRepository.create(sessionData, capturedPhotos);
+        setToastMessage(`✓ Draft tersimpan: ${target.unit.label} (${capturedPhotos.length} foto)`);
+      }
+
+      // Refresh data agar badge unit langsung berubah menjadi "📷 X Foto"
+      await loadInitialData();
+      if (selectedClient) {
+        const units = await UnitRepository.getByClient(selectedClient.id);
+        setClientUnits(units);
+      }
+      onDraftCreated?.();
+    } catch (err) {
+      console.error('Failed to quick save photos:', err);
+      alert('Gagal menyimpan foto ke draft');
+    }
   };
 
   // ==========================================
@@ -433,12 +526,21 @@ export function ClientPicker({ onPick, onManual, onCancel }: ClientPickerProps) 
                     </div>
 
                     <div className="flex-shrink-0 self-center">
-                      <div className="w-9 h-9 rounded-full bg-emerald-500 group-hover:bg-emerald-600 text-white flex items-center justify-center shadow-sm transition-all group-hover:scale-105">
-                        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleQuickCameraDrilled(u);
+                        }}
+                        className="w-10 h-10 rounded-2xl bg-emerald-500 hover:bg-emerald-600 active:scale-90 text-white flex items-center justify-center shadow-md hover:shadow-lg transition-all hover:scale-105"
+                        title="Jepret Foto Langsung"
+                        aria-label="Ambil foto unit ini"
+                      >
+                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
                           <circle cx="12" cy="13" r="4" />
                         </svg>
-                      </div>
+                      </button>
                     </div>
                   </div>
                 </button>
@@ -655,12 +757,21 @@ export function ClientPicker({ onPick, onManual, onCancel }: ClientPickerProps) 
 
                       {/* Tombol Kamera Cepat */}
                       <div className="flex-shrink-0 self-center pl-1">
-                        <div className="w-10 h-10 rounded-full bg-emerald-500 group-hover:bg-emerald-600 text-white flex items-center justify-center shadow-md transition-all group-hover:scale-105">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleQuickCameraRecent(u);
+                          }}
+                          className="w-11 h-11 rounded-2xl bg-emerald-500 hover:bg-emerald-600 active:scale-90 text-white flex items-center justify-center shadow-md hover:shadow-lg transition-all hover:scale-105"
+                          title="Jepret Foto Langsung"
+                          aria-label="Ambil foto unit ini"
+                        >
                           <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                             <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
                             <circle cx="12" cy="13" r="4" />
                           </svg>
-                        </div>
+                        </button>
                       </div>
                     </div>
                   </button>
@@ -767,6 +878,34 @@ export function ClientPicker({ onPick, onManual, onCancel }: ClientPickerProps) 
           <span>→</span>
         </button>
       </div>
+
+      {/* ── Toast Notification ── */}
+      {toastMessage && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] px-4 py-2.5 bg-gray-900/90 dark:bg-emerald-950/95 text-white text-xs font-bold rounded-2xl shadow-2xl border border-emerald-500/30 backdrop-blur-md flex items-center gap-2 animate-in fade-in slide-in-from-bottom-3 duration-200">
+          <span className="text-emerald-400 text-sm">✅</span>
+          <span>{toastMessage}</span>
+          <button
+            onClick={() => setToastMessage(null)}
+            className="ml-2 text-gray-400 hover:text-white text-xs"
+            aria-label="Tutup notifikasi"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* ── Direct Quick Camera Overlay ── */}
+      {quickCameraUnit && (
+        <CustomCamera
+          unitLabel={quickCameraUnit.unit.label}
+          clientName={quickCameraUnit.client.name}
+          onCapture={async (photos) => {
+            await handleSaveQuickPhotos(quickCameraUnit, photos);
+            setQuickCameraUnit(null);
+          }}
+          onClose={() => setQuickCameraUnit(null)}
+        />
+      )}
     </div>
   );
 }

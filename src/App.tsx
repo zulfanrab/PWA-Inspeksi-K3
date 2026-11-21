@@ -1559,7 +1559,16 @@ const handleDelete = async (id: string) => {
         )}
 
         {view === 'PICK_UNIT' && (
-          <ClientPicker onPick={handleUnitPicked} onManual={handleManualPick} onCancel={goBack} />
+          <ClientPicker
+            onPick={handleUnitPicked}
+            onManual={handleManualPick}
+            onCancel={goBack}
+            currentUserEmail={currentUserEmail}
+            onDraftCreated={async () => {
+              const d = await SessionRepository.getDrafts();
+              setDrafts(d);
+            }}
+          />
         )}
 
 {view === 'FORM' && (

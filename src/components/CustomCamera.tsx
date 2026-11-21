@@ -5,6 +5,8 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 interface CustomCameraProps {
   onCapture: (dataUrls: string[]) => void;
   onClose: () => void;
+  unitLabel?: string;
+  clientName?: string;
 }
 
 interface GpsData {
@@ -617,7 +619,7 @@ const navBtnStyle: React.CSSProperties = {
 };
 
 // ─── KOMPONEN UTAMA ───────────────────────────────────────────────────────────
-export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
+export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: CustomCameraProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -1025,6 +1027,28 @@ export function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
             transition: 'transform 0.1s ease-out',
             transformOrigin: 'center center',
           }} />
+
+          {/* Target Unit Badge (Jika dibuka via Quick Photo) */}
+          {unitLabel && (
+            <div style={{
+              position: 'absolute', top: 14, left: '50%', transform: 'translateX(-50%)',
+              background: 'rgba(15, 23, 42, 0.88)', backdropFilter: 'blur(10px)',
+              border: '1px solid rgba(16, 185, 129, 0.45)', borderRadius: 24,
+              padding: '6px 16px', zIndex: 30, pointerEvents: 'none',
+              display: 'flex', alignItems: 'center', gap: 7, maxWidth: '85%',
+              boxShadow: '0 4px 18px rgba(0,0,0,0.6)',
+            }}>
+              <span style={{ fontSize: 13 }}>⚡</span>
+              <span style={{ color: '#FFFFFF', fontSize: 12, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {unitLabel}
+              </span>
+              {clientName && (
+                <span style={{ color: '#34D399', fontSize: 11, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  • {clientName}
+                </span>
+              )}
+            </div>
+          )}
 
           {/* Flash */}
           {capturing && (
