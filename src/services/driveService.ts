@@ -209,8 +209,10 @@ export const uploadToDrive = async (
     }
 
     // ── PHASE 2: Upload Foto (Antrean Satu per Satu dengan Auto-Resume) ──
-    // Kalau sebelumnya gagal di tengah jalan (partial_failed), kita lanjutin dari index terakhir
-    const startIdx = session.uploadStatus === 'partial_failed' ? (session.photosUploaded || 0) : 0;
+    // Kalau sebelumnya gagal di tengah jalan (partial_failed atau app terhenti saat uploading_photos), kita lanjutin dari index terakhir
+    const startIdx = (session.uploadStatus === 'partial_failed' || session.uploadStatus === 'uploading_photos')
+      ? (session.photosUploaded || 0)
+      : 0;
 
     for (let i = startIdx; i < totalPhotos; i++) {
       const photo = photosToUpload[i];

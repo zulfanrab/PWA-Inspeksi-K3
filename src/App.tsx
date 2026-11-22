@@ -523,6 +523,57 @@ export default function App() {
   
   // Mutex lock untuk mencegah sinkronisasi ganda / race condition
   const isSyncingRef = useRef(false);
+  const wakeLockRef = useRef<any>(null);
+
+  const requestWakeLock = useCallback(async () => {
+    try {
+      if ('wakeLock' in navigator && !wakeLockRef.current) {
+        wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
+        wakeLockRef.current.addEventListener('release', () => {
+          wakeLockRef.current = null;
+        });
+        console.log('[WakeLock] Screen wake lock aktif saat proses upload');
+      }
+    } catch (err) {
+      console.warn('[WakeLock] Screen wake lock tidak dapat diaktifkan:', err);
+    }
+  }, []);
+
+  const releaseWakeLock = useCallback(() => {
+    try {
+      if (wakeLockRef.current) {
+        wakeLockRef.current.release();
+        wakeLockRef.current = null;
+        console.log('[WakeLock] Screen wake lock dilepas');
+      }
+    } catch (err) {
+      // Ignore
+    }
+  }, []);
+
+  // Cegah tutup browser / swipe tab tidak sengaja saat upload berlangsung
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isSyncingRef.current) {
+        e.preventDefault();
+        e.returnValue = 'Data inspeksi sedang diunggah ke Google Drive. Menutup aplikasi akan menjeda proses unggah.';
+        return e.returnValue;
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
+
+  // Re-acquire wake lock jika layar dibuka kembali
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && isSyncingRef.current) {
+        requestWakeLock();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [requestWakeLock]);
 
   // Background Sync Floating Pill State (Non-Blocking)
   const [bgSync, setBgSync] = useState<{
@@ -716,6 +767,7 @@ const triggerAutoSync = useCallback(async () => {
       return;
     }
     isSyncingRef.current = true;
+    await requestWakeLock();
     
     const initialDrafts = await SessionRepository.getDrafts();
     if (initialDrafts.length === 0) {
@@ -810,6 +862,7 @@ const triggerAutoSync = useCallback(async () => {
         showToast(`⚠️ Gagal mengunggah ${failedDraftIds.length} unit. Periksa koneksi internet.`, 'error');
       }
     } finally {
+      releaseWakeLock();
       setUploadingId(null);
       setUploadProgress(null);
       setBgSync(null);
