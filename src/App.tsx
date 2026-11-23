@@ -43,7 +43,7 @@ import { useResponsive } from './hooks/useResponsive';
 import { uploadProfilePhoto, getProfilePhoto } from './services/profilePhotoService';
 import { convertHeicToJpeg } from './utils/heicConvert';
 import { compressFileToDataUrl, compressDataUrl, yieldToMain } from './utils/photoCompressor';
-import { triggerBackAction } from './utils/navigationGuard';
+import { triggerBackAction, initGlobalGestureBlocker } from './utils/navigationGuard';
 import { ReportDashboard } from './components/report/ReportDashboard';
 import { ReportWizard } from './components/report/ReportWizard';
 // ─── TYPES ───────────────────────────────────────────────────────────────────
@@ -466,6 +466,7 @@ export default function App() {
   }, [goBack]);
 
   useEffect(() => {
+    const cleanupGestureBlocker = initGlobalGestureBlocker();
     window.history.pushState(null, '', window.location.href);
 
     const handlePopState = () => {
@@ -478,6 +479,7 @@ export default function App() {
 
     window.addEventListener('popstate', handlePopState);
     return () => {
+      cleanupGestureBlocker();
       window.removeEventListener('popstate', handlePopState);
     };
   }, []);
@@ -1314,7 +1316,7 @@ const handleDelete = async (id: string) => {
   // ── RENDER ────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ minHeight: '100vh', background: T.bg, fontFamily: 'system-ui, -apple-system, sans-serif', color: T.textPrimary }}>
+    <div style={{ minHeight: '100vh', width: '100%', maxWidth: '100vw', overflowX: 'hidden', position: 'relative', touchAction: 'pan-y', background: T.bg, fontFamily: 'system-ui, -apple-system, sans-serif', color: T.textPrimary }}>
       <style>{`
         @keyframes spin {
           to { transform: rotate(360deg); }
@@ -1560,7 +1562,7 @@ const handleDelete = async (id: string) => {
       )}
 
       {/* MAIN */}
-      <main style={{ maxWidth: isDesktop ? 'none' : 640, margin: isDesktop ? '0 24px' : '0 auto', padding: isDesktop ? '24px 24px 32px' : '16px 16px 100px', marginLeft: isDesktop ? 260 : 'auto', display: 'flex', flexDirection: 'column', gap: isDesktop ? 24 : 16 }}>
+      <main style={{ maxWidth: isDesktop ? 'none' : 640, margin: isDesktop ? '0 24px' : '0 auto', padding: isDesktop ? '24px 24px 32px' : '16px 16px 100px', marginLeft: isDesktop ? 260 : 'auto', display: 'flex', flexDirection: 'column', gap: isDesktop ? 24 : 16, width: '100%', overflowX: 'hidden', touchAction: 'pan-y' }}>
 
         {/* Desktop Alerts - Visible across all views on Desktop */}
         {isDesktop && (
