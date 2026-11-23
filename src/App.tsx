@@ -1787,7 +1787,7 @@ const handleDelete = async (id: string) => {
           }}
           style={{
             position: 'fixed',
-            top: isDesktop ? 20 : 12,
+            top: isDesktop ? 76 : 'calc(64px + env(safe-area-inset-top, 0px))',
             right: isDesktop ? 24 : 'auto',
             left: isDesktop ? 'auto' : '50%',
             transform: isDesktop ? 'none' : 'translateX(-50%)',

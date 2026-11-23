@@ -391,7 +391,7 @@ export function FormView({
           
           <div className="mt-5 space-y-2.5">
             <div className="flex justify-between text-xs font-bold text-blue-800">
-              <span>Munggah Foto ({uploadProgress.loaded} / {uploadProgress.total})</span>
+              <span>Mengunggah Foto ({uploadProgress.loaded} / {uploadProgress.total})</span>
               <span className="bg-blue-200/50 px-2 py-0.5 rounded-full">{Math.round(uploadProgress.percentage)}%</span>
             </div>
             <div className="w-full bg-blue-200/50 rounded-full h-2.5 overflow-hidden backdrop-blur-sm">
