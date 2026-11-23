@@ -465,6 +465,11 @@ export default function App() {
     goBackRef.current = goBack;
   }, [goBack]);
 
+  const screenStackRef = useRef(screenStack);
+  useEffect(() => {
+    screenStackRef.current = screenStack;
+  }, [screenStack]);
+
   useEffect(() => {
     const cleanupGestureBlocker = initGlobalGestureBlocker();
     window.history.pushState(null, '', window.location.href);
@@ -472,7 +477,16 @@ export default function App() {
     const handlePopState = () => {
       window.history.pushState(null, '', window.location.href);
       const handled = triggerBackAction();
-      if (!handled) {
+      if (handled) return;
+
+      const currentView = screenStackRef.current[screenStackRef.current.length - 1];
+      // CRITICAL SAFETY LOCK: NEVER blindly unmount or undo active work views on swipe/popstate!
+      if (currentView === 'FORM' || currentView === 'PICK_UNIT' || currentView === 'REPORT_WIZARD') {
+        console.warn('[NavigationGuard] Accidental swipe/back prevented on active view:', currentView);
+        return;
+      }
+
+      if (screenStackRef.current.length > 1) {
         goBackRef.current();
       }
     };

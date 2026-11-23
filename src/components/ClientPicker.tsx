@@ -18,6 +18,7 @@ import {
 } from '../db/db';
 import { pullTemplatesFromDrive } from '../services/syncService';
 import { CustomCamera } from './CustomCamera';
+import { registerBackInterceptor } from '../utils/navigationGuard';
 
 // ==========================================
 // TYPES
@@ -106,6 +107,7 @@ export function ClientPicker({ onPick, onManual, onCancel, currentUserEmail, onD
 
   // Quick Camera & Feedback States
   const [quickCameraUnit, setQuickCameraUnit] = useState<PickedUnit | null>(null);
+
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -317,6 +319,23 @@ export function ClientPicker({ onPick, onManual, onCancel, currentUserEmail, onD
     if (!selectedClient) return;
     setQuickCameraUnit({ client: selectedClient, unit: u });
   };
+
+  // Intercept back navigation so back returns to parent view inside picker instead of exiting
+  useEffect(() => {
+    const unregister = registerBackInterceptor(() => {
+      if (quickCameraUnit) return false;
+      if (selectedClient) {
+        handleBackFromClient();
+        return true;
+      }
+      if (showManual) {
+        setShowManual(false);
+        return true;
+      }
+      return false;
+    });
+    return unregister;
+  }, [quickCameraUnit, selectedClient, showManual]);
 
   // Simpan foto langsung ke draft (Auto-Drafting)
   const handleSaveQuickPhotos = async (target: PickedUnit, capturedPhotos: string[]) => {

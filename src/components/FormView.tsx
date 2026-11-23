@@ -100,24 +100,17 @@ export function FormView({
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
   const handleCancelClick = () => {
-    if (newPhotos.length > 0) {
-      setShowCancelConfirm(true);
-    } else {
-      onCancel();
-    }
+    setShowCancelConfirm(true);
   };
 
   useEffect(() => {
     const unregister = registerBackInterceptor(() => {
       if (showCustomCamera) return false;
-      if (newPhotos.length > 0) {
-        setShowCancelConfirm(true);
-        return true;
-      }
-      return false;
+      setShowCancelConfirm(true);
+      return true;
     });
     return unregister;
-  }, [showCustomCamera, newPhotos.length]);
+  }, [showCustomCamera]);
 
   const REQUIRED_COMMON = ['namaUnit', 'nomorSeri'];
   const requiredFields = commonFields.filter(f => REQUIRED_COMMON.includes(f.name));
@@ -444,7 +437,11 @@ export function FormView({
                 Batalkan Pengisian Form?
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed">
-                Terdapat <strong className="text-emerald-600 font-bold">{newPhotos.length} foto baru</strong> yang belum disimpan ke draft offline. Jika Anda membatalkan, foto ini akan hilang.
+                {newPhotos.length > 0 ? (
+                  <>Terdapat <strong className="text-emerald-600 font-bold">{newPhotos.length} foto baru</strong> yang belum disimpan ke draft offline. Jika Anda membatalkan, foto ini akan hilang.</>
+                ) : (
+                  <>Data atau perubahan yang telah diisi pada form ini belum disimpan. Apakah Anda yakin ingin membatalkan dan keluar?</>
+                )}
               </p>
             </div>
             <div className="space-y-2 pt-2">

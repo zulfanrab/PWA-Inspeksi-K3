@@ -26,15 +26,15 @@
   box-sizing: border-box;
 }
 
-html, body, #root {
+html, body, #root, #root > div {
   width: 100%;
   max-width: 100vw;
-  overflow-x: hidden;
+  overflow-x: hidden !important;
   position: relative;
-  overscroll-behavior: none;
-  overscroll-behavior-x: none;
-  overscroll-behavior-y: none;
-  touch-action: pan-y;
+  overscroll-behavior: none !important;
+  overscroll-behavior-x: none !important;
+  overscroll-behavior-y: none !important;
+  touch-action: pan-y !important;
   -webkit-overflow-scrolling: touch;
 }
 

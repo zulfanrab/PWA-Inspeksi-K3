@@ -7,6 +7,7 @@ import { ValidationEngine } from '../../engines/ValidationEngine';
 import { ImageCompressor } from '../../engines/ImageCompressor';
 import { SequenceGenerator } from '../../engines/SequenceGenerator';
 import { getApiBaseUrl } from '../../config';
+import { registerBackInterceptor } from '../../utils/navigationGuard';
 
 interface ReportWizardProps {
   reportId: number | null; // null jika buat baru
@@ -15,6 +16,21 @@ interface ReportWizardProps {
 
 export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
   const [currentStep, setCurrentStep] = useState(1);
+
+  // Prevent accidental swipe or back gesture from destroying wizard progress
+  useEffect(() => {
+    const unregister = registerBackInterceptor(() => {
+      if (currentStep > 1) {
+        setCurrentStep(prev => prev - 1);
+        return true;
+      }
+      if (confirm('Tutup wizard laporan? Data yang belum di-generate akan dibatalkan.')) {
+        onClose();
+      }
+      return true;
+    });
+    return unregister;
+  }, [currentStep, onClose]);
   const [inspectionsList, setInspectionsList] = useState<any[]>([]);
   const [selectedInspection, setSelectedInspection] = useState<any>(null);
   
