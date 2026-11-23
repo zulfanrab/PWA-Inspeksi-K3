@@ -305,6 +305,7 @@ export function ClientPicker({ onPick, onManual, onCancel, currentUserEmail, onD
   const handleBackFromClient = () => {
     setSelectedClient(null);
     setClientUnitSearch('');
+    setQuickCameraUnit(null);
   };
 
   const handleSelectDrilledUnit = (u: UnitTemplate) => {
@@ -547,6 +548,34 @@ export function ClientPicker({ onPick, onManual, onCancel, currentUserEmail, onD
               );
             })}
           </div>
+        )}
+
+        {/* ── Toast Notification ── */}
+        {toastMessage && (
+          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] px-4 py-2.5 bg-gray-900/90 dark:bg-emerald-950/95 text-white text-xs font-bold rounded-2xl shadow-2xl border border-emerald-500/30 backdrop-blur-md flex items-center gap-2 animate-in fade-in slide-in-from-bottom-3 duration-200">
+            <span className="text-emerald-400 text-sm">✅</span>
+            <span>{toastMessage}</span>
+            <button
+              onClick={() => setToastMessage(null)}
+              className="ml-2 text-gray-400 hover:text-white text-xs"
+              aria-label="Tutup notifikasi"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* ── Direct Quick Camera Overlay ── */}
+        {quickCameraUnit && (
+          <CustomCamera
+            unitLabel={quickCameraUnit.unit.label}
+            clientName={quickCameraUnit.client.name}
+            onCapture={async (photos) => {
+              await handleSaveQuickPhotos(quickCameraUnit, photos);
+              setQuickCameraUnit(null);
+            }}
+            onClose={() => setQuickCameraUnit(null)}
+          />
         )}
       </div>
     );
