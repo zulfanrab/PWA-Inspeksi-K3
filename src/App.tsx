@@ -43,6 +43,7 @@ import { useResponsive } from './hooks/useResponsive';
 import { uploadProfilePhoto, getProfilePhoto } from './services/profilePhotoService';
 import { convertHeicToJpeg } from './utils/heicConvert';
 import { compressFileToDataUrl, compressDataUrl, yieldToMain } from './utils/photoCompressor';
+import { triggerBackAction } from './utils/navigationGuard';
 import { ReportDashboard } from './components/report/ReportDashboard';
 import { ReportWizard } from './components/report/ReportWizard';
 // ─── TYPES ───────────────────────────────────────────────────────────────────
@@ -469,7 +470,10 @@ export default function App() {
 
     const handlePopState = () => {
       window.history.pushState(null, '', window.location.href);
-      goBackRef.current();
+      const handled = triggerBackAction();
+      if (!handled) {
+        goBackRef.current();
+      }
     };
 
     window.addEventListener('popstate', handlePopState);
@@ -559,6 +563,14 @@ export default function App() {
         e.returnValue = 'Data inspeksi sedang diunggah ke Google Drive. Menutup aplikasi akan menjeda proses unggah.';
         return e.returnValue;
       }
+      try {
+        const tempCamera = sessionStorage.getItem('aksara_camera_backup_photos');
+        if (tempCamera && JSON.parse(tempCamera).length > 0) {
+          e.preventDefault();
+          e.returnValue = 'Ada foto survey yang belum disimpan! Yakin ingin meninggalkan halaman?';
+          return e.returnValue;
+        }
+      } catch {}
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);

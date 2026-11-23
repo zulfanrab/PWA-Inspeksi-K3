@@ -30,12 +30,19 @@ body {
     'Helvetica Neue', Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  overscroll-behavior: none;
   overscroll-behavior-x: none;
+  overscroll-behavior-y: none;
 }
 /* Smooth scroll */
 html {
   scroll-behavior: smooth;
+  overscroll-behavior: none;
   overscroll-behavior-x: none;
+  overscroll-behavior-y: none;
+}
+#root {
+  overscroll-behavior: none;
 }
 
 /* Input number: hilangkan arrow spinner di Chrome */

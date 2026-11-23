@@ -1,5 +1,6 @@
 // src/components/CustomCamera.tsx
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { registerBackInterceptor } from '../utils/navigationGuard';
 
 // ─── TYPES ────────────────────────────────────────────────────────────────────
 interface CustomCameraProps {
@@ -680,8 +681,18 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
   const [locationLoading, setLocationLoading] = useState(false);
   const [capturing, setCapturing] = useState(false);
   const [facing, setFacing] = useState<'environment' | 'user'>('environment');
-  const [photos, setPhotos] = useState<string[]>([]);
+  const [photos, setPhotos] = useState<string[]>(() => {
+    try {
+      const saved = sessionStorage.getItem('aksara_camera_backup_photos');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [];
+  });
   const [gallery, setGallery] = useState<{ open: boolean; index: number }>({ open: false, index: 0 });
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
 
   // States untuk Flash/Torch & Zoom
   const [zoom, setZoom] = useState(1);
@@ -996,7 +1007,76 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
     finally { setTimeout(() => setCapturing(false), 180); }
   };
 
-  const handleSave = () => { if (photos.length > 0) { onCapture(photos); onClose(); } };
+  // Backup foto ke sessionStorage agar aman dari crash / reload tak terduga
+  useEffect(() => {
+    try {
+      if (photos.length > 0) {
+        sessionStorage.setItem('aksara_camera_backup_photos', JSON.stringify(photos));
+      } else {
+        sessionStorage.removeItem('aksara_camera_backup_photos');
+      }
+    } catch (e) {
+      console.warn('Gagal backup foto ke sessionStorage:', e);
+    }
+  }, [photos]);
+
+  // Cegah gesture swipe-back native browser (swipe kiri/kanan dari tepi layar)
+  useEffect(() => {
+    const blockEdgeSwipe = (e: TouchEvent) => {
+      if (e.touches && e.touches.length > 0) {
+        const x = e.touches[0].clientX;
+        // Area tepi layar (40px kiri atau kanan)
+        if (x < 40 || x > window.innerWidth - 40) {
+          e.preventDefault();
+        }
+      }
+    };
+
+    window.addEventListener('touchstart', blockEdgeSwipe, { passive: false });
+    window.addEventListener('touchmove', blockEdgeSwipe, { passive: false });
+
+    return () => {
+      window.removeEventListener('touchstart', blockEdgeSwipe);
+      window.removeEventListener('touchmove', blockEdgeSwipe);
+    };
+  }, []);
+
+  const requestClose = useCallback(() => {
+    if (gallery.open) {
+      setGallery({ open: false, index: 0 });
+      return;
+    }
+    if (photos.length > 0) {
+      setShowExitConfirm(true);
+      return;
+    }
+    try {
+      sessionStorage.removeItem('aksara_camera_backup_photos');
+    } catch {}
+    onClose();
+  }, [gallery.open, photos.length, onClose]);
+
+  // Intercept tombol back browser / gesture swipe back
+  useEffect(() => {
+    const unregister = registerBackInterceptor(() => {
+      if (showExitConfirm) {
+        return true;
+      }
+      requestClose();
+      return true; // Cegah browser melakukan back/undo yang melenyapkan foto
+    });
+    return unregister;
+  }, [requestClose, showExitConfirm]);
+
+  const handleSave = () => {
+    if (photos.length > 0) {
+      try {
+        sessionStorage.removeItem('aksara_camera_backup_photos');
+      } catch {}
+      onCapture(photos);
+      onClose();
+    }
+  };
 
   const openGallery = (index = 0) => setGallery({ open: true, index });
 
@@ -1010,6 +1090,11 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
       <div style={{
         position: 'fixed', inset: 0, background: '#000', zIndex: 9999,
         display: 'flex', flexDirection: 'column', userSelect: 'none',
+        WebkitUserSelect: 'none',
+        touchAction: 'none',
+        overscrollBehavior: 'none',
+        overscrollBehaviorX: 'none',
+        overscrollBehaviorY: 'none',
       }}>
         <canvas ref={canvasRef} style={{ display: 'none' }} />
 
@@ -1021,7 +1106,7 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
           background: 'rgba(0,0,0,0.82)', backdropFilter: 'blur(8px)',
           borderBottom: '1px solid rgba(255,255,255,0.06)', gap: 10, flexShrink: 0,
         }}>
-          <button onClick={onClose} style={{
+          <button onClick={requestClose} style={{
             background: 'rgba(255,255,255,0.08)', color: '#E2E8F0',
             border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10,
             padding: '7px 12px', fontSize: 12, fontWeight: 600,
@@ -1310,7 +1395,7 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
                 💾 Simpan ({photos.length})
               </button>
             ) : (
-              <button onClick={onClose} style={{
+              <button onClick={requestClose} style={{
                 background: 'rgba(255, 255, 255, 0.1)',
                 border: 'none', borderRadius: 12,
                 padding: '11px 16px', color: '#fff', fontSize: 13, fontWeight: 600,
@@ -1387,6 +1472,150 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
           onDeleteOne={deleteOne}
           onDeleteAll={() => { setPhotos([]); }}
         />
+      )}
+
+      {/* ── MODAL KONFIRMASI KELUAR KAMERA ─────────────────────────────── */}
+      {showExitConfirm && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 10001,
+            background: 'rgba(0, 0, 0, 0.85)',
+            backdropFilter: 'blur(12px)',
+            WebkitBackdropFilter: 'blur(12px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px',
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div
+            style={{
+              width: '100%',
+              maxWidth: '380px',
+              background: '#0F172A',
+              border: '1px solid rgba(255, 255, 255, 0.15)',
+              borderRadius: '24px',
+              padding: '24px 20px',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.8)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '16px',
+              textAlign: 'center',
+            }}
+          >
+            {/* Warning Icon Badge */}
+            <div
+              style={{
+                width: '60px',
+                height: '60px',
+                borderRadius: '50%',
+                background: 'rgba(239, 68, 68, 0.15)',
+                border: '1.5px solid rgba(239, 68, 68, 0.35)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '28px',
+                margin: '0 auto',
+              }}
+            >
+              ⚠️
+            </div>
+
+            {/* Title & Description */}
+            <div>
+              <h3 style={{ color: '#F8FAFC', fontSize: '18px', fontWeight: 700, margin: '0 0 8px 0' }}>
+                Foto Belum Disimpan!
+              </h3>
+              <p style={{ color: '#94A3B8', fontSize: '13px', lineHeight: 1.5, margin: 0 }}>
+                Ada <strong style={{ color: '#10B981', fontSize: '14px' }}>{photos.length} foto survey</strong> yang telah Anda ambil. Jika Anda keluar sekarang tanpa menyimpan, semua foto ini akan <strong style={{ color: '#EF4444' }}>hilang permanen</strong>.
+              </p>
+            </div>
+
+            {/* Action Buttons */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '6px' }}>
+              {/* Opsi 1: Simpan & Tutup */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowExitConfirm(false);
+                  handleSave();
+                }}
+                style={{
+                  width: '100%',
+                  padding: '13px 16px',
+                  borderRadius: '14px',
+                  background: 'linear-gradient(135deg, #10B981, #059669)',
+                  color: '#FFFFFF',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  border: 'none',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  boxShadow: '0 4px 14px rgba(16, 185, 129, 0.4)',
+                }}
+              >
+                💾 Simpan ({photos.length} Foto) & Keluar
+              </button>
+
+              {/* Opsi 2: Lanjut Memotret */}
+              <button
+                type="button"
+                onClick={() => setShowExitConfirm(false)}
+                style={{
+                  width: '100%',
+                  padding: '12px 16px',
+                  borderRadius: '14px',
+                  background: 'rgba(255, 255, 255, 0.08)',
+                  color: '#E2E8F0',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  border: '1px solid rgba(255, 255, 255, 0.15)',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                }}
+              >
+                📸 Lanjut Memotret
+              </button>
+
+              {/* Opsi 3: Buang Foto & Keluar */}
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    sessionStorage.removeItem('aksara_camera_backup_photos');
+                  } catch {}
+                  setPhotos([]);
+                  setShowExitConfirm(false);
+                  onClose();
+                }}
+                style={{
+                  width: '100%',
+                  padding: '10px 16px',
+                  borderRadius: '14px',
+                  background: 'transparent',
+                  color: '#EF4444',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  border: 'none',
+                  cursor: 'pointer',
+                  opacity: 0.85,
+                  transition: 'opacity 0.15s',
+                }}
+              >
+                🗑️ Buang Foto & Keluar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );

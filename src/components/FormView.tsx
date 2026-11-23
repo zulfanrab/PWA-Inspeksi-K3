@@ -1,7 +1,8 @@
 // src/components/FormView.tsx
 import { Document3DLoading } from './Document3DLoading';
 import { CustomCamera } from './CustomCamera';
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import { registerBackInterceptor } from '../utils/navigationGuard';
 import type { ReactNode } from 'react';
 import type { InspectionPhoto } from '../db/db';
 import type { SifatPemeriksaan } from '../types';
@@ -96,6 +97,27 @@ export function FormView({
   const isEdit = formMode === 'edit';
   const [showOptional, setShowOptional] = useState(false);
   const [showCustomCamera, setShowCustomCamera] = useState(false);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+
+  const handleCancelClick = () => {
+    if (newPhotos.length > 0) {
+      setShowCancelConfirm(true);
+    } else {
+      onCancel();
+    }
+  };
+
+  useEffect(() => {
+    const unregister = registerBackInterceptor(() => {
+      if (showCustomCamera) return false;
+      if (newPhotos.length > 0) {
+        setShowCancelConfirm(true);
+        return true;
+      }
+      return false;
+    });
+    return unregister;
+  }, [showCustomCamera, newPhotos.length]);
 
   const REQUIRED_COMMON = ['namaUnit', 'nomorSeri'];
   const requiredFields = commonFields.filter(f => REQUIRED_COMMON.includes(f.name));
@@ -387,7 +409,7 @@ export function FormView({
       {/* Action Buttons */}
       <div className="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-xl pt-4 pb-6 px-4 border-t border-gray-200/80 flex gap-3 z-50 shadow-[0_-4px_20px_-5px_rgb(0,0,0,0.05)]">
         <button
-          onClick={onCancel}
+          onClick={handleCancelClick}
           className="flex-[1] py-3.5 rounded-2xl border border-gray-200 bg-white text-sm font-bold text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-all active:scale-[0.98] shadow-sm"
         >
           Batal
@@ -409,6 +431,44 @@ export function FormView({
       
       {/* Spacer to prevent bottom content from being hidden by the fixed bottom bar */}
       <div className="h-16"></div>
+
+      {/* Confirmation Modal Batal */}
+      {showCancelConfirm && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 max-w-sm w-full shadow-2xl text-center space-y-4">
+            <div className="w-14 h-14 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center text-2xl mx-auto">
+              ⚠️
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+                Batalkan Pengisian Form?
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed">
+                Terdapat <strong className="text-emerald-600 font-bold">{newPhotos.length} foto baru</strong> yang belum disimpan ke draft offline. Jika Anda membatalkan, foto ini akan hilang.
+              </p>
+            </div>
+            <div className="space-y-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowCancelConfirm(false)}
+                className="w-full py-3 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-sm transition"
+              >
+                Lanjut Mengisi
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCancelConfirm(false);
+                  onCancel();
+                }}
+                className="w-full py-2.5 px-4 rounded-xl text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 font-bold text-xs transition"
+              >
+                Ya, Batalkan & Hapus Foto
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
