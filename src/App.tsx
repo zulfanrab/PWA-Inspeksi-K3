@@ -12,7 +12,6 @@
 // FIXED (PR #4): Compress foto ke max 1MB sebelum disimpan ke IndexedDB
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { flushSync } from 'react-dom';
 import {
   SessionRepository,
   RoleRepository,
@@ -22,10 +21,8 @@ import {
   type InspectionPhoto,
 } from './db/db';
 import {
-  uploadToDrive,
   saveToken,
   clearToken,
-  type UploadProgress,
   deletePhotoFromDrive,
 } from './services/driveService';
 import {
@@ -40,8 +37,9 @@ import { HistoryView } from './components/HistoryView';
 import { AdminPanel } from './components/AdminPanel';
 import { ClientPicker, type PickedUnit } from './components/ClientPicker';
 import { useResponsive } from './hooks/useResponsive';
+import { useUploadQueue } from './hooks/useUploadQueue';
+import { FloatingUploadWidget } from './components/FloatingUploadWidget';
 import { uploadProfilePhoto, getProfilePhoto } from './services/profilePhotoService';
-import { convertHeicToJpeg } from './utils/heicConvert';
 import { compressFileToDataUrl, compressDataUrl, yieldToMain } from './utils/photoCompressor';
 import { triggerBackAction, initGlobalGestureBlocker } from './utils/navigationGuard';
 import { ReportDashboard } from './components/report/ReportDashboard';
@@ -51,17 +49,6 @@ import { ReportWizard } from './components/report/ReportWizard';
 type View = 'HOME' | 'PICK_UNIT' | 'FORM' | 'SYNC_HUB' | 'HISTORY' | 'ADMIN' | 'REPORT_DASHBOARD' | 'REPORT_WIZARD';
 type FormMode = 'create' | 'edit';
 type FieldType = 'text' | 'number' | 'select' | 'textarea';
-
-const FUNNY_LOADER_MESSAGES = [
-  "Proses penarikan data sedang berlangsung",
-  "Mohon bersabar ya sayang",
-  "Jangan lupa makan ya sayang",
-  "Mohon bersabar, yang sabar disayang Rio",
-  "Kalem euy, sabar nuju proses Kaka",
-  "Server nuju ngopi heula Kaka, antosan sakedap",
-  "Data sedang berselancar dari awan Google Drive",
-  "Sabar nuju digarap, tong rurusuhan bisi salah hidung"
-];
 
 interface FieldDef {
   name: string;
@@ -270,8 +257,10 @@ async function ensureClientAndUnitTemplates(
     }
   }
 
-  // Push template terbaru ke Drive di background agar ter-sync ke perangkat lain
-  pushTemplatesToDrive().catch(err => console.warn('[TemplateSync] Gagal push template:', err));
+  // Push template terbaru ke Drive di background hanya jika user adalah Admin
+  if (email === OWNER_EMAIL) {
+    pushTemplatesToDrive().catch(err => console.warn('[TemplateSync] Gagal push template:', err));
+  }
 
   return {
     clientId: finalClientId || '',
@@ -538,10 +527,7 @@ export default function App() {
   const [fromTemplateUnitId, setFromTemplateUnitId] = useState<string | undefined>();
 
   const [isSaving, setIsSaving] = useState(false);
-  const [uploadingId, setUploadingId] = useState<string | null>(null);
-  const [uploadProgress, setUploadProgress] = useState<{ percentage: number; loaded: number; total: number } | null>(null);
-  
-  // Mutex lock untuk mencegah sinkronisasi ganda / race condition
+  // Status upload aktif untuk guard beforeunload & wake lock
   const isSyncingRef = useRef(false);
   const wakeLockRef = useRef<any>(null);
 
@@ -603,18 +589,6 @@ export default function App() {
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [requestWakeLock]);
 
-  // Background Sync Floating Pill State (Non-Blocking)
-  const [bgSync, setBgSync] = useState<{
-    isActive: boolean;
-    totalUnits: number;
-    currentUnitIndex: number;
-    clientName: string;
-    objectType: string;
-    photoLoaded: number;
-    photoTotal: number;
-    photoPercent: number;
-  } | null>(null);
-
   const [tokenError, setTokenError] = useState<string | null>(null);
   const [pullStatus, setPullStatus] = useState<string | null>(null);
   const [darkMode, setDarkMode] = useState(() => {
@@ -628,9 +602,6 @@ export default function App() {
   // Gallery processing state
   const [isProcessingGallery, setIsProcessingGallery] = useState(false);
   const [galleryProcessProgress, setGalleryProcessProgress] = useState({ current: 0, total: 0 });
-
-  // Global loading overlay state
-  const [globalLoading, setGlobalLoading] = useState<string | null>(null);
 
   // Background data pulling / sync banner state
   const [pullingDataMessage, setPullingDataMessage] = useState<string | null>(null);
@@ -684,6 +655,18 @@ const refreshData = useCallback(async () => {
   }
 }, []);
 
+const uploadQueue = useUploadQueue({
+  isAuthenticated,
+  onRefreshData: refreshData,
+  onToast: showToast,
+  onRequestWakeLock: requestWakeLock,
+  onReleaseWakeLock: releaseWakeLock,
+});
+
+useEffect(() => {
+  isSyncingRef.current = uploadQueue.isUploading;
+}, [uploadQueue.isUploading]);
+
 const setupRole = useCallback(async (email: string, name: string) => {
   await RoleRepository.seedIfEmpty(email, name);
   setRoleChecked(true);
@@ -693,29 +676,23 @@ const doPullInspections = useCallback(async () => {
   setPullingDataMessage("Menarik data riwayat terbaru...");
   try {
     const result = await pullInspectionsFromDrive();
+    let changed = result.pulled > 0;
+
     if (result.pulled > 0) {
-      await refreshData();
       setPullStatus(`✅ ${result.pulled} data baru dari Drive`);
       setTimeout(() => setPullStatus(null), 4000);
     }
-    
-    // 🔥 BERSIHKAN DELETED ITEMS SETELAH PULL
-    if (isAuthenticated) {
-      try {
-        const apiBase = getApiBaseUrl();
-        const res = await fetch(`${apiBase}/api/pull-inspections`);
-        const data = await res.json();
-        const deletedIds = data.deletedIds ?? [];
-        
-        for (const deletedId of deletedIds) {
-          await SessionRepository.delete(deletedId).catch(() => {});
-        }
-        if (deletedIds.length > 0) {
-          await refreshData();
-        }
-      } catch (e) {
-        console.warn('[doPullInspections] Gagal cek deleted-log:', e);
+
+    // 🔥 BERSIHKAN DELETED ITEMS MENGGUNAKAN deletedIds YANG SUDAH DITARIK (tanpa fetch ganda)
+    if (isAuthenticated && result.deletedIds.length > 0) {
+      for (const deletedId of result.deletedIds) {
+        await SessionRepository.delete(deletedId).catch(() => {});
       }
+      changed = true;
+    }
+
+    if (changed) {
+      await refreshData();
     }
   } catch (err) {
     console.warn('[App] pullInspectionsFromDrive error:', err);
@@ -779,125 +756,10 @@ const doPullInspections = useCallback(async () => {
 
   // ── Auto sync ──────────────────────────────────────────────────────────────
 
+const { enqueueAllDrafts } = uploadQueue;
 const triggerAutoSync = useCallback(async () => {
-    if (!isAuthenticated) {
-      console.log('[BulkSync] Batal: Belum login');
-      return;
-    }
-    
-    if (!navigator.onLine) {
-      console.log('[BulkSync] Batal: Offline');
-      return;
-    }
-
-    if (isSyncingRef.current) {
-      console.log('[BulkSync] Batal: Upload massal sudah berjalan di antrean');
-      return;
-    }
-    isSyncingRef.current = true;
-    await requestWakeLock();
-    
-    const initialDrafts = await SessionRepository.getDrafts();
-    if (initialDrafts.length === 0) {
-      isSyncingRef.current = false;
-      return;
-    }
-    
-    console.log(`[BulkSync] Memulai background sync untuk ${initialDrafts.length} draft...`);
-    let successCount = 0;
-    const failedDraftIds: string[] = [];
-
-    const uploadSingleDraft = async (draftId: string, unitIndex: number, totalUnits: number) => {
-      const freshDraft = await SessionRepository.getById(draftId);
-      if (!freshDraft || freshDraft.status === 'synced') return true;
-
-      setUploadingId(draftId);
-      setBgSync({
-        isActive: true,
-        totalUnits,
-        currentUnitIndex: unitIndex,
-        clientName: freshDraft.clientName,
-        objectType: freshDraft.objectType,
-        photoLoaded: 0,
-        photoTotal: freshDraft.photos.length,
-        photoPercent: 0,
-      });
-
-      const { folderId } = await uploadToDrive(
-        freshDraft,
-        freshDraft.photos,
-        (p) => flushSync(() => {
-          setUploadProgress(p);
-          setBgSync(prev => prev ? {
-            ...prev,
-            photoLoaded: p.loaded,
-            photoTotal: p.total,
-            photoPercent: p.percentage,
-          } : null);
-        }),
-        null
-      );
-
-      await SessionRepository.markSynced(draftId, folderId);
-      setUploadingId(null);
-      setUploadProgress(null);
-      await refreshData();
-      return true;
-    };
-
-    try {
-      // SWEEP 1: Upload semua unit secara berurutan
-      for (let i = 0; i < initialDrafts.length; i++) {
-        const draft = initialDrafts[i];
-        try {
-          await uploadSingleDraft(draft.id, i + 1, initialDrafts.length);
-          successCount++;
-        } catch (err: unknown) {
-          console.warn(`[BulkSync] Draft ${draft.id} tertunda di sweep 1:`, err);
-          setUploadingId(null);
-          setUploadProgress(null);
-          failedDraftIds.push(draft.id);
-        }
-      }
-
-      // SWEEP 2: Otomatis coba ulang (second-chance sweep) untuk draft yang sempat gagal
-      if (failedDraftIds.length > 0 && navigator.onLine) {
-        console.log(`[BulkSync] Menjalankan Second-Chance Sweep untuk ${failedDraftIds.length} draft...`);
-        await new Promise(r => setTimeout(r, 2000));
-        
-        const remainingFailed: string[] = [];
-        for (let j = 0; j < failedDraftIds.length; j++) {
-          const draftId = failedDraftIds[j];
-          try {
-            await uploadSingleDraft(draftId, initialDrafts.length - failedDraftIds.length + j + 1, initialDrafts.length);
-            successCount++;
-          } catch (retryErr: unknown) {
-            console.error(`[BulkSync] Retry sweep gagal untuk draft ${draftId}:`, retryErr);
-            setUploadingId(null);
-            setUploadProgress(null);
-            remainingFailed.push(draftId);
-          }
-        }
-        failedDraftIds.length = 0;
-        failedDraftIds.push(...remainingFailed);
-      }
-
-      if (successCount > 0 && failedDraftIds.length === 0) {
-        showToast(`✅ Berhasil mengupload semua ${successCount} unit ke Google Drive!`, 'success');
-      } else if (successCount > 0 && failedDraftIds.length > 0) {
-        showToast(`⚠️ ${successCount} unit berhasil diunggah, ${failedDraftIds.length} unit tertunda (coba lagi nanti)`, 'warn');
-      } else if (failedDraftIds.length > 0) {
-        showToast(`⚠️ Gagal mengunggah ${failedDraftIds.length} unit. Periksa koneksi internet.`, 'error');
-      }
-    } finally {
-      releaseWakeLock();
-      setUploadingId(null);
-      setUploadProgress(null);
-      setBgSync(null);
-      isSyncingRef.current = false;
-      await refreshData();
-    }
-  }, [refreshData, isAuthenticated, showToast]);
+    await enqueueAllDrafts({ silentIfEmpty: true });
+  }, [enqueueAllDrafts]);
   // 🔄 TRIGGER AUTO-SYNC SAAT APLIKASI BARU DIBUKA (VERSI ANTI-GAGAL)
   useEffect(() => {
     if (isAuthenticated && isOnline && autoSync) {
@@ -1033,33 +895,28 @@ const triggerAutoSync = useCallback(async () => {
 
   const handlePhotos = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const rawFiles = Array.from(e.target.files || []);
+    e.target.value = '';
     if (rawFiles.length === 0) return;
 
     setIsProcessingGallery(true);
     setGalleryProcessProgress({ current: 0, total: rawFiles.length });
 
-    const processedPhotos: string[] = [];
-
     for (let i = 0; i < rawFiles.length; i++) {
       const file = rawFiles[i];
-      
-      // Update progress bar & yield ke event loop agar browser me-render UI mulus 60fps
       setGalleryProcessProgress({ current: i + 1, total: rawFiles.length });
       await yieldToMain();
 
       try {
         const compressed = await compressFileToDataUrl(file);
         if (compressed) {
-          processedPhotos.push(compressed);
+          setNewPhotos((prev) => [...prev, compressed]);
         }
       } catch (err) {
         console.error('Failed to compress photo from gallery:', err);
       }
     }
 
-    setNewPhotos((prev) => [...prev, ...processedPhotos]);
     setIsProcessingGallery(false);
-    e.target.value = '';
   };
 
   const removeExistingPhoto = (photoId: string) => {
@@ -1115,15 +972,13 @@ const triggerAutoSync = useCallback(async () => {
           newPhotos,
           deletedPhotos.map(p => p.id)
         );
-        // Hapus foto yang didelete dari Drive
-        if (deletedPhotos.length > 0 && isOnline) {
+        // Hapus foto yang didelete dari Drive di background agar tidak memblokir tombol Simpan
+        if (deletedPhotos.length > 0 && isOnline && currentUserEmail === OWNER_EMAIL) {
           for (const photo of deletedPhotos) {
             if (photo.driveFileId) {
-              try {
-                await deletePhotoFromDrive(photo.driveFileId, currentUserEmail);
-              } catch (e) {
+              deletePhotoFromDrive(photo.driveFileId, currentUserEmail).catch((e) => {
                 console.warn('[App] Gagal hapus foto dari Drive:', e);
-              }
+              });
             }
           }
         }
@@ -1131,7 +986,8 @@ const triggerAutoSync = useCallback(async () => {
         // Selesai edit
         showToast('✅ Data berhasil diperbarui!');
         if (isOnline) {
-          setTimeout(() => triggerAutoSync(), 300);
+          const updatedId = editingId;
+          setTimeout(() => { void uploadQueue.enqueueSessions([updatedId]); }, 200);
         }
       } else {
         // Create baru — status draft, tunggu manual sync atau auto sync
@@ -1168,108 +1024,14 @@ const triggerAutoSync = useCallback(async () => {
     }
   };
 
-  // handleSync dari SyncHub — upload satu unit di latar belakang (non-blocking)
-  const handleSync = async (id: string) => {
-    if (isSyncingRef.current) {
-      showToast('⚠️ Sedang ada proses upload lain yang berjalan.', 'warn');
-      return;
-    }
-    isSyncingRef.current = true;
-    setUploadingId(id);
-    setUploadProgress(null);
-    try {
-      const session = await SessionRepository.getById(id);
-      if (!session) throw new Error('Sesi tidak ditemukan');
-
-      setBgSync({
-        isActive: true,
-        totalUnits: 1,
-        currentUnitIndex: 1,
-        clientName: session.clientName,
-        objectType: session.objectType,
-        photoLoaded: 0,
-        photoTotal: session.photos.length,
-        photoPercent: 0,
-      });
-
-      const { folderId } = await uploadToDrive(
-        session,
-        session.photos,
-        (progress) => flushSync(() => {
-          setUploadProgress(progress);
-          setBgSync(prev => prev ? {
-            ...prev,
-            photoLoaded: progress.loaded,
-            photoTotal: progress.total,
-            photoPercent: progress.percentage,
-          } : null);
-        }),
-        null
-      );
-      await SessionRepository.markSynced(id, folderId);
-      await refreshData();
-      showToast(`✅ ${session.clientName} (${session.objectType}) berhasil diunggah!`, 'success');
-    } catch (err: any) {
-      showToast(`⚠️ Gagal sinkronisasi: ${err.message}`, 'error');
-    } finally {
-      setUploadingId(null);
-      setUploadProgress(null);
-      setBgSync(null);
-      isSyncingRef.current = false;
-    }
+  // handleSync dari SyncHub — tambahkan ke antrean upload global (non-blocking)
+  const handleSync = (id: string) => {
+    void uploadQueue.enqueueSessions([id]);
   };
 
-  // handleReSyncFromHistory — upload ulang dari History (non-blocking)
-  const handleReSyncFromHistory = async (id: string) => {
-    if (!isOnline) { showToast('⚠️ Tidak ada koneksi internet.', 'warn'); return; }
-    if (isSyncingRef.current) {
-      showToast('⚠️ Sedang ada proses upload lain yang berjalan.', 'warn');
-      return;
-    }
-    isSyncingRef.current = true;
-    setUploadingId(id);
-    setUploadProgress(null);
-    try {
-      const session = await SessionRepository.getById(id);
-      if (!session) throw new Error('Data tidak ditemukan');
-
-      setBgSync({
-        isActive: true,
-        totalUnits: 1,
-        currentUnitIndex: 1,
-        clientName: session.clientName,
-        objectType: session.objectType,
-        photoLoaded: 0,
-        photoTotal: session.photos.length,
-        photoPercent: 0,
-      });
-
-      const { folderId } = await uploadToDrive(
-        session,
-        session.photos,
-        (progress) => flushSync(() => {
-          setUploadProgress(progress);
-          setBgSync(prev => prev ? {
-            ...prev,
-            photoLoaded: progress.loaded,
-            photoTotal: progress.total,
-            photoPercent: progress.percentage,
-          } : null);
-        }),
-        null
-      );
-      await SessionRepository.markSynced(id, folderId);
-      setUploadProgress(null);
-      showToast(`✅ Data ${session.clientName} berhasil diupload ulang ke Drive!`, 'success');
-    } catch (err: any) {
-      setUploadProgress(null);
-      showToast(`⚠️ Gagal upload ulang: ${err.message}`, 'error');
-    } finally {
-      setUploadingId(null);
-      setUploadProgress(null);
-      setBgSync(null);
-      isSyncingRef.current = false;
-    }
+  // handleReSyncFromHistory — upload ulang dari History lewat antrean global (non-blocking)
+  const handleReSyncFromHistory = (id: string) => {
+    void uploadQueue.enqueueSessions([id], { isReSync: true });
   };
 
 const handleDelete = async (id: string) => {
@@ -1700,8 +1462,8 @@ const handleDelete = async (id: string) => {
             showClientDropdown={showClientDropdown}
             
             // Masukin props di bawah ini CUMA SEKALI:
-            uploadingId={uploadingId}
-            uploadProgress={uploadProgress}
+            uploadingId={uploadQueue.uploadingId}
+            uploadProgress={uploadQueue.uploadProgress}
             editingId={editingId}
             isProcessingGallery={isProcessingGallery}
             galleryProcessProgress={galleryProcessProgress}
@@ -1714,8 +1476,9 @@ const handleDelete = async (id: string) => {
               const compressed = await compressPhoto(dataUrl);
               setNewPhotos((prev) => [...prev, compressed]);
             }}
-            onAddPhotos={(urls) => {
-              setNewPhotos((prev) => [...prev, ...urls]);
+            onAddPhotos={async (urls) => {
+              const compressedUrls = await Promise.all(urls.map((url) => compressPhoto(url)));
+              setNewPhotos((prev) => [...prev, ...compressedUrls]);
             }}
             onGalleryClick={() => galleryInputRef.current?.click()}
             onRemoveExistingPhoto={removeExistingPhoto}
@@ -1727,11 +1490,12 @@ const handleDelete = async (id: string) => {
 
         {view === 'SYNC_HUB' && (
           <SyncHub
-            drafts={drafts} isAuthenticated={isAuthenticated} uploadingId={uploadingId}
-            uploadProgress={uploadProgress} isOnline={isOnline} autoSync={autoSync}
+            drafts={drafts} isAuthenticated={isAuthenticated} uploadingId={uploadQueue.uploadingId}
+            queuedIds={uploadQueue.queuedOrUploadingIds}
+            uploadProgress={uploadQueue.uploadProgress} isOnline={isOnline} autoSync={autoSync}
             onAutoSyncToggle={handleAutoSyncToggle} onLogin={handleLogin}
             onEdit={handleEdit} onDelete={handleDelete} onSync={handleSync}
-            onSyncAll={triggerAutoSync}
+            onSyncAll={() => { void uploadQueue.enqueueAllDrafts(); }}
           />
         )}
 
@@ -1739,8 +1503,8 @@ const handleDelete = async (id: string) => {
           <HistoryView
             history={history} onEdit={handleEdit} onDelete={handleDelete}
             onReSync={handleReSyncFromHistory} isAuthenticated={isAuthenticated}
-            isOnline={isOnline} uploadingId={uploadingId} uploadProgress={uploadProgress}
-            currentUserEmail={currentUserEmail} // TAMBAHKAN BARIS INI
+            isOnline={isOnline} uploadingId={uploadQueue.uploadingId} uploadProgress={uploadQueue.uploadProgress}
+            currentUserEmail={currentUserEmail}
           />
         )}
 
@@ -1789,132 +1553,26 @@ const handleDelete = async (id: string) => {
         </nav>
       )}
 
-      {globalLoading && (
-        <GlobalFunnyLoader message={globalLoading} />
-      )}
-
-      {/* ── Background Sync Floating Pill ── */}
-      {bgSync && bgSync.isActive && (
-        <div
-          onClick={() => {
-            if (view !== 'SYNC_HUB') {
-              navigateTo('SYNC_HUB');
-            }
-          }}
-          style={{
-            position: 'fixed',
-            top: isDesktop ? 76 : 'calc(64px + env(safe-area-inset-top, 0px))',
-            right: isDesktop ? 24 : 'auto',
-            left: isDesktop ? 'auto' : '50%',
-            transform: isDesktop ? 'none' : 'translateX(-50%)',
-            zIndex: 9999,
-            width: isDesktop ? 340 : 'min(92vw, 360px)',
-            background: darkMode ? 'rgba(15, 23, 42, 0.95)' : 'rgba(255, 255, 255, 0.96)',
-            backdropFilter: 'blur(12px)',
-            WebkitBackdropFilter: 'blur(12px)',
-            border: `1px solid ${darkMode ? '#334155' : '#CBD5E1'}`,
-            boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.25), 0 8px 10px -6px rgba(0, 0, 0, 0.15)',
-            borderRadius: 16,
-            padding: '10px 14px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 6,
-            cursor: 'pointer',
-            transition: 'all 0.2s ease',
-            pointerEvents: 'auto',
-          }}
-          role="button"
-          tabIndex={0}
-          title="Klik untuk membuka Sync Hub"
-        >
-          {/* Header Row */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-              <div
-                style={{
-                  width: 14,
-                  height: 14,
-                  border: '2px solid rgba(16, 185, 129, 0.25)',
-                  borderTopColor: '#10B981',
-                  borderRadius: '50%',
-                  animation: 'spin 0.8s linear infinite',
-                  flexShrink: 0,
-                }}
-              />
-              <span
-                style={{
-                  fontSize: 12,
-                  fontWeight: 700,
-                  color: darkMode ? '#F8FAFC' : '#0F172A',
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                }}
-              >
-                {`Mengunggah Latar Belakang (${bgSync.currentUnitIndex}/${bgSync.totalUnits})`}
-              </span>
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-              <span
-                style={{
-                  fontSize: 10,
-                  fontWeight: 600,
-                  padding: '2px 6px',
-                  borderRadius: 6,
-                  background: 'rgba(16, 185, 129, 0.15)',
-                  color: '#10B981',
-                }}
-              >
-                {`${bgSync.photoPercent}%`}
-              </span>
-              <span style={{ fontSize: 11, color: '#94A3B8' }}>›</span>
-            </div>
-          </div>
-
-          {/* Subtitle / Unit Info */}
-          <div
-            style={{
-              fontSize: 11,
-              color: darkMode ? '#94A3B8' : '#64748B',
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 4,
-            }}
-          >
-            <span style={{ fontWeight: 600 }}>{bgSync.clientName || 'Unit K3'}</span>
-            <span>• {bgSync.objectType}</span>
-            {bgSync.photoTotal > 0 && (
-              <span>({bgSync.photoLoaded}/{bgSync.photoTotal} foto)</span>
-            )}
-          </div>
-
-          {/* Mini Progress Bar */}
-          <div
-            style={{
-              height: 4,
-              width: '100%',
-              background: darkMode ? '#334155' : '#E2E8F0',
-              borderRadius: 2,
-              overflow: 'hidden',
-              marginTop: 2,
-            }}
-          >
-            <div
-              style={{
-                height: '100%',
-                width: `${Math.max(5, bgSync.photoPercent)}%`,
-                background: 'linear-gradient(90deg, #10B981, #3B82F6)',
-                borderRadius: 2,
-                transition: 'width 0.25s ease',
-              }}
-            />
-          </div>
-        </div>
-      )}
+      {/* ── Non-Blocking Floating Upload Widget (Minimizable & Expandable) ── */}
+      <FloatingUploadWidget
+        jobs={uploadQueue.jobs}
+        activeJob={uploadQueue.activeJob}
+        isUploading={uploadQueue.isUploading}
+        overallPercent={uploadQueue.overallPercent}
+        doneCount={uploadQueue.doneCount}
+        errorCount={uploadQueue.errorCount}
+        totalPhotos={uploadQueue.totalPhotos}
+        loadedPhotos={uploadQueue.loadedPhotos}
+        isDesktop={isDesktop}
+        darkMode={darkMode}
+        onOpenSyncHub={() => {
+          if (view !== 'SYNC_HUB') navigateTo('SYNC_HUB');
+        }}
+        onCancelJob={uploadQueue.cancelJob}
+        onCancelAll={uploadQueue.cancelAll}
+        onRetryFailed={uploadQueue.retryFailed}
+        onDismiss={uploadQueue.dismissFinished}
+      />
 
       {/* ── Global Toast Notification ── */}
       {toast && (
@@ -1961,77 +1619,6 @@ const handleDelete = async (id: string) => {
           </button>
         </div>
       )}
-    </div>
-  );
-}
-
-function GlobalFunnyLoader({ message }: { message: string }) {
-  const marqueeText = FUNNY_LOADER_MESSAGES.join("   •   ");
-  
-  return (
-    <div style={{
-      position: 'fixed', inset: 0, zIndex: 99999,
-      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-      background: 'rgba(15, 23, 42, 0.82)', backdropFilter: 'blur(10px)',
-      color: '#fff', fontFamily: 'system-ui, -apple-system, sans-serif'
-    }}>
-      {/* 3D Loading Card */}
-      <div style={{
-        background: 'rgba(255, 255, 255, 0.08)',
-        border: '1px solid rgba(255, 255, 255, 0.15)',
-        borderRadius: 24, padding: 32, maxWidth: 320, width: '85%',
-        display: 'flex', flexDirection: 'column', alignItems: 'center',
-        boxShadow: '0 20px 40px rgba(0,0,0,0.5)', textAlign: 'center',
-        transform: 'translateY(-20px)',
-      }}>
-        <div style={{ position: 'relative', width: 80, height: 80, marginBottom: 20 }}>
-          <div style={{
-            position: 'absolute', inset: 0, borderRadius: '50%',
-            border: '4px solid rgba(16, 185, 129, 0.2)',
-            borderTopColor: '#10B981',
-            animation: 'spin 1s linear infinite'
-          }} />
-          <div style={{
-            position: 'absolute', inset: 12, borderRadius: '50%',
-            border: '4px solid rgba(59, 130, 246, 0.2)',
-            borderBottomColor: '#3B82F6',
-            animation: 'spin 1.5s linear infinite reverse'
-          }} />
-          <div style={{
-            position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 28, animation: 'pulse 2s infinite'
-          }}>
-            ⚡
-          </div>
-        </div>
-
-        <h4 style={{ margin: '0 0 8px 0', fontSize: 16, fontWeight: 700, color: '#10B981', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
-          Memproses Data
-        </h4>
-        <p style={{ margin: 0, fontSize: 13, color: '#94A3B8', lineHeight: 1.5 }}>
-          {message}
-        </p>
-      </div>
-
-      {/* Running Marquee Banner */}
-      <div style={{
-        position: 'absolute', bottom: 50, left: 0, right: 0,
-        background: '#10B981', color: '#fff', padding: '12px 0',
-        overflow: 'hidden', whiteSpace: 'nowrap', display: 'flex',
-        boxShadow: '0 4px 15px rgba(16, 185, 129, 0.3)',
-        transform: 'rotate(-1.5deg) scale(1.02)',
-      }}>
-        <div style={{
-          display: 'inline-block',
-          paddingLeft: '100%',
-          animation: 'globalMarquee 40s linear infinite',
-          fontSize: 13, fontWeight: 800, textTransform: 'uppercase',
-          letterSpacing: '0.05em',
-        }}>
-          {marqueeText}   •   {marqueeText}
-        </div>
-      </div>
-
     </div>
   );
 }

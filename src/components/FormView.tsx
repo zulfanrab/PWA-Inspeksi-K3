@@ -1,5 +1,4 @@
 // src/components/FormView.tsx
-import { Document3DLoading } from './Document3DLoading';
 import { CustomCamera } from './CustomCamera';
 import { useState, useRef, useEffect } from 'react';
 import { registerBackInterceptor } from '../utils/navigationGuard';
@@ -118,37 +117,6 @@ export function FormView({
 
   return (
     <div className="space-y-6 pb-12 relative">
-      {/* ── OVERLAY LOADING GALERI ── */}
-      {isProcessingGallery && (
-        <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-black/60 backdrop-blur-md px-6 animate-in fade-in duration-200">
-          <div className="bg-white/95 border border-white/40 p-6 rounded-3xl shadow-2xl flex flex-col items-center max-w-xs w-full text-center">
-            <div className="w-14 h-14 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin mb-4" />
-            <h3 className="text-gray-900 font-bold text-base mb-1">
-              Memproses Foto...
-            </h3>
-            <p className="text-emerald-700 font-semibold text-xs mb-3">
-              Foto {galleryProcessProgress?.current || 0} dari {galleryProcessProgress?.total || 0}
-            </p>
-            {/* Progress bar line */}
-            <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden border border-gray-200/50">
-              <div
-                className="bg-emerald-500 h-full transition-all duration-150 rounded-full"
-                style={{
-                  width: `${
-                    galleryProcessProgress?.total
-                      ? Math.round(((galleryProcessProgress.current) / galleryProcessProgress.total) * 100)
-                      : 0
-                  }%`,
-                }}
-              />
-            </div>
-            <span className="text-[10px] text-gray-500 mt-2 font-medium">
-              Kompresi otomatis hemat memori & ringan
-            </span>
-          </div>
-        </div>
-      )}
-
       {/* Header */}
       <div className="flex items-center gap-4 pb-2">
         <div className="flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-br from-emerald-100 to-emerald-50 shadow-inner border border-emerald-100/50">
@@ -346,18 +314,52 @@ export function FormView({
           </div>
         )}
 
+        {isProcessingGallery && (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3.5 space-y-2">
+            <div className="flex items-center justify-between text-xs font-bold text-emerald-800">
+              <span className="flex items-center gap-2">
+                <span className="inline-block w-3.5 h-3.5 border-2 border-emerald-500/30 border-t-emerald-600 rounded-full animate-spin" />
+                Memproses foto galeri ({galleryProcessProgress?.current || 0}/{galleryProcessProgress?.total || 0})...
+              </span>
+              <span>
+                {galleryProcessProgress?.total
+                  ? Math.round((galleryProcessProgress.current / galleryProcessProgress.total) * 100)
+                  : 0}%
+              </span>
+            </div>
+            <div className="w-full bg-emerald-100 h-1.5 rounded-full overflow-hidden">
+              <div
+                className="bg-emerald-500 h-full transition-all duration-150 rounded-full"
+                style={{
+                  width: `${
+                    galleryProcessProgress?.total
+                      ? Math.round((galleryProcessProgress.current / galleryProcessProgress.total) * 100)
+                      : 0
+                  }%`,
+                }}
+              />
+            </div>
+            <p className="text-[10px] text-emerald-700/80">
+              Anda tetap dapat mengisi form lain selagi foto dikompresi.
+            </p>
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-3 pt-2">
           <button
+            type="button"
             onClick={() => setShowCustomCamera(true)}
             className="py-3.5 border-2 border-dashed border-emerald-300 rounded-2xl text-emerald-700 text-sm font-bold bg-emerald-50/50 hover:bg-emerald-100 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
           >
             <span className="text-lg">📷</span> Kamera
           </button>
           <button
+            type="button"
             onClick={onGalleryClick}
-            className="py-3.5 border-2 border-dashed border-emerald-300 rounded-2xl text-emerald-700 text-sm font-bold bg-emerald-50/50 hover:bg-emerald-100 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+            disabled={isProcessingGallery}
+            className="py-3.5 border-2 border-dashed border-emerald-300 rounded-2xl text-emerald-700 text-sm font-bold bg-emerald-50/50 hover:bg-emerald-100 disabled:opacity-50 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
           >
-            <span className="text-lg">🖼️</span> Galeri
+            <span className="text-lg">🖼️</span> {isProcessingGallery ? 'Memproses...' : 'Galeri'}
           </button>
         </div>
       </div>
@@ -377,24 +379,18 @@ export function FormView({
         />
       )}
 
-      {/* Progress Bar 3D */}
-      {uploadingId === editingId && uploadProgress && (
-        <div className="mt-4 p-5 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl border border-blue-200 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500">
-          <Document3DLoading />
-          
-          <div className="mt-5 space-y-2.5">
-            <div className="flex justify-between text-xs font-bold text-blue-800">
-              <span>Mengunggah Foto ({uploadProgress.loaded} / {uploadProgress.total})</span>
-              <span className="bg-blue-200/50 px-2 py-0.5 rounded-full">{Math.round(uploadProgress.percentage)}%</span>
-            </div>
-            <div className="w-full bg-blue-200/50 rounded-full h-2.5 overflow-hidden backdrop-blur-sm">
-              <div
-                className="bg-blue-600 h-2.5 rounded-full transition-all duration-300 relative overflow-hidden"
-                style={{ width: `${uploadProgress.percentage}%` }}
-              >
-                <div className="absolute inset-0 bg-white/20 animate-pulse" />
-              </div>
-            </div>
+      {/* Status Upload Non-Blocking (ringkas) */}
+      {editingId && uploadingId === editingId && uploadProgress && (
+        <div className="p-3.5 bg-emerald-50 rounded-2xl border border-emerald-200 space-y-2">
+          <div className="flex justify-between text-xs font-bold text-emerald-800">
+            <span>☁️ Sinkronisasi di latar belakang ({uploadProgress.loaded}/{uploadProgress.total} foto)</span>
+            <span>{Math.round(uploadProgress.percentage)}%</span>
+          </div>
+          <div className="w-full bg-emerald-100 rounded-full h-2 overflow-hidden">
+            <div
+              className="bg-emerald-500 h-2 rounded-full transition-all duration-300"
+              style={{ width: `${uploadProgress.percentage}%` }}
+            />
           </div>
         </div>
       )}
@@ -409,11 +405,13 @@ export function FormView({
         </button>
         <button
           onClick={onSave}
-          disabled={isSaving}
+          disabled={isSaving || isProcessingGallery}
           className="flex-[2] py-3.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 disabled:from-gray-300 disabled:to-gray-300 disabled:text-gray-500 text-white text-sm font-bold transition-all shadow-md hover:shadow-lg active:scale-[0.98] flex items-center justify-center gap-2"
         >
           {isSaving ? (
             <><Spinner /> Menyimpan...</>
+          ) : isProcessingGallery ? (
+            <><Spinner /> Memproses Foto...</>
           ) : isEdit ? (
             <><span>✏️</span> Perbarui Data ({totalPhotos})</>
           ) : (

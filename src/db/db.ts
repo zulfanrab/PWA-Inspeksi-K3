@@ -149,25 +149,28 @@ export class MyDatabase extends Dexie {
 
 export const db = new MyDatabase();
 
+function sortPhotosDeterministically(photos: InspectionPhoto[]): InspectionPhoto[] {
+  return [...photos].sort((a, b) => {
+    if (a.fileName && b.fileName) return a.fileName.localeCompare(b.fileName);
+    if (a.fileName) return -1;
+    if (b.fileName) return 1;
+    return a.createdAt - b.createdAt;
+  });
+}
+
 export const SessionRepository = {
   getDrafts: async () => {
     const sessions = await db.inspection_sessions.where('status').equals('draft').toArray();
     return Promise.all(sessions.map(async (s) => ({
       ...s,
-      photos: await db.inspection_photos.where('sessionId').equals(s.id).toArray(),
+      photos: sortPhotosDeterministically(await db.inspection_photos.where('sessionId').equals(s.id).toArray()),
     })));
   },
   getHistory: async () => {
     const sessions = await db.inspection_sessions.where('status').equals('synced').toArray();
     return Promise.all(sessions.map(async (s) => ({
       ...s,
-      photos: (await db.inspection_photos.where('sessionId').equals(s.id).toArray())
-        .sort((a, b) => {
-          if (a.fileName && b.fileName) return a.fileName.localeCompare(b.fileName);
-          if (a.fileName) return -1;
-          if (b.fileName) return 1;
-          return a.createdAt - b.createdAt;
-        }),
+      photos: sortPhotosDeterministically(await db.inspection_photos.where('sessionId').equals(s.id).toArray()),
     })));
   },
   getClientNames: async () => {
@@ -177,7 +180,7 @@ export const SessionRepository = {
   getById: async (id: string) => {
     const session = await db.inspection_sessions.get(id);
     if (!session) return null;
-    const photos = await db.inspection_photos.where('sessionId').equals(id).toArray();
+    const photos = sortPhotosDeterministically(await db.inspection_photos.where('sessionId').equals(id).toArray());
     return { ...session, photos };
   },
   create: async (data: Omit<InspectionSession, 'id' | 'createdAt'>, photos: string[]) => {

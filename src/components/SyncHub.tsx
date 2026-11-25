@@ -11,6 +11,7 @@ interface SyncHubProps {
   drafts: SessionWithPhotos[];
   isAuthenticated: boolean;
   uploadingId: string | null;
+  queuedIds?: Set<string>;
   uploadProgress: UploadProgress | null;
   // NEW: Online/offline status dari App.tsx
   isOnline: boolean;
@@ -50,6 +51,7 @@ export function SyncHub({
   drafts,
   isAuthenticated,
   uploadingId,
+  queuedIds,
   uploadProgress,
   isOnline,
   autoSync,
@@ -60,6 +62,8 @@ export function SyncHub({
   onSync,
   onSyncAll,
 }: SyncHubProps) {
+  const unqueuedCount = drafts.filter((d) => d.id !== uploadingId && !queuedIds?.has(d.id)).length;
+
   return (
     <div className="space-y-4">
       <div>
@@ -165,16 +169,12 @@ export function SyncHub({
         </div>
       )}
 
-      {/* FIXED: Progress bar upload aktif */}
-      {uploadingId && uploadProgress && (
-        <UploadProgressBar progress={uploadProgress} />
-      )}
-{drafts.length > 1 && isAuthenticated && isOnline && !uploadingId && (
+      {unqueuedCount > 1 && isAuthenticated && isOnline && (
         <button
           onClick={onSyncAll}
           className="w-full py-3 flex items-center justify-center gap-2 bg-gray-900 hover:bg-black text-white text-sm font-bold rounded-xl transition-all shadow-sm"
         >
-          ☁️ Upload Semua ({drafts.length} draft sekaligus)
+          ☁️ Upload Semua ({unqueuedCount} draft sekaligus)
         </button>
       )}
       {drafts.length === 0 ? (
@@ -189,6 +189,7 @@ export function SyncHub({
               onDelete={onDelete}
               onSync={onSync}
               isUploading={uploadingId === item.id}
+              isQueued={uploadingId !== item.id && !!queuedIds?.has(item.id)}
               isAuthenticated={isAuthenticated}
               isOnline={isOnline}
               progress={uploadingId === item.id ? uploadProgress : null}
@@ -235,6 +236,7 @@ function SyncCard({
   onDelete,
   onSync,
   isUploading,
+  isQueued,
   isAuthenticated,
   isOnline,
   progress,
@@ -244,14 +246,16 @@ function SyncCard({
   onDelete: (id: string) => void;
   onSync: (id: string) => void;
   isUploading: boolean;
+  isQueued: boolean;
   isAuthenticated: boolean;
   isOnline: boolean;
   progress: UploadProgress | null;
 }) {
   const meta = OBJECT_TYPES.find((o) => o.key === item.objectType);
   const dateStr = formatDate(item.updatedAt || item.createdAt);
-  // Disable upload jika tidak ada koneksi atau belum auth
-  const canUpload = isAuthenticated && isOnline && !isUploading;
+  const isLockedInQueue = isUploading || isQueued;
+  // Disable upload jika tidak ada koneksi, belum auth, atau sudah dalam antrean
+  const canUpload = isAuthenticated && isOnline && !isLockedInQueue;
 
   return (
     <div className="bg-white border border-gray-200 shadow-sm rounded-xl p-4 space-y-3">
@@ -269,13 +273,13 @@ function SyncCard({
         <div className="flex items-center gap-1.5 flex-shrink-0">
           <button
             onClick={() => onEdit(item.id)}
-            disabled={isUploading}
+            disabled={isLockedInQueue}
             className="w-7 h-7 rounded-lg bg-blue-50 text-blue-500 hover:bg-blue-100 flex items-center justify-center border border-blue-100 transition-all text-sm disabled:opacity-40"
             title="Edit"
           >✏️</button>
           <button
             onClick={() => onDelete(item.id)}
-            disabled={isUploading}
+            disabled={isLockedInQueue}
             className="w-7 h-7 rounded-lg bg-red-50 text-red-500 hover:bg-red-100 flex items-center justify-center border border-red-100 transition-all text-sm disabled:opacity-40"
             title="Hapus"
           >🗑️</button>
@@ -313,6 +317,7 @@ function SyncCard({
         title={
           !isAuthenticated ? 'Login Google Drive terlebih dahulu' :
           !isOnline ? 'Tidak ada koneksi internet' :
+          isQueued ? 'Menunggu giliran upload' :
           'Upload ke Google Drive'
         }
       >
@@ -324,6 +329,8 @@ function SyncCard({
             </svg>
             Sedang Upload ke Drive...
           </>
+        ) : isQueued ? (
+          <>⏳ Dalam Antrean Upload...</>
         ) : !isOnline ? (
           <>🔴 Offline — Tidak bisa upload</>
         ) : (

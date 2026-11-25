@@ -2,10 +2,27 @@
 // FIXED: Menghapus filter mimeType yang kaku, dan bikin sistem baca JSON jadi kebal error.
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { google } from 'googleapis';
 import { getDriveClient } from './driveClient.js';
 
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let cursor = 0;
 
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (true) {
+      const idx = cursor++;
+      if (idx >= items.length) break;
+      results[idx] = await worker(items[idx]);
+    }
+  });
+
+  await Promise.all(runners);
+  return results;
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -20,24 +37,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // 🔥 FIX UTAMA: mimeType dihapus dari pencarian biar data versi lama & baru kebaca semua
     const q = `name='data-inspeksi.json' and trashed=false`;
-    
+
     const listRes = await drive.files.list({
       q,
       fields: 'files(id, name, modifiedTime, parents)',
       spaces: 'drive',
       pageSize: 1000,
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
     });
 
     const files = listRes.data.files ?? [];
 
-    const results = (await Promise.all(
-      files.map(async (file) => {
+    const results = (await mapWithConcurrency(
+      files,
+      5,
+      async (file) => {
         try {
           const contentRes = await drive.files.get(
-            { fileId: file.id!, alt: 'media' },
+            { fileId: file.id!, alt: 'media', supportsAllDrives: true },
             { responseType: 'json' } // Biarkan googleapis yang nentuin ini teks atau objek
           );
-          
+
           // 🔥 FIX PARSER: Kebal dari error JSON.parse
           let parsed;
           if (typeof contentRes.data === 'string') {
@@ -54,6 +75,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               fields: 'files(id, name)',
               spaces: 'drive',
               pageSize: 1000,
+              supportsAllDrives: true,
+              includeItemsFromAllDrives: true,
             });
             const photoFiles = photoRes.data.files ?? [];
             // Urutkan by nama file (foto-001, foto-002, dst)
@@ -70,7 +93,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           console.warn(`[pull-inspections] Gagal baca file ${file.id}:`, fileErr);
           return null;
         }
-      })
+      }
     )).filter(Boolean);
 
     // ==========================================
@@ -83,9 +106,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         fields: 'files(id)',
         spaces: 'drive',
         pageSize: 1,
+        supportsAllDrives: true,
+        includeItemsFromAllDrives: true,
       });
       const rootId = rootRes.data.files?.[0]?.id;
-      
+
       if (rootId) {
         // 1. Baca log lama dari deleted-log.json (jika ada) untuk backward compatibility
         const logRes = await drive.files.list({
@@ -93,11 +118,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           fields: 'files(id)',
           spaces: 'drive',
           pageSize: 1,
+          supportsAllDrives: true,
+          includeItemsFromAllDrives: true,
         });
-        
+
         if (logRes.data.files?.length) {
           const logContent = await drive.files.get(
-            { fileId: logRes.data.files[0].id!, alt: 'media' },
+            { fileId: logRes.data.files[0].id!, alt: 'media', supportsAllDrives: true },
             { responseType: 'json' }
           );
           const log: any[] = Array.isArray(logContent.data) ? logContent.data : [];
@@ -110,8 +137,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           fields: 'files(id)',
           spaces: 'drive',
           pageSize: 1,
+          supportsAllDrives: true,
+          includeItemsFromAllDrives: true,
         });
-        
+
         const deletedLogsFolderId = deletedLogsFolderRes.data.files?.[0]?.id;
         if (deletedLogsFolderId) {
           const newLogsRes = await drive.files.list({
@@ -119,6 +148,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             fields: 'files(name)',
             spaces: 'drive',
             pageSize: 1000,
+            supportsAllDrives: true,
+            includeItemsFromAllDrives: true,
           });
           const newLogIds = (newLogsRes.data.files ?? []).map(f => f.name!).filter(Boolean);
           deletedIds = Array.from(new Set([...deletedIds, ...newLogIds]));

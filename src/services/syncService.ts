@@ -138,20 +138,21 @@ export async function pullTemplatesFromDrive(): Promise<{ pulledClients: number;
 // ==========================================
 // INSPECTIONS — PULL (MIRROR DRIVE)
 // ==========================================
-export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skipped: number }> {
+export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skipped: number; deletedIds: string[] }> {
   let pulled = 0;
   let skipped = 0;
+  let deletedIds: string[] = [];
 
   try {
     const res = await fetch(apiUrl(`/api/pull-inspections?t=${Date.now()}`), {
       method: 'GET',
       headers: { 'Cache-Control': 'no-cache' },
     });
-    if (!res.ok) return { pulled: 0, skipped: 0 };
+    if (!res.ok) return { pulled: 0, skipped: 0, deletedIds: [] };
 
     const data = await res.json();
     const inspections: any[] = data.inspections ?? [];
-    const deletedIds: string[] = data.deletedIds ?? [];
+    deletedIds = data.deletedIds ?? [];
 
     // ✅ MIRROR DRIVE: hapus lokal yang tidak ada di Drive
     // HANYA hapus sesi yang sudah fully_synced — jangan sentuh draft/pending milik device ini
@@ -310,7 +311,7 @@ export async function pullInspectionsFromDrive(): Promise<{ pulled: number; skip
     console.error('[syncService] pullInspectionsFromDrive error:', err);
   }
 
-  return { pulled, skipped };
+  return { pulled, skipped, deletedIds };
 }
 
 export default {

@@ -110,15 +110,15 @@ const response = await drive.files.list({
  * Ambil folder yang ada atau buat baru jika belum ada.
  * Idempotent — aman dipanggil berkali-kali dengan argumen sama.
  */
-async function getOrCreateFolder(
+async function getOrCreateFolderWithStatus(
   drive: DriveClient,
   name: string,
   parentId: string | null
-): Promise<string> {
+): Promise<{ id: string; created: boolean }> {
   const existingId = await findFolder(drive, name, parentId);
   if (existingId) {
     console.log(`[getOrCreateFolder] Found: "${name}" → ${existingId}`);
-    return existingId;
+    return { id: existingId, created: false };
   }
 
   const requestBody: Record<string, unknown> = {
@@ -127,7 +127,7 @@ async function getOrCreateFolder(
   };
   if (parentId) requestBody.parents = [parentId];
 
-const response = await drive.files.create({
+  const response = await drive.files.create({
     requestBody,
     fields: 'id',
     supportsAllDrives: true,
@@ -137,7 +137,16 @@ const response = await drive.files.create({
   if (!newId) throw new Error(`[getOrCreateFolder] Drive tidak mengembalikan ID untuk folder "${name}"`);
 
   console.log(`[getOrCreateFolder] Created: "${name}" → ${newId}`);
-  return newId;
+  return { id: newId, created: true };
+}
+
+async function getOrCreateFolder(
+  drive: DriveClient,
+  name: string,
+  parentId: string | null
+): Promise<string> {
+  const { id } = await getOrCreateFolderWithStatus(drive, name, parentId);
+  return id;
 }
 
 /**
@@ -254,7 +263,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const nomorSeri = session.unitData?.nomorSeri?.trim() || 'NoSeri';
       const unitFolderName = `${namaUnit} - ${nomorSeri}`;
 
-      unitFolderId = await getOrCreateFolder(drive, unitFolderName, typeFolderId);
+      const unitFolder = await getOrCreateFolderWithStatus(drive, unitFolderName, typeFolderId);
+      unitFolderId = unitFolder.id;
+
+      // Set public reader permission sekali di level folder agar file foto di dalamnya ikut mewarisi izin
+      if (unitFolder.created) {
+        try {
+          await drive.permissions.create({
+            fileId: unitFolderId,
+            requestBody: { role: 'reader', type: 'anyone' },
+            fields: 'id',
+            supportsAllDrives: true,
+          });
+        } catch (permErr: unknown) {
+          console.warn('[api/upload] Gagal set permission folder (non-fatal):', permErr);
+        }
+      }
     }
 
     // ── Upload Metadata JSON ──────────────────────────────────────────────────

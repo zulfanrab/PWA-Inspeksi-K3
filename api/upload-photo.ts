@@ -5,7 +5,6 @@ import { getDriveClient } from './driveClient.js';
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const MAX_SIZE_BYTES = 4 * 1024 * 1024; // 4MB
 const ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
-const DRIVE_QUERY_FIELDS = 'files(id,name)';
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 
@@ -51,47 +50,25 @@ function base64ToStream(rawBase64: string): Readable {
 }
 
 /**
- * Hitung jumlah file foto yang sudah ada di folder Drive.
- * Exclude folder dan file JSON dari hitungan.
- * Menggunakan pageToken untuk handle folder dengan >1000 file.
+ * Buat nama file foto deterministik & bebas tabrakan tanpa perlu list folder Drive terlebih dahulu.
  */
-async function fetchDriveFilePage(
-  drive: ReturnType<typeof getDriveClient>,
-  q: string,
-  pageToken?: string
-) {
-  return drive.files.list({
-    q,
-    fields: DRIVE_QUERY_FIELDS,
-    spaces: 'drive',
-    pageSize: 1000,
-    ...(pageToken ? { pageToken } : {}),
-  });
-}
-
-async function countExistingPhotos(
-  drive: ReturnType<typeof getDriveClient>,
-  parentId: string
-): Promise<number> {
-  const safeParentId = parentId.replace(/'/g, "\\'");
-  const q = [
-    `'${safeParentId}' in parents`,
-    `mimeType != 'application/vnd.google-apps.folder'`,
-    `name != 'data-inspeksi.json'`,
-    `trashed = false`,
-  ].join(' and ');
-
-  let totalCount = 0;
-  let nextPageToken: string | undefined = undefined;
-
-  while (true) {
-    const page = await fetchDriveFilePage(drive, q, nextPageToken);
-    totalCount += page.data.files?.length ?? 0;
-    nextPageToken = page.data.nextPageToken ?? undefined;
-    if (!nextPageToken) break;
+function buildPhotoFileName(
+  photoNumber: unknown,
+  photoIndex: unknown,
+  photoUid: unknown,
+  extension: string
+): string {
+  let seq = 1;
+  if (typeof photoNumber === 'number' && Number.isFinite(photoNumber) && photoNumber > 0) {
+    seq = Math.floor(photoNumber);
+  } else if (typeof photoIndex === 'number' && Number.isFinite(photoIndex) && photoIndex >= 0) {
+    seq = Math.floor(photoIndex) + 1;
   }
 
-  return totalCount;
+  const paddedNum = String(seq).padStart(3, '0');
+  const rawUid = typeof photoUid === 'string' ? photoUid.replace(/[^a-zA-Z0-9]/g, '').slice(0, 6) : '';
+  const uniqueSuffix = rawUid || Date.now().toString(36).slice(-4);
+  return `foto-${paddedNum}-${uniqueSuffix}.${extension}`;
 }
 
 // ─── MAIN HANDLER ─────────────────────────────────────────────────────────────
@@ -105,7 +82,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { folderId, photoBase64, photoIndex } = req.body ?? {};
+  const { folderId, photoBase64, photoIndex, photoNumber, photoUid } = req.body ?? {};
 
   // ── Validasi Input ──────────────────────────────────────────────────────────
   if (typeof folderId !== 'string' || !folderId.trim()) {
@@ -143,13 +120,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const drive = getDriveClient();
 
-    // ── Smart Append ──────────────────────────────────────────────────────────
-    const existingCount = await countExistingPhotos(drive, folderId);
-    const photoNumber = existingCount + 1;
-    const paddedNum = String(photoNumber).padStart(3, '0');
-    const photoName = `foto-${paddedNum}.${extension}`;
+    const photoName = buildPhotoFileName(photoNumber, photoIndex, photoUid, extension);
 
-    // ── Upload ke Drive ───────────────────────────────────────────────────────
+    // ── Upload ke Drive (1 round-trip tanpa list/permission berulang) ─────────
     const uploadedFile = await drive.files.create({
       requestBody: {
         name: photoName,
@@ -160,23 +133,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         body: base64ToStream(rawBase64),
       },
       fields: 'id,name',
+      supportsAllDrives: true,
     });
 
     const fileId = uploadedFile.data.id;
     if (!fileId) {
       throw new Error('Drive tidak mengembalikan file ID setelah upload.');
     }
-
-    // ── Set Permission Public ─────────────────────────────────────────────────
-    await drive.permissions.create({
-      fileId,
-      requestBody: {
-        role: 'reader',
-        type: 'anyone',
-      },
-      // Suppress domain policy warnings yang bisa bikin response lambat
-      fields: 'id',
-    });
 
     return res.status(200).json({
       success: true,

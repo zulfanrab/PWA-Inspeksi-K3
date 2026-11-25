@@ -12,6 +12,15 @@ export interface UploadProgress {
   percentage: number;
   loaded: number;
   total: number;
+  bytesLoaded?: number;
+  bytesTotal?: number;
+}
+
+export class UploadCancelledError extends Error {
+  constructor(message = 'Proses upload dibatalkan.') {
+    super(message);
+    this.name = 'UploadCancelledError';
+  }
 }
 
 type ProgressCallback = (progress: UploadProgress) => void;
@@ -107,8 +116,23 @@ export function trySilentRefresh(clientId: string, redirectUri: string): void {
 }
 
 // ==========================================
-// ROBUST FETCH WITH EXPONENTIAL RETRY
+// ROBUST FETCH & XHR WITH EXPONENTIAL RETRY
 // ==========================================
+function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(new UploadCancelledError());
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new UploadCancelledError());
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
 async function fetchWithRetry(
   url: string,
   options: RequestInit,
@@ -117,6 +141,9 @@ async function fetchWithRetry(
 ): Promise<Response> {
   let lastError: any = null;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (options.signal?.aborted) {
+      throw new UploadCancelledError();
+    }
     try {
       const res = await fetch(url, options);
       // Jika server terkena rate limit (429) atau transient server error (500, 502, 503, 504)
@@ -124,61 +151,202 @@ async function fetchWithRetry(
         if (attempt < maxRetries) {
           const delay = baseDelayMs * Math.pow(2, attempt) + Math.random() * 300;
           console.warn(`[fetchWithRetry] HTTP ${res.status} pada ${url}. Percobaan ulang (${attempt + 1}/${maxRetries}) dalam ${Math.round(delay)}ms...`);
-          await new Promise(r => setTimeout(r, delay));
+          await sleepWithAbort(delay, options.signal ?? undefined);
           continue;
         }
       }
       return res;
     } catch (err: any) {
+      if (err instanceof UploadCancelledError || err?.name === 'AbortError' || options.signal?.aborted) {
+        throw new UploadCancelledError();
+      }
       lastError = err;
       if (attempt < maxRetries) {
         const delay = baseDelayMs * Math.pow(2, attempt) + Math.random() * 300;
         console.warn(`[fetchWithRetry] Gangguan koneksi (${err?.message || 'timeout'}) pada ${url}. Mencoba ulang (${attempt + 1}/${maxRetries}) dalam ${Math.round(delay)}ms...`);
-        await new Promise(r => setTimeout(r, delay));
+        await sleepWithAbort(delay, options.signal ?? undefined);
       }
     }
   }
   throw lastError || new Error(`Gagal menghubungi server setelah ${maxRetries} percobaan`);
 }
 
+interface XhrJsonResponse {
+  ok: boolean;
+  status: number;
+  data: Record<string, unknown>;
+}
+
+function sendJsonXhr(
+  url: string,
+  bodyStr: string,
+  onUploadProgress?: (loaded: number, total: number) => void,
+  signal?: AbortSignal
+): Promise<XhrJsonResponse> {
+  if (signal?.aborted) return Promise.reject(new UploadCancelledError());
+
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url, true);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.timeout = 90_000;
+
+    const cleanup = () => {
+      signal?.removeEventListener('abort', handleAbort);
+    };
+
+    const handleAbort = () => {
+      xhr.abort();
+    };
+
+    signal?.addEventListener('abort', handleAbort, { once: true });
+
+    xhr.upload.onprogress = (ev) => {
+      if (ev.lengthComputable) {
+        onUploadProgress?.(ev.loaded, ev.total);
+      }
+    };
+
+    xhr.onload = () => {
+      cleanup();
+      let parsed: Record<string, unknown> = {};
+      try {
+        parsed = xhr.responseText ? (JSON.parse(xhr.responseText) as Record<string, unknown>) : {};
+      } catch {
+        parsed = {};
+      }
+      resolve({
+        ok: xhr.status >= 200 && xhr.status < 300,
+        status: xhr.status,
+        data: parsed,
+      });
+    };
+
+    xhr.onerror = () => {
+      cleanup();
+      reject(new Error('Koneksi jaringan terputus saat mengunggah foto'));
+    };
+
+    xhr.ontimeout = () => {
+      cleanup();
+      reject(new Error('Timeout jaringan saat mengunggah foto'));
+    };
+
+    xhr.onabort = () => {
+      cleanup();
+      reject(new UploadCancelledError());
+    };
+
+    xhr.send(bodyStr);
+  });
+}
+
+async function xhrPostJsonWithRetry(
+  url: string,
+  payload: Record<string, unknown>,
+  onUploadProgress?: (loaded: number, total: number) => void,
+  signal?: AbortSignal,
+  maxRetries = 3,
+  baseDelayMs = 1000
+): Promise<XhrJsonResponse> {
+  const bodyStr = JSON.stringify(payload);
+  let lastError: unknown = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (signal?.aborted) throw new UploadCancelledError();
+
+    try {
+      const res = await sendJsonXhr(url, bodyStr, onUploadProgress, signal);
+      if (res.status === 429 || (res.status >= 500 && res.status <= 504)) {
+        if (attempt < maxRetries) {
+          onUploadProgress?.(0, bodyStr.length);
+          const delay = baseDelayMs * Math.pow(2, attempt) + Math.random() * 300;
+          console.warn(`[xhrPostJsonWithRetry] HTTP ${res.status} pada ${url}. Percobaan ulang (${attempt + 1}/${maxRetries}) dalam ${Math.round(delay)}ms...`);
+          await sleepWithAbort(delay, signal);
+          continue;
+        }
+      }
+      return res;
+    } catch (err: unknown) {
+      if (err instanceof UploadCancelledError || signal?.aborted) {
+        throw new UploadCancelledError();
+      }
+      lastError = err;
+      if (attempt < maxRetries) {
+        onUploadProgress?.(0, bodyStr.length);
+        const delay = baseDelayMs * Math.pow(2, attempt) + Math.random() * 300;
+        const msg = err instanceof Error ? err.message : 'timeout';
+        console.warn(`[xhrPostJsonWithRetry] Gangguan (${msg}) pada ${url}. Mencoba ulang (${attempt + 1}/${maxRetries}) dalam ${Math.round(delay)}ms...`);
+        await sleepWithAbort(delay, signal);
+      }
+    }
+  }
+
+  throw lastError || new Error(`Gagal menghubungi server setelah ${maxRetries} percobaan`);
+}
+
 // ==========================================
-// MAIN UPLOAD FUNCTION (SEQUENTIAL QUEUE)
+// MAIN UPLOAD FUNCTION (PARALLEL POOL QUEUE)
 // ==========================================
+
+const UPLOAD_CONCURRENCY = 3;
+
+function getMaxExistingPhotoNumber(photos: InspectionPhoto[]): number {
+  let maxNum = 0;
+  for (const p of photos) {
+    if (!p.fileName) continue;
+    const match = p.fileName.match(/^foto-(\d+)/i);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      if (Number.isFinite(num) && num > maxNum) maxNum = num;
+    }
+  }
+  return maxNum;
+}
 
 export const uploadToDrive = async (
   session: InspectionSession & { photos: InspectionPhoto[] },
   _photos: InspectionPhoto[],
   onProgress?: ProgressCallback,
-  onlyNewPhotos?: InspectionPhoto[] | null
+  onlyNewPhotos?: InspectionPhoto[] | null,
+  signal?: AbortSignal
 ): Promise<{ success: true; folderId: string }> => {
 
+  if (signal?.aborted) throw new UploadCancelledError();
+
   // Tentukan foto yang akan di-upload (Semua atau cuma yang baru)
-  const photosToUpload = onlyNewPhotos ?? session.photos;
-  const totalPhotos = photosToUpload.length;
-  const totalSteps = totalPhotos + 1; // 1 step buat JSON/Folder, sisanya foto
+  const rawPhotos = onlyNewPhotos ?? session.photos;
+  const validPhotos = rawPhotos.filter((p) => !!p.driveFileId || !!p.dataUrl);
+  const totalPhotos = validPhotos.length;
 
   let folderId = session.driveFolderId;
 
+  // Selalu sinkronkan metadata (data-inspeksi.json) kecuali saat resume tengah-jalan upload foto
+  const isResumingMidPhotos =
+    !!folderId &&
+    (session.uploadStatus === 'uploading_photos' || session.uploadStatus === 'partial_failed');
+
   try {
-    // ── PHASE 1: Upload JSON & Bikin Folder ──
-    if (!folderId) {
+    // ── PHASE 1: Upload / Update Metadata JSON & Folder ──
+    if (!isResumingMidPhotos) {
       onProgress?.({
-        percentage: 0,
+        percentage: totalPhotos === 0 ? 30 : 5,
         loaded: 0,
-        total: totalSteps,
+        total: totalPhotos,
       });
 
       await db.inspection_sessions.update(session.id, {
         uploadStatus: 'uploading_meta',
-        photosUploaded: 0
+        ...(folderId ? {} : { photosUploaded: 0 }),
       });
 
       const apiBase = getApiBaseUrl();
       const metaRes = await fetchWithRetry(`${apiBase}/api/upload`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal,
         body: JSON.stringify({
-          existingFolderId: session.driveFolderId ?? null,
+          existingFolderId: folderId ?? null,
           inspectionData: {
             id: session.id,
             clientName: session.clientName,
@@ -188,7 +356,7 @@ export const uploadToDrive = async (
             tanggal_inspeksi: getTanggalInspeksi(session),
             sifat_pemeriksaan: getSifatPemeriksaan(session) ?? null,
             unitData: session.unitData,
-            totalPhotos: totalPhotos,
+            totalPhotos: session.photos.length,
             inspectorEmail: session.inspectorEmail ?? null,
           }
         }),
@@ -196,7 +364,7 @@ export const uploadToDrive = async (
 
       if (!metaRes.ok) {
         const errData = await metaRes.json().catch(() => ({}));
-        throw new Error(errData?.error || `HTTP ${metaRes.status} saat bikin folder`);
+        throw new Error(errData?.error || `HTTP ${metaRes.status} saat sinkronisasi folder & metadata`);
       }
 
       const metaData = await metaRes.json();
@@ -204,98 +372,162 @@ export const uploadToDrive = async (
 
       await db.inspection_sessions.update(session.id, {
         driveFolderId: folderId,
-        uploadStatus: 'uploading_photos'
+        uploadStatus: 'uploading_photos',
       });
     }
 
-    // ── PHASE 2: Upload Foto (Antrean Satu per Satu dengan Auto-Resume) ──
-    // Kalau sebelumnya gagal di tengah jalan (partial_failed atau app terhenti saat uploading_photos), kita lanjutin dari index terakhir
-    const startIdx = (session.uploadStatus === 'partial_failed' || session.uploadStatus === 'uploading_photos')
-      ? (session.photosUploaded || 0)
-      : 0;
+    if (signal?.aborted) throw new UploadCancelledError();
 
-    for (let i = startIdx; i < totalPhotos; i++) {
-      const photo = photosToUpload[i];
-      
-      // KUNCI FIX: Jika foto sudah memiliki driveFileId (sudah terupload), lewati upload ulang!
-      if (photo.driveFileId) {
-        await db.inspection_sessions.update(session.id, {
-          photosUploaded: i + 1
-        });
-        onProgress?.({
-          percentage: Math.round(((i + 1) / totalPhotos) * 100),
-          loaded: i + 1,
-          total: totalPhotos,
-        });
-        continue;
+    // ── PHASE 2: Upload Foto (Parallel Pool + Byte-Level XHR Progress + Auto-Resume) ──
+    const alreadyUploadedCount = validPhotos.filter((p) => !!p.driveFileId).length;
+    const basePhotoNumber = Math.max(getMaxExistingPhotoNumber(session.photos), alreadyUploadedCount);
+
+    const pendingItems = validPhotos
+      .map((photo, index) => ({ photo, originalIndex: index }))
+      .filter((item) => !item.photo.driveFileId && !!item.photo.dataUrl)
+      .map((item, pendingIdx) => ({
+        ...item,
+        photoNumber: basePhotoNumber + pendingIdx + 1,
+      }));
+
+    let completedCount = alreadyUploadedCount;
+    const inFlightFraction = new Map<string, number>();
+    const inFlightBytes = new Map<string, { loaded: number; total: number }>();
+    const totalPendingBytes = pendingItems.reduce((sum, item) => sum + item.photo.dataUrl.length, 0);
+    let completedBytes = 0;
+    let lastEmitAt = 0;
+    let lastEmittedPct = -1;
+
+    const emitPhotoProgress = (force = false) => {
+      let inFlightSum = 0;
+      for (const frac of inFlightFraction.values()) {
+        inFlightSum += frac;
       }
-      
-      // Panggil progress SEBELUM fetch (tapi belum di-render)
+
+      let activeBytes = 0;
+      for (const b of inFlightBytes.values()) {
+        activeBytes += b.loaded;
+      }
+
+      const effectiveDone = completedCount + inFlightSum;
+      const pct = totalPhotos > 0
+        ? Math.min(99, 5 + Math.round((effectiveDone / totalPhotos) * 94))
+        : 95;
+
+      const now = Date.now();
+      if (!force && pct === lastEmittedPct && now - lastEmitAt < 120) {
+        return;
+      }
+      lastEmitAt = now;
+      lastEmittedPct = pct;
+
       onProgress?.({
-        percentage: Math.ceil(((i + 1) / totalPhotos) * 100),
-        loaded: i,
+        percentage: pct,
+        loaded: completedCount,
         total: totalPhotos,
+        bytesLoaded: completedBytes + activeBytes,
+        bytesTotal: totalPendingBytes,
       });
+    };
 
-      // Kasih jeda ringan agar browser & React render lancar
-      await new Promise(resolve => setTimeout(resolve, 60));
+    emitPhotoProgress(true);
 
+    if (pendingItems.length > 0) {
       const apiBase = getApiBaseUrl();
-      const photoRes = await fetchWithRetry(`${apiBase}/api/upload-photo`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          folderId: folderId,
-          photoBase64: photo.dataUrl,
-          photoIndex: i
-        }),
-      }, 3, 1000);
+      let cursor = 0;
+      let firstError: Error | null = null;
 
-      if (!photoRes.ok) {
-        const errData = await photoRes.json().catch(() => ({}));
-        throw new Error(errData?.error || `Gagal upload foto ke-${i + 1}`);
-      }
+      const workerCount = Math.min(UPLOAD_CONCURRENCY, pendingItems.length);
+      const workers = Array.from({ length: workerCount }, async () => {
+        while (!firstError && !signal?.aborted) {
+          const idx = cursor++;
+          if (idx >= pendingItems.length) break;
 
-      const photoData = await photoRes.json().catch(() => ({}));
-      if (photoData.fileId && photo.id) {
-        await db.inspection_photos.update(photo.id, {
-          driveFileId: photoData.fileId,
-          fileName: photoData.fileName,
-        });
-      }
+          const { photo, originalIndex, photoNumber } = pendingItems[idx];
 
-      await db.inspection_sessions.update(session.id, {
-        photosUploaded: i + 1
+          try {
+            inFlightFraction.set(photo.id, 0);
+            const photoRes = await xhrPostJsonWithRetry(
+              `${apiBase}/api/upload-photo`,
+              {
+                folderId,
+                photoBase64: photo.dataUrl,
+                photoIndex: originalIndex,
+                photoNumber,
+                photoUid: photo.id,
+              },
+              (loaded, total) => {
+                if (total > 0) {
+                  // 0%..88% untuk transfer jaringan, sisanya menunggu Drive commit
+                  inFlightFraction.set(photo.id, Math.min(0.88, (loaded / total) * 0.88));
+                  inFlightBytes.set(photo.id, { loaded, total });
+                  emitPhotoProgress(false);
+                }
+              },
+              signal,
+              3,
+              1000
+            );
+
+            if (!photoRes.ok) {
+              const errMsg = typeof photoRes.data?.error === 'string' ? photoRes.data.error : '';
+              throw new Error(errMsg || `Gagal upload foto ke-${originalIndex + 1}`);
+            }
+
+            const photoData = photoRes.data ?? {};
+            const driveFileId = typeof photoData.fileId === 'string' ? photoData.fileId : '';
+            const driveFileName = typeof photoData.fileName === 'string' ? photoData.fileName : undefined;
+            if (driveFileId && photo.id) {
+              await db.inspection_photos.update(photo.id, {
+                driveFileId,
+                fileName: driveFileName,
+              });
+            }
+
+            inFlightFraction.delete(photo.id);
+            inFlightBytes.delete(photo.id);
+            completedBytes += photo.dataUrl.length;
+            const doneCount = ++completedCount;
+            await db.inspection_sessions.update(session.id, {
+              photosUploaded: doneCount,
+            });
+            emitPhotoProgress(true);
+          } catch (err: unknown) {
+            inFlightFraction.delete(photo.id);
+            inFlightBytes.delete(photo.id);
+            if (!firstError) {
+              firstError = err instanceof Error ? err : new Error(String(err));
+            }
+            break;
+          }
+        }
       });
 
-      // Panggil progress SETELAH foto berhasil
-      onProgress?.({
-        percentage: Math.round(((i + 1) / totalPhotos) * 100),
-        loaded: i + 1,
-        total: totalPhotos,
-      });
-
-      // Pacing halus untuk mencegah rate-limit Google Drive API
-      await new Promise(resolve => setTimeout(resolve, 80));
+      await Promise.all(workers);
+      if (firstError) throw firstError;
+      if (signal?.aborted) throw new UploadCancelledError();
     }
 
     // ── PHASE 3: Selesai Semua ──
     onProgress?.({
       percentage: 100,
-      loaded: totalSteps,
-      total: totalSteps,
+      loaded: totalPhotos,
+      total: totalPhotos,
+      bytesLoaded: totalPendingBytes,
+      bytesTotal: totalPendingBytes,
     });
 
     await db.inspection_sessions.update(session.id, {
       uploadStatus: 'fully_synced',
       status: 'synced',
+      photosUploaded: totalPhotos,
       updatedAt: Date.now(), // ← trigger device lain untuk pull ulang
     });
 
     return { success: true, folderId: folderId! };
 
   } catch (err: any) {
-    // Kalau gagal di tengah jalan, ubah status jadi partial_failed biar bisa di-resume nanti
+    // Kalau gagal di tengah jalan atau dibatalkan, ubah status jadi partial_failed biar bisa di-resume nanti
     console.error('[driveService] Error:', err);
     await db.inspection_sessions.update(session.id, {
       uploadStatus: 'partial_failed'

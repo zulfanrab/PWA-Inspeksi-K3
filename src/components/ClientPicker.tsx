@@ -19,6 +19,7 @@ import {
 import { pullTemplatesFromDrive } from '../services/syncService';
 import { CustomCamera } from './CustomCamera';
 import { registerBackInterceptor } from '../utils/navigationGuard';
+import { compressDataUrl } from '../utils/photoCompressor';
 
 // ==========================================
 // TYPES
@@ -341,6 +342,8 @@ export function ClientPicker({ onPick, onManual, onCancel, currentUserEmail, onD
   const handleSaveQuickPhotos = async (target: PickedUnit, capturedPhotos: string[]) => {
     if (capturedPhotos.length === 0) return;
     try {
+      const compressedPhotos = await Promise.all(capturedPhotos.map((url) => compressDataUrl(url)));
+
       // 1. Cek apakah draft untuk unit ini sudah ada
       const allDrafts = await db.inspection_sessions
         .where('status')
@@ -351,8 +354,8 @@ export function ClientPicker({ onPick, onManual, onCancel, currentUserEmail, onD
 
       if (existingDraft) {
         // Tambahkan foto ke draft yang sudah ada
-        await SessionRepository.update(existingDraft.id, { updatedAt: Date.now() }, capturedPhotos, []);
-        setToastMessage(`✓ ${capturedPhotos.length} foto baru ditambahkan ke draft ${target.unit.label}`);
+        await SessionRepository.update(existingDraft.id, { updatedAt: Date.now() }, compressedPhotos, []);
+        setToastMessage(`✓ ${compressedPhotos.length} foto baru ditambahkan ke draft ${target.unit.label}`);
       } else {
         // Buat draft baru otomatis dengan data dari template Admin Panel
         const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Jakarta' });
@@ -371,8 +374,8 @@ export function ClientPicker({ onPick, onManual, onCancel, currentUserEmail, onD
           uploadStatus: 'pending_upload',
           photosUploaded: 0,
         };
-        await SessionRepository.create(sessionData, capturedPhotos);
-        setToastMessage(`✓ Draft tersimpan: ${target.unit.label} (${capturedPhotos.length} foto)`);
+        await SessionRepository.create(sessionData, compressedPhotos);
+        setToastMessage(`✓ Draft tersimpan: ${target.unit.label} (${compressedPhotos.length} foto)`);
       }
 
       // Refresh data agar badge unit langsung berubah menjadi "📷 X Foto"
