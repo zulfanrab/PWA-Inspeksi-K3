@@ -298,11 +298,12 @@ async function handleGenerate(req: VercelRequest, res: VercelResponse) {
         let maxHeight = 350;
 
         if (tagName === 'img1' || tagName === 'img2' || tagName === 'img3') {
-          maxWidth = 180;
-          maxHeight = 135;
+          // Area efektif Folio margin 1 inci = ~165 mm (~55 mm/kolom); 165x125 px (~43.6x33.1 mm) aman di sel 55 mm
+          maxWidth = 165;
+          maxHeight = 125;
         } else if (tagName === 'jointPhoto') {
-          maxWidth = 460;
-          maxHeight = 300;
+          maxWidth = 440;
+          maxHeight = 260;
         } else if (
           tagName === 'skpAhliImage' ||
           tagName === 'skpPerusahaanImage' ||
@@ -325,7 +326,7 @@ async function handleGenerate(req: VercelRequest, res: VercelResponse) {
         }
         return [width, height];
       } catch (e) {
-        return [180, 135];
+        return [165, 125];
       }
     }
   };
@@ -333,7 +334,10 @@ async function handleGenerate(req: VercelRequest, res: VercelResponse) {
   const doc = new Docxtemplater(zip, {
     modules: [new ImageModule(imageOptions)],
     paragraphLoop: true,
-    linebreaks: true
+    linebreaks: true,
+    nullGetter() {
+      return '';
+    }
   });
 
   const visualFaultsList: string[] = [];
@@ -365,13 +369,21 @@ async function handleGenerate(req: VercelRequest, res: VercelResponse) {
   }
 
   const sections = reportData.aiNarrative?.sections || {};
-  const tech = reportData.technicalData || {};
+  const rawTech = reportData.technicalData || {};
+  const sanitizedTech = Object.fromEntries(
+    Object.entries(rawTech).filter(([, v]) => v !== undefined && v !== null)
+  );
+  const isIpp = String(reportData.inspectionTypeCode || '').toUpperCase() === 'IPP';
 
   const templateData = {
     companyName: reportData.generalData?.companyName || '',
     companyAddress: reportData.generalData?.companyAddress || '',
-    inspectionDate: reportData.generalData?.inspectionDate || '',
-    reportDate: reportData.generalData?.reportDate || '',
+    inspectionDate: isIpp
+      ? (inspDateInfo.formatted || reportData.generalData?.inspectionDate || '')
+      : (reportData.generalData?.inspectionDate || ''),
+    reportDate: isIpp
+      ? (repDateInfo.formatted || reportData.generalData?.reportDate || '')
+      : (reportData.generalData?.reportDate || ''),
     inspectionDay: inspDateInfo.day,
     inspectionDateFormatted: inspDateInfo.formatted,
     reportDateFormatted: repDateInfo.formatted,
@@ -384,29 +396,30 @@ async function handleGenerate(req: VercelRequest, res: VercelResponse) {
     skpAhliImage: reportData.generalData?.skpAhliImage || '',
     skpPerusahaanImage: reportData.generalData?.skpPerusahaanImage || '',
 
-    // 20 Data Umum + technical fields
-    jenisAlat: tech.jenisAlat || 'Instalasi Penyalur Petir',
-    jenisPenyalurPetir: tech.jenisPenyalurPetir || '',
-    bentukPenerima: tech.bentukPenerima || '',
-    merkType: tech.merkType || '-',
-    tahunPemasangan: tech.tahunPemasangan || '-',
-    tinggiTiangPenerima: tech.tinggiTiangPenerima || '',
-    tinggiBangunan: tech.tinggiBangunan || '',
-    jumlahAirTerminal: tech.jumlahAirTerminal || '',
-    jumlahBoxKontrol: tech.jumlahBoxKontrol || '',
-    jumlahElektrodaPembumian: tech.jumlahElektrodaPembumian || '',
-    radiusPerlindungan: tech.radiusPerlindungan || '',
-    jumlahDownConductor: tech.jumlahDownConductor || '',
-    jenisDownConductor: tech.jenisDownConductor || '',
-    diameterTiangPenerima: tech.diameterTiangPenerima || '',
-    luasBangunan: tech.luasBangunan || '-',
-    jenisKonstruksi: tech.jenisKonstruksi || '',
-    atapBangunan: tech.atapBangunan || '',
-    dindingBangunan: tech.dindingBangunan || '',
-    lantaiBangunan: tech.lantaiBangunan || '',
-    lokasiPemasangan: tech.lokasiPemasangan || '',
-    measuringTool: tech.measuringTool || 'Earth Tester Merk Kyoritsu',
-    ...tech,
+    ...sanitizedTech,
+
+    // 20 Data Umum + technical fields (pastikan tidak pernah kosong/undefined jika tidak diisi)
+    jenisAlat: rawTech.jenisAlat || 'Instalasi Penyalur Petir',
+    jenisPenyalurPetir: rawTech.jenisPenyalurPetir || '-',
+    bentukPenerima: rawTech.bentukPenerima || '-',
+    merkType: rawTech.merkType || '-',
+    tahunPemasangan: rawTech.tahunPemasangan || '-',
+    tinggiTiangPenerima: rawTech.tinggiTiangPenerima || '-',
+    tinggiBangunan: rawTech.tinggiBangunan || '-',
+    jumlahAirTerminal: rawTech.jumlahAirTerminal || '-',
+    jumlahBoxKontrol: rawTech.jumlahBoxKontrol || '-',
+    jumlahElektrodaPembumian: rawTech.jumlahElektrodaPembumian || '-',
+    radiusPerlindungan: rawTech.radiusPerlindungan || '-',
+    jumlahDownConductor: rawTech.jumlahDownConductor || '-',
+    jenisDownConductor: rawTech.jenisDownConductor || '-',
+    diameterTiangPenerima: rawTech.diameterTiangPenerima || '-',
+    luasBangunan: rawTech.luasBangunan || '-',
+    jenisKonstruksi: rawTech.jenisKonstruksi || '-',
+    atapBangunan: rawTech.atapBangunan || '-',
+    dindingBangunan: rawTech.dindingBangunan || '-',
+    lantaiBangunan: rawTech.lantaiBangunan || '-',
+    lokasiPemasangan: rawTech.lokasiPemasangan || '-',
+    measuringTool: rawTech.measuringTool || 'Earth Tester Merk Kyoritsu',
 
     // Checklists
     checklistSections: reportData.checklistData?.checklistSections || [],
@@ -417,7 +430,14 @@ async function handleGenerate(req: VercelRequest, res: VercelResponse) {
     visualFaults: visualFaultsList.join('\n'),
 
     // Grounding & calculations
-    groundingPoints: tech.groundingPoints || [],
+    groundingPoints: Array.isArray(rawTech.groundingPoints)
+      ? rawTech.groundingPoints.map((g: any, idx: number) => ({
+          no: g?.no ?? idx + 1,
+          pointName: g?.pointName || `Titik ${idx + 1}`,
+          resistanceValue: g?.resistanceValue ?? '-',
+          pointRemarks: g?.pointRemarks ?? '-',
+        }))
+      : [],
     calculations: reportData.formulaResults?.calculations || [],
     overallSafetyStatus: reportData.formulaResults?.overallSafetyStatus || 'AMAN',
 
@@ -542,9 +562,38 @@ async function handleGenerate(req: VercelRequest, res: VercelResponse) {
     supportsAllDrives: true,
   });
 
+  // Simpan metadata ringan laporan ke _reports_index.json di Drive agar muncul di semua device (Desktop & HP)
+  const cloudId = String(reportData.cloudId || `${reportData.inspectionTypeCode || 'IPP'}_${reportData.inspectionId || jobId}`);
+  const { skpAhliImage: _omitSkp1, skpPerusahaanImage: _omitSkp2, ...safeGeneralData } = reportData.generalData || {};
+  const cloudSummary = {
+    cloudId,
+    inspectionId: reportData.inspectionId || '',
+    reportNumber: reportData.reportNumber || '',
+    inspectionTypeCode: reportData.inspectionTypeCode || 'IPP',
+    configVersion: reportData.configVersion || '2.0.0',
+    status: 'completed',
+    generalData: safeGeneralData,
+    technicalData: sanitizedTech,
+    checklistData: reportData.checklistData || {},
+    formulaResults: reportData.formulaResults || {},
+    aiNarrative: reportData.aiNarrative || {},
+    docxDriveFileId: fileId,
+    pdfDriveFileId: pdfDriveFileId || '',
+    driveFileId: pdfDriveFileId || fileId,
+    createdAt: reportData.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  try {
+    await upsertReportToCloudIndex(drive, rootFolderId, cloudSummary);
+  } catch (syncErr: any) {
+    console.warn('[api/report] Gagal update _reports_index.json:', syncErr?.message);
+  }
+
   return res.status(200).json({
     success: true,
     jobId,
+    cloudId,
     outputDriveFileId: fileId,
     pdfDriveFileId,
     message: 'Pembuatan laporan selesai.'
@@ -981,10 +1030,110 @@ async function handleTemplateUploadSession(req: VercelRequest, res: VercelRespon
   });
 }
 
+// 8. CLOUD REPORTS INDEX (_reports_index.json untuk sinkronisasi Desktop <-> Mobile)
+const REPORTS_INDEX_FILENAME = '_reports_index.json';
+
+async function readReportsIndex(drive: any, rootFolderId: string): Promise<{ fileId: string | null; reports: any[] }> {
+  const q = `name='${REPORTS_INDEX_FILENAME}' and '${rootFolderId}' in parents and trashed=false`;
+  const searchRes = await drive.files.list({
+    q,
+    fields: 'files(id)',
+    spaces: 'drive',
+    pageSize: 1,
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
+  });
+  const fileId = searchRes.data.files?.[0]?.id || null;
+  if (!fileId) return { fileId: null, reports: [] };
+
+  try {
+    const dl = await drive.files.get(
+      { fileId, alt: 'media', supportsAllDrives: true },
+      { responseType: 'text' }
+    );
+    const parsed = JSON.parse((dl.data as string) || '{}');
+    return {
+      fileId,
+      reports: Array.isArray(parsed.reports) ? parsed.reports : [],
+    };
+  } catch {
+    return { fileId, reports: [] };
+  }
+}
+
+async function writeReportsIndex(drive: any, rootFolderId: string, existingFileId: string | null, reports: any[]) {
+  const payload = JSON.stringify({ reports, updatedAt: new Date().toISOString() }, null, 2);
+  const media = { mimeType: 'application/json', body: Readable.from(payload) };
+  if (existingFileId) {
+    await drive.files.update({
+      fileId: existingFileId,
+      requestBody: { name: REPORTS_INDEX_FILENAME },
+      media,
+      supportsAllDrives: true,
+    });
+  } else {
+    await drive.files.create({
+      requestBody: { name: REPORTS_INDEX_FILENAME, mimeType: 'application/json', parents: [rootFolderId] },
+      media,
+      fields: 'id',
+      supportsAllDrives: true,
+    });
+  }
+}
+
+async function upsertReportToCloudIndex(drive: any, rootFolderId: string, summary: any) {
+  const { fileId, reports } = await readReportsIndex(drive, rootFolderId);
+  const idx = reports.findIndex((r: any) => r.cloudId === summary.cloudId);
+  const next = [...reports];
+  if (idx >= 0) {
+    next[idx] = {
+      ...next[idx],
+      ...summary,
+      docxDriveFileId: summary.docxDriveFileId || next[idx].docxDriveFileId || '',
+      pdfDriveFileId: summary.pdfDriveFileId || next[idx].pdfDriveFileId || '',
+    };
+  } else {
+    next.unshift(summary);
+  }
+  await writeReportsIndex(drive, rootFolderId, fileId, next);
+}
+
+async function handleReports(req: VercelRequest, res: VercelResponse) {
+  const drive = getDriveClient();
+  const rootFolderId = process.env.ROOT_FOLDER_ID?.trim() || 'root';
+
+  if (req.method === 'GET') {
+    const { reports } = await readReportsIndex(drive, rootFolderId);
+    return res.status(200).json({ success: true, reports });
+  }
+
+  if (req.method === 'POST') {
+    const { report } = req.body || {};
+    if (!report || !report.cloudId) {
+      return res.status(400).json({ error: 'Payload tidak valid: report.cloudId wajib ada.' });
+    }
+    await upsertReportToCloudIndex(drive, rootFolderId, report);
+    return res.status(200).json({ success: true });
+  }
+
+  if (req.method === 'DELETE') {
+    const cloudId = String(req.query.cloudId || req.body?.cloudId || '').trim();
+    if (!cloudId) {
+      return res.status(400).json({ error: 'Parameter cloudId wajib disertakan.' });
+    }
+    const { fileId, reports } = await readReportsIndex(drive, rootFolderId);
+    const filtered = reports.filter((r: any) => r.cloudId !== cloudId);
+    await writeReportsIndex(drive, rootFolderId, fileId, filtered);
+    return res.status(200).json({ success: true });
+  }
+
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
 // --- MAIN ROUTER ---
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', process.env.ALLOWED_ORIGIN ?? '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
@@ -1008,6 +1157,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return await handleInspectors(req, res);
     } else if (action === 'vision') {
       return await handleVision(req, res);
+    } else if (action === 'reports') {
+      return await handleReports(req, res);
     } else {
       return res.status(400).json({ error: `Action "${action}" tidak valid.` });
     }

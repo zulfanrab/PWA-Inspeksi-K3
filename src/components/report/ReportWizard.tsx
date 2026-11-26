@@ -125,10 +125,20 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
         setAiNarrative(rep.aiNarrative?.sections);
         
         // Photos
-        const sourceInsp = await SessionRepository.getById(rep.inspectionId);
+        const sourceInsp = rep.inspectionId ? await SessionRepository.getById(rep.inspectionId) : null;
         if (sourceInsp) {
           setSelectedInspection(sourceInsp);
           setSelectedPhotos(sourceInsp.photos || []);
+        } else {
+          // Fallback jika laporan di-sync dari cloud ke device baru yang belum memiliki sesi inspeksi lokal
+          setSelectedInspection({
+            id: rep.inspectionId || '',
+            clientName: rep.generalData?.companyName || '',
+            objectType: rep.inspectionTypeCode === 'IPP' ? 'Penyalur Petir' : 'Instalasi Listrik',
+            unitData: rep.technicalData || {},
+            photos: [],
+          });
+          setSelectedPhotos([]);
         }
         
         setCurrentStep(2); // langsung ke data umum jika edit

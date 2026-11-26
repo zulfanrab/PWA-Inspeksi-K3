@@ -797,7 +797,7 @@ export function IppReportWizard({
       const gridSelected = photos.filter((p) => p.selectedForGrid && !p.isJointPhoto);
       const compressedGrid = await Promise.all(
         gridSelected.map(async (p) => ({
-          caption: p.caption,
+          caption: p.caption || '',
           dataUrl: await ImageCompressor.compress(await resolvePhotoDataUrl(p), 900, 0.78),
         }))
       );
@@ -807,7 +807,10 @@ export function IppReportWizard({
         ? await ImageCompressor.compress(await resolvePhotoDataUrl(jointItem), 1200, 0.82)
         : '';
 
+      const cloudId = initialReportData?.cloudId || `IPP_${selectedInspection?.id || Date.now()}`;
+
       const reportPayload = {
+        cloudId,
         inspectionId: selectedInspection?.id || '',
         reportNumber: reportNumber.trim(),
         inspectionTypeCode: 'IPP',
@@ -815,10 +818,10 @@ export function IppReportWizard({
         configVersion: '2.0.0',
         status: 'generating',
         generalData: {
-          companyName: formData.companyName,
-          companyAddress: formData.companyAddress,
-          inspectionDate: formData.inspectionDate,
-          reportDate: formData.reportDate,
+          companyName: formData.companyName || '',
+          companyAddress: formData.companyAddress || '',
+          inspectionDate: formData.inspectionDate || '',
+          reportDate: formData.reportDate || '',
           inspectorCompany: 'PT. AKSARA RIKSA PERDANA',
           inspectorName: selectedInspector?.name || '',
           inspectorField: selectedInspector?.field || 'Ahli Keselamatan dan Kesehatan Kerja Bidang Listrik',
@@ -832,9 +835,9 @@ export function IppReportWizard({
           driveFolderId: selectedInspection?.driveFolderId || '',
           groundingPoints: groundingPoints.map((g, idx) => ({
             no: idx + 1,
-            pointName: g.pointName,
-            resistanceValue: g.resistanceValue,
-            pointRemarks: g.pointRemarks,
+            pointName: g.pointName?.trim() || `Titik ${idx + 1}`,
+            resistanceValue: g.resistanceValue?.trim() || '-',
+            pointRemarks: g.pointRemarks?.trim() || '-',
           })),
         },
         checklistData: {
@@ -848,13 +851,13 @@ export function IppReportWizard({
         formulaResults: calcResult,
         aiNarrative: {
           sections: {
-            visualSummary,
-            measurementSummary,
-            conclusion,
-            recommendations,
-            executiveSummary: visualSummary,
-            findingsNarrative: visualSummary,
-            testResultsNarrative: measurementSummary,
+            visualSummary: visualSummary || '',
+            measurementSummary: measurementSummary || '',
+            conclusion: conclusion || '',
+            recommendations: recommendations || '',
+            executiveSummary: visualSummary || '',
+            findingsNarrative: visualSummary || '',
+            testResultsNarrative: measurementSummary || '',
           },
         },
         photoDocumentation: {
@@ -889,7 +892,10 @@ export function IppReportWizard({
       }
 
       await db.reports.update(localId, {
+        cloudId: data.cloudId || cloudId,
         status: 'completed',
+        docxDriveFileId: data.outputDriveFileId || '',
+        pdfDriveFileId: data.pdfDriveFileId || '',
         driveFileId: data.pdfDriveFileId || data.outputDriveFileId,
       });
 
@@ -1665,6 +1671,13 @@ export function IppReportWizard({
                 )}
               </div>
 
+              {photos.length > 0 && !photos.some((p) => p.isJointPhoto) && (
+                <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-800 font-semibold">
+                  ⚠️ Belum ada foto yang ditandai sebagai <strong>Foto Bersama Pihak Perusahaan</strong>. Klik tombol{' '}
+                  <span className="font-bold">☆ Bersama</span> pada salah satu foto agar bagian tersebut tidak kosong di laporan.
+                </div>
+              )}
+
               {photos.length === 0 ? (
                 <p className="text-xs text-gray-400 text-center py-6 bg-gray-50 rounded-xl border border-dashed border-gray-200">
                   Tidak ada foto pada sesi inspeksi ini.
@@ -1845,17 +1858,33 @@ export function IppReportWizard({
                 </button>
               </div>
 
-              {missingFields.length > 0 && (
+              {(missingFields.length > 0 || (photos.length > 0 && !photos.some((p) => p.isJointPhoto))) && (
                 <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800 space-y-1">
-                  <p className="font-bold">⚠️ Beberapa kolom masih kosong:</p>
-                  <p className="text-[11px]">{missingFields.map((m) => m.label).join(', ')}</p>
-                  <button
-                    type="button"
-                    onClick={() => setStep(1)}
-                    className="text-[11px] font-bold underline"
-                  >
-                    Lengkapi di Langkah 1 →
-                  </button>
+                  {missingFields.length > 0 && (
+                    <>
+                      <p className="font-bold">⚠️ Beberapa kolom Data Umum masih kosong:</p>
+                      <p className="text-[11px]">{missingFields.map((m) => m.label).join(', ')}</p>
+                      <button
+                        type="button"
+                        onClick={() => setStep(1)}
+                        className="text-[11px] font-bold underline block"
+                      >
+                        Lengkapi di Langkah 1 →
+                      </button>
+                    </>
+                  )}
+                  {photos.length > 0 && !photos.some((p) => p.isJointPhoto) && (
+                    <div className="pt-1">
+                      <p className="font-bold">⚠️ Foto Bersama Pihak Perusahaan belum dipilih.</p>
+                      <button
+                        type="button"
+                        onClick={() => setStep(3)}
+                        className="text-[11px] font-bold underline"
+                      >
+                        Tandai 1 foto di Langkah 3 →
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
 

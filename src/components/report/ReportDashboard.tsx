@@ -1,6 +1,7 @@
 // src/components/report/ReportDashboard.tsx
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { db } from '../../db/db';
+import { getApiBaseUrl } from '../../config';
 
 interface ReportDashboardProps {
   onNewReport: () => void;
@@ -8,34 +9,88 @@ interface ReportDashboardProps {
   setCurrentView: (view: any) => void;
 }
 
-export function ReportDashboard({ onNewReport, onEditReport, setCurrentView }: ReportDashboardProps) {
+export function ReportDashboard({ onNewReport, onEditReport }: ReportDashboardProps) {
   const [reports, setReports] = useState<any[]>([]);
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [isLoading, setIsLoading] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
 
-  useEffect(() => {
-    loadReports();
+  const apiBase = getApiBaseUrl();
+
+  const loadLocalReports = useCallback(async () => {
+    const allReports = await db.reports.toArray();
+    allReports.sort((a, b) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime());
+    setReports(allReports);
   }, []);
 
-  const loadReports = async () => {
-    setIsLoading(true);
+  const syncFromCloud = useCallback(async () => {
+    if (!navigator.onLine) return;
+    setIsSyncing(true);
     try {
-      const allReports = await db.reports.toArray();
-      // Urutkan dari yang terbaru
-      allReports.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      setReports(allReports);
-    } catch (err) {
-      console.error('Gagal memuat daftar laporan:', err);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+      const res = await fetch(`${apiBase}/api/report?action=reports`);
+      const data = await res.json();
+      if (data.success && Array.isArray(data.reports)) {
+        const localAll = await db.reports.toArray();
+        const byCloudId = new Map<string, any>();
+        for (const loc of localAll) {
+          if (loc.cloudId) byCloudId.set(loc.cloudId, loc);
+        }
 
-  const deleteReport = async (id: number) => {
-    if (confirm('Apakah Anda yakin ingin menghapus draf laporan ini?')) {
-      await db.reports.delete(id);
-      loadReports();
+        for (const remote of data.reports) {
+          if (!remote?.cloudId) continue;
+          const existing = byCloudId.get(remote.cloudId);
+          if (existing) {
+            const remoteTime = new Date(remote.updatedAt || remote.createdAt || 0).getTime();
+            const localTime = new Date(existing.updatedAt || existing.createdAt || 0).getTime();
+            if (remoteTime >= localTime) {
+              await db.reports.put({
+                ...existing,
+                ...remote,
+                id: existing.id,
+              });
+            }
+          } else {
+            await db.reports.add({
+              ...remote,
+              createdAt: remote.createdAt || new Date().toISOString(),
+            });
+          }
+        }
+        await loadLocalReports();
+      }
+    } catch (err) {
+      console.warn('[ReportDashboard] Gagal sync daftar laporan dari cloud:', err);
+    } finally {
+      setIsSyncing(false);
     }
+  }, [apiBase, loadLocalReports]);
+
+  useEffect(() => {
+    const init = async () => {
+      setIsLoading(true);
+      try {
+        await loadLocalReports();
+      } finally {
+        setIsLoading(false);
+      }
+      await syncFromCloud();
+    };
+    init();
+  }, [loadLocalReports, syncFromCloud]);
+
+  const deleteReport = async (report: any) => {
+    if (!confirm('Apakah Anda yakin ingin menghapus laporan ini?')) return;
+    await db.reports.delete(report.id);
+    if (report.cloudId && navigator.onLine) {
+      try {
+        await fetch(`${apiBase}/api/report?action=reports&cloudId=${encodeURIComponent(report.cloudId)}`, {
+          method: 'DELETE',
+        });
+      } catch (err) {
+        console.warn('[ReportDashboard] Gagal hapus laporan di cloud:', err);
+      }
+    }
+    await loadLocalReports();
   };
 
   const filteredReports = reports.filter(r => {
@@ -46,6 +101,7 @@ export function ReportDashboard({ onNewReport, onEditReport, setCurrentView }: R
   const getStatusBadgeClass = (status: string) => {
     switch (status) {
       case 'draft': return 'bg-gray-100 text-gray-700 border-gray-200';
+      case 'completed': return 'bg-emerald-50 text-emerald-700 border-emerald-200';
       case 'in_review': return 'bg-amber-50 text-amber-700 border-amber-200';
       case 'ready': return 'bg-blue-50 text-blue-700 border-blue-200';
       case 'generating': return 'bg-sky-100 text-sky-700 border-sky-200 animate-pulse';
@@ -59,6 +115,7 @@ export function ReportDashboard({ onNewReport, onEditReport, setCurrentView }: R
   const getStatusLabel = (status: string) => {
     switch (status) {
       case 'draft': return 'Draf';
+      case 'completed': return 'Selesai';
       case 'in_review': return 'Review';
       case 'ready': return 'Siap';
       case 'generating': return 'Proses';
@@ -75,24 +132,35 @@ export function ReportDashboard({ onNewReport, onEditReport, setCurrentView }: R
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
         <div>
           <h2 className="text-xl font-black text-gray-900 tracking-tight flex items-center gap-2">
-            <span>⚙️</span> Auto-Report Generation Engine
+            <span>📄</span> Laporan Riksa Uji K3
           </h2>
           <p className="text-xs text-gray-500 font-medium mt-1">
-            Modul pembuat laporan otomatis berbasis template Word & narrative bertenaga Gemini AI.
+            Daftar laporan tersinkron otomatis lintas perangkat (Desktop & HP) melalui Google Drive.
           </p>
         </div>
-        <button
-          onClick={onNewReport}
-          className="flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-600 to-teal-700 text-white font-bold text-sm px-5 py-3 rounded-xl shadow-md shadow-emerald-600/10 hover:shadow-emerald-600/25 active:scale-95 transition-all"
-        >
-          <span>➕</span> Buat Laporan Baru
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={syncFromCloud}
+            disabled={isSyncing}
+            className="flex items-center justify-center gap-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-xs px-4 py-3 rounded-xl transition-all disabled:opacity-50"
+          >
+            <span>{isSyncing ? '⏳' : '🔄'}</span>
+            <span>{isSyncing ? 'Menyinkronkan...' : 'Sync Cloud'}</span>
+          </button>
+          <button
+            onClick={onNewReport}
+            className="flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-600 to-teal-700 text-white font-bold text-sm px-5 py-3 rounded-xl shadow-md shadow-emerald-600/10 hover:shadow-emerald-600/25 active:scale-95 transition-all"
+          >
+            <span>➕</span> Buat Laporan Baru
+          </button>
+        </div>
       </div>
 
       {/* Filter and Stats */}
       <div className="flex flex-wrap gap-2 items-center bg-gray-50/50 p-2.5 rounded-xl border border-gray-200/50">
         <span className="text-xs font-bold text-gray-400 px-2 uppercase tracking-wider">Filter Status:</span>
-        {['all', 'draft', 'in_review', 'ready', 'preview', 'approved', 'locked'].map((status) => (
+        {['all', 'completed', 'draft', 'generating'].map((status) => (
           <button
             key={status}
             onClick={() => setFilterStatus(status)}
@@ -118,78 +186,103 @@ export function ReportDashboard({ onNewReport, onEditReport, setCurrentView }: R
           <div className="text-5xl mb-4 opacity-50">📄</div>
           <h3 className="text-sm font-bold text-gray-700">Belum ada laporan</h3>
           <p className="text-xs text-gray-400 mt-1 max-w-sm">
-            Laporan K3 yang Anda buat atau sedang diproses akan muncul di sini. Klik tombol di atas untuk memulai.
+            Laporan K3 yang Anda buat di Desktop maupun HP akan muncul di sini setelah tersinkron.
           </p>
         </div>
       ) : (
         <div className="grid md:grid-cols-2 gap-4">
-          {filteredReports.map((report) => (
-            <div
-              key={report.id}
-              className="bg-white rounded-2xl border border-gray-150 p-5 shadow-sm hover:shadow-md hover:border-gray-250 transition-all flex flex-col justify-between space-y-4"
-            >
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md border ${getStatusBadgeClass(report.status)}`}>
-                    {getStatusLabel(report.status)}
-                  </span>
-                  <span className="text-[10px] text-gray-400 font-bold">
-                    {new Date(report.createdAt).toLocaleDateString('id-ID', {
-                      day: 'numeric', month: 'short', year: 'numeric'
-                    })}
-                  </span>
-                </div>
+          {filteredReports.map((report) => {
+            const docxId = report.docxDriveFileId || (report.pdfDriveFileId ? '' : report.driveFileId);
+            const pdfId = report.pdfDriveFileId || '';
+            const legacyId = report.generatedFileId;
+            return (
+              <div
+                key={report.id}
+                className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm hover:shadow-md transition-all flex flex-col justify-between space-y-4"
+              >
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md border ${getStatusBadgeClass(report.status)}`}>
+                      {getStatusLabel(report.status)}
+                    </span>
+                    <span className="text-[10px] text-gray-400 font-bold">
+                      {new Date(report.updatedAt || report.createdAt).toLocaleDateString('id-ID', {
+                        day: 'numeric', month: 'short', year: 'numeric'
+                      })}
+                    </span>
+                  </div>
 
-                <div>
-                  <h4 className="text-sm font-bold text-gray-900 line-clamp-1">
-                    {report.generalData?.companyName || 'Klien Tanpa Nama'}
-                  </h4>
-                  <p className="text-xs font-semibold text-emerald-700 mt-0.5">
-                    No: {report.reportNumber || 'Belum Dialokasikan'}
-                  </p>
-                  <p className="text-[11px] text-gray-500 mt-1 font-medium flex items-center gap-1.5">
-                    <span>⚡</span> Tipe: {report.inspectionTypeCode === 'IL' ? 'Instalasi Listrik' : 'Penyalur Petir'}
-                  </p>
-                  {report.technicalData?.namaPanel && (
-                    <p className="text-[11px] text-gray-400 font-medium">
-                      Unit: {report.technicalData.namaPanel}
+                  <div>
+                    <h4 className="text-sm font-bold text-gray-900 line-clamp-1">
+                      {report.generalData?.companyName || 'Klien Tanpa Nama'}
+                    </h4>
+                    <p className="text-xs font-semibold text-emerald-700 mt-0.5">
+                      No: {report.reportNumber || 'Belum Dialokasikan'}
                     </p>
-                  )}
+                    <p className="text-[11px] text-gray-500 mt-1 font-medium flex items-center gap-1.5">
+                      <span>⚡</span> Tipe: {report.inspectionTypeCode === 'IL' ? 'Instalasi Listrik' : 'Penyalur Petir (IPP)'}
+                    </p>
+                    {report.technicalData?.lokasiPemasangan && (
+                      <p className="text-[11px] text-gray-400 font-medium line-clamp-1">
+                        Lokasi: {report.technicalData.lokasiPemasangan}
+                      </p>
+                    )}
+                  </div>
                 </div>
-              </div>
 
-              <div className="flex items-center justify-between border-t border-gray-100 pt-3">
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => onEditReport(report.id)}
-                    className="text-xs font-bold text-emerald-600 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg hover:bg-emerald-100 active:scale-95 transition-all"
-                  >
-                    {report.status === 'locked' ? 'Detail' : 'Edit Laporan'}
-                  </button>
-                  {report.generatedFileId && (
-                    <a
-                      href={`https://docs.google.com/document/d/${report.generatedFileId}/edit`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs font-bold text-blue-600 bg-blue-50 border border-blue-200 px-3 py-1.5 rounded-lg hover:bg-blue-100 transition-all flex items-center gap-1"
+                <div className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 pt-3">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      onClick={() => onEditReport(report.id)}
+                      className="text-xs font-bold text-emerald-600 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg hover:bg-emerald-100 active:scale-95 transition-all"
                     >
-                      <span>📂</span> Google Docs
-                    </a>
+                      {report.status === 'locked' ? 'Detail' : 'Edit Laporan'}
+                    </button>
+                    {docxId && (
+                      <a
+                        href={`https://drive.google.com/file/d/${docxId}/view`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs font-bold text-blue-600 bg-blue-50 border border-blue-200 px-2.5 py-1.5 rounded-lg hover:bg-blue-100 transition-all"
+                      >
+                        📝 Word
+                      </a>
+                    )}
+                    {pdfId && (
+                      <a
+                        href={`https://drive.google.com/file/d/${pdfId}/view`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-200 px-2.5 py-1.5 rounded-lg hover:bg-indigo-100 transition-all"
+                      >
+                        📄 PDF
+                      </a>
+                    )}
+                    {!docxId && !pdfId && legacyId && (
+                      <a
+                        href={`https://docs.google.com/document/d/${legacyId}/edit`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs font-bold text-blue-600 bg-blue-50 border border-blue-200 px-3 py-1.5 rounded-lg hover:bg-blue-100 transition-all"
+                      >
+                        📂 Drive
+                      </a>
+                    )}
+                  </div>
+
+                  {report.status !== 'locked' && (
+                    <button
+                      onClick={() => deleteReport(report)}
+                      className="text-xs font-bold text-rose-600 bg-rose-50 border border-rose-100 p-1.5 rounded-lg hover:bg-rose-100 transition-all"
+                      title="Hapus Laporan"
+                    >
+                      🗑️
+                    </button>
                   )}
                 </div>
-                
-                {report.status !== 'locked' && (
-                  <button
-                    onClick={() => deleteReport(report.id)}
-                    className="text-xs font-bold text-rose-600 bg-rose-50 border border-rose-100 p-1.5 rounded-lg hover:bg-rose-100 transition-all"
-                    title="Hapus Laporan"
-                  >
-                    🗑️
-                  </button>
-                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
