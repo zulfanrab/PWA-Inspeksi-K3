@@ -19,10 +19,40 @@ export interface ReleaseNote {
   highlights: ChangelogItem[];
 }
 
-export const APP_VERSION = '1.2.0';
+export const APP_VERSION = '1.2.1';
 export const LAST_SEEN_VERSION_KEY = 'aksara_last_seen_version';
 
 export const CHANGELOG: ReleaseNote[] = [
+  {
+    version: '1.2.1',
+    date: '26 November 2026',
+    title: 'Tap Zoom Kamera Lebih Mulus & Pembaruan PWA iPhone',
+    summary:
+      'Penyempurnaan animasi tap zoom kamera agar mulus tanpa patah, deteksi lensa 0.5x Ultra-Wide yang lebih akurat, serta sinkronisasi update otomatis di iOS Safari PWA.',
+    highlights: [
+      {
+        icon: '🎥',
+        title: 'Animasi Tap Zoom Mulus Tanpa Patah',
+        description:
+          'Menghilangkan bentrok antara zoom hardware dan digital serta menambahkan interpolasi halus saat berpindah preset 0.5x, 1x, 2x, 3x, dan 5x maupun pinch zoom.',
+        tag: 'Perbaikan',
+      },
+      {
+        icon: '📐',
+        title: 'Deteksi Lensa 0.5x Ultra-Wide Diperkuat',
+        description:
+          'Mendukung deteksi label kamera Bahasa Indonesia & Inggris di iPhone maupun multi-kamera belakang di Android dengan jeda pelepasan sensor yang aman.',
+        tag: 'Perbaikan',
+      },
+      {
+        icon: '📲',
+        title: 'Pembaruan Otomatis iPhone PWA Lebih Cepat',
+        description:
+          'Menambahkan header cache Service Worker serta deteksi controllerchange agar iPhone PWA tidak tertinggal di versi cache lama.',
+        tag: 'Perbaikan',
+      },
+    ],
+  },
   {
     version: '1.2.0',
     date: '26 November 2026',

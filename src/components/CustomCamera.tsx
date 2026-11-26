@@ -695,27 +695,38 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
   const [gallery, setGallery] = useState<{ open: boolean; index: number }>({ open: false, index: 0 });
   const [showExitConfirm, setShowExitConfirm] = useState(false);
 
-  // States untuk Flash/Torch, Lensa 0.5x, & Tap Zoom
+  // States untuk Flash/Torch, Lensa 0.5x, & Smooth Tap Zoom
   const [zoom, setZoom] = useState(1);
-  const [appliedHardwareZoom, setAppliedHardwareZoom] = useState(1);
+  const [cssZoom, setCssZoom] = useState(1);
+  const [hwZoomEnabled, setHwZoomEnabled] = useState(false);
+  const [isPinching, setIsPinching] = useState(false);
   const [torch, setTorch] = useState(false);
   const [torchSupported, setTorchSupported] = useState(false);
   const [ultraWideMode, setUltraWideMode] = useState<'none' | 'hardware_zoom' | 'multi_lens'>('none');
   const [ultraWideValue, setUltraWideValue] = useState(0.5);
+  const [ultraWideLabel, setUltraWideLabel] = useState('0.5x');
   const [activeLens, setActiveLens] = useState<'main' | 'ultrawide'>('main');
   const [switchingLens, setSwitchingLens] = useState(false);
   const [cameraNotice, setCameraNotice] = useState<string | null>(null);
   const [retryKey, setRetryKey] = useState(0);
 
-  // Refs anti-race condition untuk serialized zoom & lens switching
+  // Refs anti-race condition untuk smooth zoom & lens switching
   const mountedRef = useRef(true);
   const zoomRef = useRef(1);
-  const appliedHardwareZoomRef = useRef(1);
+  const currentAnimatedZoomRef = useRef(1);
+  const cssZoomRef = useRef(1);
   const minZoomRef = useRef(1);
   const maxZoomRef = useRef(1);
   const zoomSupportedRef = useRef(false);
+  const hardwareZoomFailedRef = useRef(false);
   const applyingZoomRef = useRef(false);
-  const queuedHardwareZoomRef = useRef<number | null>(null);
+  const zoomAnimIdRef = useRef(0);
+  const zoomAnimStateRef = useRef<{
+    startZoom: number;
+    targetZoom: number;
+    startTime: number;
+    durationMs: number;
+  } | null>(null);
   const isSwitchingLensRef = useRef(false);
   const mainRearDeviceIdRef = useRef<string | null>(null);
   const ultraWideCandidatesRef = useRef<string[]>([]);
@@ -735,57 +746,103 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
     }, 2800);
   }, []);
 
-  const getEffectiveCssZoom = useCallback((targetZoom: number, hwZoom: number, lens: 'main' | 'ultrawide', uwMode: 'none' | 'hardware_zoom' | 'multi_lens') => {
-    if (lens === 'ultrawide' && uwMode === 'multi_lens') return 1;
-    if (targetZoom <= 1) return 1;
-    return Math.max(1, targetZoom / Math.max(1, hwZoom));
+  const updateCssZoomState = useCallback((nextCss: number) => {
+    const safeCss = Number(Math.max(1, nextCss).toFixed(3));
+    if (Math.abs(cssZoomRef.current - safeCss) < 0.002) return;
+    cssZoomRef.current = safeCss;
+    setCssZoom(safeCss);
   }, []);
 
-  const flushHardwareZoomQueue = useCallback(async (videoTrack: MediaStreamTrack) => {
+  const runHardwareZoomLoop = useCallback(async (videoTrack: MediaStreamTrack) => {
     if (applyingZoomRef.current) return;
     applyingZoomRef.current = true;
     try {
-      while (queuedHardwareZoomRef.current !== null && mountedRef.current && videoTrack.readyState === 'live') {
-        const nextHwZoom = queuedHardwareZoomRef.current;
-        queuedHardwareZoomRef.current = null;
+      while (zoomAnimStateRef.current && mountedRef.current && videoTrack.readyState === 'live') {
+        const anim = zoomAnimStateRef.current;
+        const loopAnimId = zoomAnimIdRef.current;
+        const elapsed = performance.now() - anim.startTime;
+        const progress = anim.durationMs <= 0 ? 1 : Math.min(1, elapsed / anim.durationMs);
+        // easeOutCubic agar transisi tap zoom cepat di awal lalu mulus melambat ke titik target
+        const eased = 1 - Math.pow(1 - progress, 3);
+        const stepZoom = anim.startZoom + (anim.targetZoom - anim.startZoom) * eased;
+        currentAnimatedZoomRef.current = stepZoom;
+
+        const hwMax = maxZoomRef.current;
+        const hwMin = minZoomRef.current;
+        const hwTarget = Math.min(hwMax, Math.max(hwMin, Number(stepZoom.toFixed(2))));
+        const cssTarget = stepZoom > hwMax ? stepZoom / hwMax : 1;
+
+        updateCssZoomState(cssTarget);
+
         try {
           await videoTrack.applyConstraints({
-            advanced: [{ zoom: nextHwZoom } as any],
+            advanced: [{ zoom: hwTarget } as any],
           });
-          if (mountedRef.current) {
-            appliedHardwareZoomRef.current = nextHwZoom;
-            setAppliedHardwareZoom(nextHwZoom);
-          }
         } catch {
-          // Driver gagal menerapkan zoom hardware -> fallback digital aktif otomatis
+          // Driver gagal menerapkan zoom hardware -> handoff mulus ke digital CSS zoom
+          hardwareZoomFailedRef.current = true;
           if (mountedRef.current) {
-            appliedHardwareZoomRef.current = 1;
-            setAppliedHardwareZoom(1);
+            setHwZoomEnabled(false);
+            updateCssZoomState(anim.targetZoom <= 1 ? 1 : anim.targetZoom);
           }
+          zoomAnimStateRef.current = null;
+          break;
         }
+
+        if (progress >= 1 && zoomAnimIdRef.current === loopAnimId) {
+          currentAnimatedZoomRef.current = anim.targetZoom;
+          updateCssZoomState(anim.targetZoom > hwMax ? anim.targetZoom / hwMax : 1);
+          zoomAnimStateRef.current = null;
+          break;
+        }
+
+        // Beri jeda maksimal 1 frame render agar pipeline browser sinkron & tetap responsif
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       }
     } finally {
       applyingZoomRef.current = false;
+      // Jika ada animasi baru yang masuk tepat saat loop berakhir, lanjutkan segera
+      if (zoomAnimStateRef.current && mountedRef.current && videoTrack.readyState === 'live' && !hardwareZoomFailedRef.current) {
+        void runHardwareZoomLoop(videoTrack);
+      }
     }
-  }, []);
+  }, [updateCssZoomState]);
 
-  const applyZoomSafely = useCallback((rawZoom: number) => {
+  const applyZoomSafely = useCallback((rawZoom: number, immediate = false) => {
     const minAllowed = activeLens === 'main' && ultraWideMode === 'hardware_zoom' ? minZoomRef.current : 1;
     const clamped = Math.max(minAllowed, Math.min(5, Number(rawZoom.toFixed(2))));
     zoomRef.current = clamped;
     setZoom(clamped);
 
-    const videoTrack = streamRef.current?.getVideoTracks()[0];
-    if (!videoTrack || videoTrack.readyState !== 'live' || !zoomSupportedRef.current) {
-      appliedHardwareZoomRef.current = 1;
-      setAppliedHardwareZoom(1);
+    if (activeLens === 'ultrawide' && ultraWideMode === 'multi_lens') {
+      currentAnimatedZoomRef.current = 0.5;
+      zoomAnimStateRef.current = null;
+      updateCssZoomState(1);
       return;
     }
 
-    const targetHwZoom = Math.min(maxZoomRef.current, Math.max(minZoomRef.current, clamped));
-    queuedHardwareZoomRef.current = targetHwZoom;
-    void flushHardwareZoomQueue(videoTrack);
-  }, [activeLens, ultraWideMode, flushHardwareZoomQueue]);
+    const videoTrack = streamRef.current?.getVideoTracks()[0];
+    const canUseHw = Boolean(videoTrack && videoTrack.readyState === 'live' && zoomSupportedRef.current && !hardwareZoomFailedRef.current);
+
+    if (!canUseHw || !videoTrack) {
+      zoomAnimStateRef.current = null;
+      currentAnimatedZoomRef.current = clamped;
+      updateCssZoomState(clamped <= 1 ? 1 : clamped);
+      return;
+    }
+
+    const startFrom = currentAnimatedZoomRef.current;
+    const durationMs = immediate || Math.abs(clamped - startFrom) < 0.05 ? 0 : 220;
+    zoomAnimIdRef.current += 1;
+    zoomAnimStateRef.current = {
+      startZoom: startFrom,
+      targetZoom: clamped,
+      startTime: performance.now(),
+      durationMs,
+    };
+
+    void runHardwareZoomLoop(videoTrack);
+  }, [activeLens, ultraWideMode, runHardwareZoomLoop, updateCssZoomState]);
 
   const attachStreamToVideo = useCallback(async (stream: MediaStream, initialZoom = 1) => {
     streamRef.current = stream;
@@ -797,15 +854,18 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
 
     const videoTrack = stream.getVideoTracks()[0];
     setTorch(false);
-    queuedHardwareZoomRef.current = null;
-    appliedHardwareZoomRef.current = 1;
-    setAppliedHardwareZoom(1);
+    zoomAnimIdRef.current += 1;
+    zoomAnimStateRef.current = null;
+    hardwareZoomFailedRef.current = false;
+    updateCssZoomState(1);
 
     if (!videoTrack) {
       setTorchSupported(false);
+      setHwZoomEnabled(false);
       zoomSupportedRef.current = false;
       minZoomRef.current = 1;
       maxZoomRef.current = 1;
+      currentAnimatedZoomRef.current = 1;
       return null;
     }
 
@@ -816,36 +876,52 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
       const zoomCap = (capabilities as any).zoom;
       const zMin = typeof zoomCap?.min === 'number' && zoomCap.min > 0 ? zoomCap.min : 1;
       const zMax = typeof zoomCap?.max === 'number' && zoomCap.max >= zMin ? zoomCap.max : 1;
-      zoomSupportedRef.current = zMax > zMin || zMin < 1;
+      const hasHwZoom = zMax > zMin || zMin < 0.96;
+      zoomSupportedRef.current = hasHwZoom;
+      setHwZoomEnabled(hasHwZoom);
       minZoomRef.current = zMin;
       maxZoomRef.current = zMax;
 
       const clampedInit = Math.max(zMin, Math.min(5, initialZoom));
       zoomRef.current = clampedInit;
+      currentAnimatedZoomRef.current = clampedInit;
       setZoom(clampedInit);
 
-      if (zoomSupportedRef.current) {
+      if (hasHwZoom) {
         const safeHw = Math.min(zMax, Math.max(zMin, clampedInit));
-        queuedHardwareZoomRef.current = safeHw;
-        void flushHardwareZoomQueue(videoTrack);
+        try {
+          await videoTrack.applyConstraints({
+            advanced: [{ zoom: safeHw } as any],
+          });
+          updateCssZoomState(clampedInit > zMax ? clampedInit / zMax : 1);
+        } catch {
+          hardwareZoomFailedRef.current = true;
+          setHwZoomEnabled(false);
+          updateCssZoomState(clampedInit <= 1 ? 1 : clampedInit);
+        }
       }
     } else {
       zoomSupportedRef.current = false;
+      setHwZoomEnabled(false);
       minZoomRef.current = 1;
       maxZoomRef.current = 1;
       const clampedInit = Math.max(1, Math.min(5, initialZoom));
       zoomRef.current = clampedInit;
+      currentAnimatedZoomRef.current = clampedInit;
       setZoom(clampedInit);
+      updateCssZoomState(clampedInit <= 1 ? 1 : clampedInit);
     }
 
     return capabilities;
-  }, [flushHardwareZoomQueue]);
+  }, [updateCssZoomState]);
 
   const discoverRearUltraWide = useCallback(async (track: MediaStreamTrack, caps: any) => {
     const zMin = caps?.zoom?.min;
-    if (typeof zMin === 'number' && zMin > 0 && zMin < 0.95) {
-      const roundedMin = Math.max(0.5, Number(zMin.toFixed(1)));
-      setUltraWideValue(roundedMin);
+    if (typeof zMin === 'number' && zMin > 0 && zMin < 0.96) {
+      const exactMin = Number(zMin.toFixed(2));
+      const displayLabel = exactMin <= 0.65 ? '0.5x' : `${Number(exactMin.toFixed(1))}x`;
+      setUltraWideValue(exactMin);
+      setUltraWideLabel(displayLabel);
       setUltraWideMode('hardware_zoom');
       ultraWideCandidatesRef.current = [];
       return;
@@ -860,30 +936,47 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
       if (settings.deviceId) {
         mainRearDeviceIdRef.current = settings.deviceId;
       }
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const videoInputs = devices.filter(d => d.kind === 'videoinput' && d.deviceId);
 
-      const isFront = (label: string) => /\b(front|user|selfie|depan)\b|facing\s+front/i.test(label);
-      const isExcludedAuxiliary = (label: string) => /\b(macro|depth|bokeh|ir|infrared|mono|monochrome|tof|tele|telephoto)\b/i.test(label);
-      const isExplicitUltraWide = (label: string) => /(ultra[\s-]*wide|0\.5|0\.6|\buw\b)/i.test(label);
+      let devices = await navigator.mediaDevices.enumerateDevices();
+      let videoInputs = devices.filter(d => d.kind === 'videoinput' && d.deviceId);
+
+      // Beberapa browser/WebView terlambat mengisi label kamera tepat setelah izin diberikan
+      if (videoInputs.length > 0 && videoInputs.every(d => !d.label)) {
+        await new Promise(resolve => setTimeout(resolve, 180));
+        if (!mountedRef.current) return;
+        devices = await navigator.mediaDevices.enumerateDevices();
+        videoInputs = devices.filter(d => d.kind === 'videoinput' && d.deviceId);
+      }
+
+      const isFrontOrVirtual = (label: string) =>
+        /\b(front|user|selfie|depan|truedepth|continuity|obs|virtual)\b|facing\s+front|desk\s*view|tampilan\s*meja/i.test(label);
+      const isExcludedAuxiliary = (label: string) =>
+        /\b(macro|makro|depth|kedalaman|bokeh|ir|infrared|mono|monochrome|tof|tele|telephoto|telefoto|periscope|portrait|potret|lidar)\b/i.test(label);
+      const isExplicitUltraWide = (label: string) =>
+        /(ultra[\s-]*(wide|lebar)|lebar\s+ultra|ultrawide|0\.5|0\.6|\buw\b)/i.test(label);
+      const isVirtualMultiRear = (label: string) =>
+        /\b(dual|triple|quad|ganda|tiga)\b/i.test(label);
 
       const secondaryRear = videoInputs.filter(d => {
         if (d.deviceId === settings.deviceId) return false;
         const label = d.label || '';
-        if (isFront(label)) return false;
+        if (isFrontOrVirtual(label)) return false;
         if (isExcludedAuxiliary(label)) return false;
         return true;
       });
 
       secondaryRear.sort((a, b) => {
-        const aUw = isExplicitUltraWide(a.label || '') ? 0 : 1;
-        const bUw = isExplicitUltraWide(b.label || '') ? 0 : 1;
-        return aUw - bUw;
+        const aLabel = a.label || '';
+        const bLabel = b.label || '';
+        const aScore = isExplicitUltraWide(aLabel) ? 0 : isVirtualMultiRear(aLabel) ? 1 : 2;
+        const bScore = isExplicitUltraWide(bLabel) ? 0 : isVirtualMultiRear(bLabel) ? 1 : 2;
+        return aScore - bScore;
       });
 
       if (secondaryRear.length > 0) {
         ultraWideCandidatesRef.current = secondaryRear.map(d => d.deviceId);
         setUltraWideValue(0.5);
+        setUltraWideLabel('0.5x');
         setUltraWideMode('multi_lens');
       } else {
         ultraWideCandidatesRef.current = [];
@@ -933,10 +1026,21 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
     return () => {
       cancelled = true;
       mountedRef.current = false;
+      zoomAnimIdRef.current += 1;
+      zoomAnimStateRef.current = null;
       if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
       streamRef.current?.getTracks().forEach(t => t.stop());
     };
   }, [facing, retryKey, attachStreamToVideo, discoverRearUltraWide]);
+
+  const openStreamWithReleaseRetry = useCallback(async (constraints: MediaTrackConstraints): Promise<MediaStream> => {
+    try {
+      return await navigator.mediaDevices.getUserMedia({ video: constraints, audio: false });
+    } catch {
+      await new Promise(resolve => setTimeout(resolve, 140));
+      return await navigator.mediaDevices.getUserMedia({ video: constraints, audio: false });
+    }
+  }, []);
 
   const handleSelectZoomPreset = useCallback(async (preset: { value: number; isUltraWide?: boolean }) => {
     if (loading || !!error || isSwitchingLensRef.current) return;
@@ -957,20 +1061,45 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
 
           streamRef.current?.getTracks().forEach(t => t.stop());
           streamRef.current = null;
+          // Beri jeda singkat agar driver kamera Android/iOS selesai melepas sensor sebelumnya
+          await new Promise(resolve => setTimeout(resolve, 60));
 
           let openedStream: MediaStream | null = null;
+          let fallbackCandidateStream: MediaStream | null = null;
+          let fallbackCandidateId: string | null = null;
+
           for (const candidateId of candidates) {
             try {
-              const s = await navigator.mediaDevices.getUserMedia({
-                video: { deviceId: { exact: candidateId }, width: { ideal: 1920 }, height: { ideal: 1080 } },
-                audio: false,
+              const s = await openStreamWithReleaseRetry({
+                deviceId: { exact: candidateId },
+                width: { ideal: 1920 },
+                height: { ideal: 1080 },
               });
               const track = s.getVideoTracks()[0];
-              const caps = track?.getCapabilities ? track.getCapabilities() : {};
-              const maxW = (caps as any)?.width?.max;
-              if (typeof maxW === 'number' && maxW > 0 && maxW < 1280) {
+              const caps: any = track?.getCapabilities ? track.getCapabilities() : {};
+              const maxW = caps?.width?.max;
+              const zMin = caps?.zoom?.min;
+              const hasMinZoomWide = typeof zMin === 'number' && zMin > 0 && zMin < 0.96;
+
+              if (typeof maxW === 'number' && maxW > 0 && maxW < 1280 && !hasMinZoomWide) {
                 s.getTracks().forEach(t => t.stop());
                 continue;
+              }
+
+              // Hindari lensa macro/depth 2MP (1600px) jika masih ada kandidat FullHD/UltraWide asli (>=1920px)
+              if (typeof maxW === 'number' && maxW > 0 && maxW < 1920 && !hasMinZoomWide && candidates.length > 1) {
+                if (!fallbackCandidateStream) {
+                  fallbackCandidateStream = s;
+                  fallbackCandidateId = candidateId;
+                } else {
+                  s.getTracks().forEach(t => t.stop());
+                }
+                continue;
+              }
+
+              if (fallbackCandidateStream) {
+                fallbackCandidateStream.getTracks().forEach(t => t.stop());
+                fallbackCandidateStream = null;
               }
               verifiedUltraWideIdRef.current = candidateId;
               openedStream = s;
@@ -980,16 +1109,28 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
             }
           }
 
+          if (!openedStream && fallbackCandidateStream) {
+            openedStream = fallbackCandidateStream;
+            verifiedUltraWideIdRef.current = fallbackCandidateId;
+          }
+
           if (openedStream && mountedRef.current) {
             setActiveLens('ultrawide');
-            await attachStreamToVideo(openedStream, 1);
+            const uwTrack = openedStream.getVideoTracks()[0];
+            const uwCaps: any = uwTrack?.getCapabilities ? uwTrack.getCapabilities() : {};
+            const uwInitZoom =
+              typeof uwCaps?.zoom?.min === 'number' && uwCaps.zoom.min > 0 && uwCaps.zoom.min < 0.96
+                ? Math.max(0.5, Number(uwCaps.zoom.min.toFixed(2)))
+                : 1;
+            await attachStreamToVideo(openedStream, uwInitZoom);
             zoomRef.current = 0.5;
+            currentAnimatedZoomRef.current = 0.5;
             setZoom(0.5);
           } else if (mountedRef.current) {
             const fallbackConstraints: MediaTrackConstraints = mainRearDeviceIdRef.current
               ? { deviceId: { exact: mainRearDeviceIdRef.current }, width: { ideal: 1920 }, height: { ideal: 1080 } }
               : { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } };
-            const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: fallbackConstraints, audio: false }).catch(() => null);
+            const fallbackStream = await openStreamWithReleaseRetry(fallbackConstraints).catch(() => null);
             if (fallbackStream && mountedRef.current) {
               await attachStreamToVideo(fallbackStream, 1);
             }
@@ -1011,10 +1152,14 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
       try {
         streamRef.current?.getTracks().forEach(t => t.stop());
         streamRef.current = null;
+        await new Promise(resolve => setTimeout(resolve, 60));
+
         const mainConstraints: MediaTrackConstraints = mainRearDeviceIdRef.current
           ? { deviceId: { exact: mainRearDeviceIdRef.current }, width: { ideal: 1920 }, height: { ideal: 1080 } }
           : { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } };
-        const mainStream = await navigator.mediaDevices.getUserMedia({ video: mainConstraints, audio: false });
+        const mainStream = await openStreamWithReleaseRetry(mainConstraints).catch(() =>
+          openStreamWithReleaseRetry({ facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } })
+        );
         if (mountedRef.current) {
           setActiveLens('main');
           await attachStreamToVideo(mainStream, preset.value);
@@ -1031,7 +1176,7 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
     }
 
     applyZoomSafely(preset.value);
-  }, [loading, error, ultraWideMode, activeLens, applyZoomSafely, attachStreamToVideo, showCameraNotice]);
+  }, [loading, error, ultraWideMode, activeLens, applyZoomSafely, attachStreamToVideo, openStreamWithReleaseRetry, showCameraNotice]);
 
   const handleTorchToggle = async () => {
     const stream = streamRef.current;
@@ -1064,6 +1209,7 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
     const x = (clientX - rect.left) / rect.width;
     const y = (clientY - rect.top) / rect.height;
 
+    const currentHwZoom = Math.min(maxZoomRef.current, Math.max(minZoomRef.current, currentAnimatedZoomRef.current));
     let applied = false;
     if ('focusMode' in capabilities) {
       const modes = (capabilities as any).focusMode || [];
@@ -1073,8 +1219,8 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
         if ('pointsOfInterest' in capabilities) {
           focusPoint.pointsOfInterest = [{ x, y }];
         }
-        if (zoomSupportedRef.current && appliedHardwareZoomRef.current !== 1) {
-          focusPoint.zoom = appliedHardwareZoomRef.current;
+        if (zoomSupportedRef.current && !hardwareZoomFailedRef.current && currentHwZoom !== 1) {
+          focusPoint.zoom = currentHwZoom;
         }
         constraints.advanced.push(focusPoint);
         applied = true;
@@ -1091,8 +1237,9 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
           const currentCapabilities: any = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
           if (currentCapabilities.focusMode?.includes('continuous')) {
             const restoreConstraint: any = { focusMode: 'continuous' };
-            if (zoomSupportedRef.current && appliedHardwareZoomRef.current !== 1) {
-              restoreConstraint.zoom = appliedHardwareZoomRef.current;
+            const liveHwZoom = Math.min(maxZoomRef.current, Math.max(minZoomRef.current, currentAnimatedZoomRef.current));
+            if (zoomSupportedRef.current && !hardwareZoomFailedRef.current && liveHwZoom !== 1) {
+              restoreConstraint.zoom = liveHwZoom;
             }
             await videoTrack.applyConstraints({
               advanced: [restoreConstraint]
@@ -1123,6 +1270,7 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
       const dy = e.touches[0].clientY - e.touches[1].clientY;
       pinchStartDistRef.current = Math.hypot(dx, dy);
       pinchStartZoomRef.current = zoomRef.current;
+      setIsPinching(true);
     }
   };
 
@@ -1132,12 +1280,13 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
       const dy = e.touches[0].clientY - e.touches[1].clientY;
       const dist = Math.hypot(dx, dy);
       const factor = dist / pinchStartDistRef.current;
-      applyZoomSafely(pinchStartZoomRef.current * factor);
+      applyZoomSafely(pinchStartZoomRef.current * factor, true);
     }
   };
 
   const handleVideoTouchEnd = () => {
     pinchStartDistRef.current = null;
+    setIsPinching(false);
   };
 
 
@@ -1224,12 +1373,12 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
       const ctx = c.getContext('2d')!;
       
       // Hitung CSS Zoom yang benar-benar aktif (selalu identik dengan preview)
-      const cssZoom = getEffectiveCssZoom(zoomRef.current, appliedHardwareZoomRef.current, activeLens, ultraWideMode);
+      const activeCssZoom = cssZoomRef.current;
 
-      if (cssZoom > 1) {
+      if (activeCssZoom > 1) {
         // Crop area tengah sesuai level zoom
-        const cropW = W / cssZoom;
-        const cropH = H / cssZoom;
+        const cropW = W / activeCssZoom;
+        const cropH = H / activeCssZoom;
         const startX = (W - cropW) / 2;
         const startY = (H - cropH) / 2;
         ctx.drawImage(v, startX, startY, cropW, cropH, 0, 0, W, H);
@@ -1442,14 +1591,33 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
             </div>
           )}
 
-          {/* CSS Fallback Zoom untuk device yang tidak support hardware zoom atau over-zoom */}
-          <video ref={videoRef} autoPlay playsInline muted style={{
-            width: '100%', height: '100%', objectFit: 'cover',
-            display: loading || error ? 'none' : 'block',
-            transform: `scale(${getEffectiveCssZoom(zoom, appliedHardwareZoom, activeLens, ultraWideMode)})`,
-            transition: 'transform 0.1s ease-out',
-            transformOrigin: 'center center',
-          }} />
+          {/* Preview Video dengan Smooth Hardware/CSS Zoom */}
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            onLoadedMetadata={() => {
+              const track = streamRef.current?.getVideoTracks()[0];
+              if (track && facing === 'environment' && ultraWideMode === 'none') {
+                const caps = track.getCapabilities ? track.getCapabilities() : {};
+                void discoverRearUltraWide(track, caps);
+              }
+            }}
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              display: loading || error ? 'none' : 'block',
+              opacity: switchingLens ? 0.55 : 1,
+              transform: `scale(${cssZoom})`,
+              transition: (hwZoomEnabled || isPinching)
+                ? 'opacity 0.16s ease'
+                : 'transform 0.24s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.16s ease',
+              willChange: 'transform, opacity',
+              transformOrigin: 'center center',
+            }}
+          />
 
           {/* Target Unit Badge (Jika dibuka via Quick Photo) */}
           {unitLabel && (
@@ -1546,7 +1714,7 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
           {!loading && !error && (() => {
             const presets: { label: string; value: number; isUltraWide?: boolean }[] = [
               ...(facing === 'environment' && ultraWideMode !== 'none'
-                ? [{ label: `${ultraWideValue}x`, value: ultraWideValue, isUltraWide: true }]
+                ? [{ label: ultraWideLabel, value: ultraWideValue, isUltraWide: true }]
                 : []),
               { label: '1x', value: 1 },
               { label: '2x', value: 2 },
@@ -1586,14 +1754,16 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
                         void handleSelectZoomPreset(preset);
                       }}
                       style={{
-                        minWidth: 36, height: 30, padding: '0 8px', borderRadius: 999,
+                        minWidth: 38, height: 32, padding: '0 9px', borderRadius: 999,
                         border: 'none', cursor: switchingLens ? 'wait' : 'pointer',
                         background: active ? '#10B981' : 'rgba(255,255,255,0.06)',
                         color: active ? '#FFFFFF' : '#E2E8F0',
                         fontSize: 11.5, fontWeight: active ? 800 : 600,
-                        transition: 'all 0.15s ease',
-                        transform: active ? 'scale(1.04)' : 'scale(1)',
+                        transition: 'all 0.18s cubic-bezier(0.22, 1, 0.36, 1)',
+                        transform: active ? 'scale(1.05)' : 'scale(1)',
                         WebkitTapHighlightColor: 'transparent',
+                        WebkitTouchCallout: 'none',
+                        touchAction: 'manipulation',
                       }}
                     >
                       {active && switchingLens ? '...' : preset.label}
@@ -1602,7 +1772,7 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
                 })}
                 {isCustomZoom && (
                   <span style={{
-                    height: 30, padding: '0 8px', borderRadius: 999,
+                    height: 32, padding: '0 9px', borderRadius: 999,
                     background: 'rgba(16,185,129,0.22)', color: '#34D399',
                     fontSize: 11, fontWeight: 800, display: 'inline-flex', alignItems: 'center',
                   }}>

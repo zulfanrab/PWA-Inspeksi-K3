@@ -22,7 +22,11 @@ export function useAppUpdate() {
   });
 
   const [liveBannerDismissed, setLiveBannerDismissed] = useState(false);
+  const [controllerUpdated, setControllerUpdated] = useState(false);
   const swRegistrationRef = useRef<ServiceWorkerRegistration | null>(null);
+  const hadControllerRef = useRef<boolean>(
+    typeof navigator !== 'undefined' && 'serviceWorker' in navigator && Boolean(navigator.serviceWorker.controller)
+  );
 
   const {
     needRefresh: [needRefresh, setNeedRefresh],
@@ -31,12 +35,16 @@ export function useAppUpdate() {
     onRegisteredSW(_swUrl, registration) {
       if (registration) {
         swRegistrationRef.current = registration;
-        // Cek update berkala setiap 30 menit saat aplikasi terbuka
+        // Cek update langsung saat SW terdaftar (penting untuk PWA iOS Safari)
+        if (navigator.onLine) {
+          registration.update().catch(() => {});
+        }
+        // Cek update berkala setiap 15 menit saat aplikasi terbuka
         setInterval(() => {
           if (navigator.onLine) {
             registration.update().catch(() => {});
           }
-        }, 30 * 60 * 1000);
+        }, 15 * 60 * 1000);
       }
     },
     onRegisterError(error) {
@@ -44,7 +52,8 @@ export function useAppUpdate() {
     },
   });
 
-  // Cek update SW saat user kembali ke tab/aplikasi atau saat kembali online
+  // Cek update SW saat user kembali ke tab/aplikasi atau saat kembali online,
+  // serta deteksi controllerchange (skipWaiting) agar iOS PWA langsung memunculkan prompt muat ulang
   useEffect(() => {
     const checkForUpdate = () => {
       if (navigator.onLine && swRegistrationRef.current) {
@@ -58,11 +67,28 @@ export function useAppUpdate() {
       }
     };
 
+    const handleControllerChange = () => {
+      if (hadControllerRef.current) {
+        setControllerUpdated(true);
+        setLiveBannerDismissed(false);
+      } else {
+        hadControllerRef.current = true;
+      }
+    };
+
     window.addEventListener('online', checkForUpdate);
+    window.addEventListener('focus', checkForUpdate);
     document.addEventListener('visibilitychange', handleVisibility);
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('controllerchange', handleControllerChange);
+    }
     return () => {
       window.removeEventListener('online', checkForUpdate);
+      window.removeEventListener('focus', checkForUpdate);
       document.removeEventListener('visibilitychange', handleVisibility);
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.removeEventListener('controllerchange', handleControllerChange);
+      }
     };
   }, []);
 
@@ -80,12 +106,17 @@ export function useAppUpdate() {
   }, []);
 
   const applyLiveUpdate = useCallback(() => {
+    if (controllerUpdated && !needRefresh) {
+      window.location.reload();
+      return;
+    }
     void updateServiceWorker(true);
-  }, [updateServiceWorker]);
+  }, [controllerUpdated, needRefresh, updateServiceWorker]);
 
   const dismissLiveBanner = useCallback(() => {
     setLiveBannerDismissed(true);
     setNeedRefresh(false);
+    setControllerUpdated(false);
   }, [setNeedRefresh]);
 
   return {
@@ -94,7 +125,7 @@ export function useAppUpdate() {
     showChangelogModal,
     dismissChangelog,
     openChangelog,
-    hasLiveUpdate: needRefresh && !liveBannerDismissed,
+    hasLiveUpdate: (needRefresh || controllerUpdated) && !liveBannerDismissed,
     applyLiveUpdate,
     dismissLiveBanner,
   };
