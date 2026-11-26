@@ -275,8 +275,19 @@ Kembalikan respon Anda strictly dalam bentuk JSON sesuai dengan schema yang dite
 
 function formatIndonesianDayAndDate(dateStr?: string): { day: string; formatted: string } {
   if (!dateStr) return { day: '', formatted: '' };
-  const parsed = new Date(dateStr.includes('T') ? dateStr : `${dateStr}T00:00:00+07:00`);
-  if (isNaN(parsed.getTime())) return { day: '', formatted: dateStr };
+  const raw = String(dateStr).trim();
+  let parsed: Date;
+
+  // Dukung DD/MM/YYYY atau DD-MM-YYYY (sering berasal dari data inspeksi lapangan)
+  const dmyMatch = raw.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (dmyMatch) {
+    const [, dd, mm, yyyy] = dmyMatch;
+    parsed = new Date(`${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}T00:00:00+07:00`);
+  } else {
+    parsed = new Date(raw.includes('T') ? raw : `${raw}T00:00:00+07:00`);
+  }
+
+  if (isNaN(parsed.getTime())) return { day: '', formatted: raw };
 
   const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
   const months = [
@@ -339,8 +350,9 @@ async function handleGenerate(req: VercelRequest, res: VercelResponse) {
           maxWidth = 190;
           maxHeight = 215;
         } else if (tagName === 'jointPhoto') {
-          maxWidth = 440;
-          maxHeight = 260;
+          // Foto bersama dibuat jauh lebih besar & menonjol dibanding foto grid 3 kolom
+          maxWidth = 540;
+          maxHeight = 420;
         } else if (
           tagName === 'skpAhliImage' ||
           tagName === 'skpPerusahaanImage' ||

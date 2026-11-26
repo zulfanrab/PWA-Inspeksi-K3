@@ -45,6 +45,17 @@ interface ExtraAttachmentState {
   dataUrl: string;
 }
 
+function formatTanggalHuruf(dateStr?: string): string {
+  if (!dateStr) return '-';
+  const parsed = new Date(dateStr.includes('T') ? dateStr : `${dateStr}T00:00:00+07:00`);
+  if (isNaN(parsed.getTime())) return dateStr;
+  const months = [
+    'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+    'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember',
+  ];
+  return `${parsed.getDate()} ${months[parsed.getMonth()]} ${parsed.getFullYear()}`;
+}
+
 function parseGroundingPointsFromStr(str: string): GroundingPointInput[] {
   const raw = String(str || '').trim();
   if (!raw) {
@@ -1014,6 +1025,9 @@ export function IppReportWizard({
                     onChange={(e) => handleFieldChange('inspectionDate', e.target.value)}
                     className="w-full px-3 py-2 text-xs bg-gray-50 border border-gray-200 rounded-xl"
                   />
+                  <p className="text-[10px] text-emerald-700 font-semibold mt-1">
+                    Di laporan: {formatTanggalHuruf(formData.inspectionDate)}
+                  </p>
                 </div>
                 <div>
                   <label className="block text-[11px] font-bold text-gray-600 mb-1">Tanggal Terbit Laporan</label>
@@ -1023,6 +1037,9 @@ export function IppReportWizard({
                     onChange={(e) => handleFieldChange('reportDate', e.target.value)}
                     className="w-full px-3 py-2 text-xs bg-gray-50 border border-gray-200 rounded-xl"
                   />
+                  <p className="text-[10px] text-emerald-700 font-semibold mt-1">
+                    Di laporan: {formatTanggalHuruf(formData.reportDate)}
+                  </p>
                 </div>
               </div>
 
@@ -1678,6 +1695,44 @@ export function IppReportWizard({
                 </div>
               )}
 
+              {(() => {
+                const gridCount = photos.filter((p) => p.selectedForGrid && !p.isJointPhoto).length;
+                const remainder = gridCount % 3;
+                if (gridCount === 0 || remainder === 0) return null;
+                const targetTrim = gridCount - remainder;
+                return (
+                  <div className="p-2.5 rounded-xl bg-blue-50 border border-blue-200 text-[11px] text-blue-800 flex flex-wrap items-center justify-between gap-2">
+                    <span>
+                      ℹ️ Terpilih <strong>{gridCount} foto grid</strong> (belum kelipatan 3). Tambah{' '}
+                      <strong>{3 - remainder}</strong> atau kurangi <strong>{remainder}</strong> foto agar tabel 3 kolom penuh tanpa sel kosong.
+                    </span>
+                    {targetTrim >= 3 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          let kept = 0;
+                          setPhotos((prev) =>
+                            prev.map((item) => {
+                              if (item.selectedForGrid && !item.isJointPhoto) {
+                                if (kept < targetTrim) {
+                                  kept++;
+                                  return item;
+                                }
+                                return { ...item, selectedForGrid: false };
+                              }
+                              return item;
+                            })
+                          );
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-blue-600 text-white font-bold text-[10px] hover:bg-blue-700 shrink-0"
+                      >
+                        Jadikan {targetTrim} Foto
+                      </button>
+                    )}
+                  </div>
+                );
+              })()}
+
               {photos.length === 0 ? (
                 <p className="text-xs text-gray-400 text-center py-6 bg-gray-50 rounded-xl border border-dashed border-gray-200">
                   Tidak ada foto pada sesi inspeksi ini.
@@ -1899,6 +1954,9 @@ export function IppReportWizard({
                 <div className="p-3 bg-gray-50 rounded-xl">
                   <p className="text-[10px] text-gray-500">Nomor Laporan</p>
                   <p className="font-bold text-gray-900">{reportNumber || '-'}</p>
+                  <p className="text-[10px] text-gray-500 mt-0.5">
+                    Periksa: {formatTanggalHuruf(formData.inspectionDate)} • Terbit: {formatTanggalHuruf(formData.reportDate)}
+                  </p>
                 </div>
                 <div className="p-3 bg-gray-50 rounded-xl">
                   <p className="text-[10px] text-gray-500">Ahli K3 Pemeriksa</p>
