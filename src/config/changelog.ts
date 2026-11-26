@@ -53,9 +53,9 @@ export const CHANGELOG: ReleaseNote[] = [
       },
       {
         icon: '📱',
-        title: 'Perbaikan Kamera, Galeri Riwayat & Tanggal Form',
+        title: 'Kamera Tap Zoom, Lensa 0.5x & Perbaikan UI',
         description:
-          'Memperbaiki tombol atas kamera & galeri riwayat yang sempat tertutup header di mobile/iOS PWA, serta merapikan kotak Tanggal Inspeksi agar tidak keluar dari kartu.',
+          'Zoom kamera kini memakai tombol tap cepat (0.5x jika didukung perangkat, 1x, 2x, 3x, 5x), perbaikan tampilan kamera & galeri di atas header, kotak tanggal form, serta tampilan Admin Panel desktop.',
         tag: 'Perbaikan',
       },
     ],
