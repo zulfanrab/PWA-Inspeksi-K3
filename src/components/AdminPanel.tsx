@@ -617,8 +617,8 @@ function ClientManager({ currentUserEmail }: { currentUserEmail: string }) {
     return (
       <div className="space-y-4">
         {/* Search + Refresh + Add */}
-        <div className="flex gap-2">
-          <div className="relative flex-1">
+        <div className="flex flex-wrap sm:flex-nowrap gap-2">
+          <div className="relative flex-1 min-w-[180px]">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">🔍</span>
             <input
               type="text"

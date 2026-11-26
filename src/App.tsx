@@ -1378,7 +1378,7 @@ const handleDelete = async (id: string) => {
       )}
 
       {/* MAIN */}
-      <main style={{ maxWidth: isDesktop ? 'none' : 640, margin: isDesktop ? '0 24px' : '0 auto', padding: isDesktop ? '24px 24px 32px' : '16px 16px 100px', marginLeft: isDesktop ? 260 : 'auto', display: 'flex', flexDirection: 'column', gap: isDesktop ? 24 : 16, width: '100%', overflowX: 'clip', touchAction: 'pan-y' }}>
+      <main style={{ maxWidth: isDesktop ? 'none' : 640, margin: isDesktop ? 0 : '0 auto', padding: isDesktop ? '24px 24px 32px' : '16px 16px 100px', marginLeft: isDesktop ? 260 : 'auto', display: 'flex', flexDirection: 'column', gap: isDesktop ? 24 : 16, width: isDesktop ? 'calc(100% - 260px)' : '100%', minWidth: 0, boxSizing: 'border-box', overflowX: 'clip', touchAction: 'pan-y' }}>
 
         {/* Desktop Alerts - Visible across all views on Desktop */}
         {isDesktop && (

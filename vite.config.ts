@@ -56,7 +56,7 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
         // FIXED: navigateFallback agar app bisa dibuka offline
         navigateFallback: '/index.html',
-        navigateFallbackDenylist: [/^\/api\//],
+        navigateFallbackDenylist: [/^\/api\//, /\.[a-z0-9]+$/i],
         // FIXED: runtime caching untuk Google Fonts & API calls
         runtimeCaching: [
           {
