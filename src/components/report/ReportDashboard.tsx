@@ -14,6 +14,7 @@ export function ReportDashboard({ onNewReport, onEditReport }: ReportDashboardPr
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const apiBase = getApiBaseUrl();
 
@@ -23,43 +24,103 @@ export function ReportDashboard({ onNewReport, onEditReport }: ReportDashboardPr
     setReports(allReports);
   }, []);
 
-  const syncFromCloud = useCallback(async () => {
-    if (!navigator.onLine) return;
+  const syncFromCloud = useCallback(async (manual = false) => {
+    if (!navigator.onLine) {
+      if (manual) setSyncMessage({ type: 'error', text: 'Perangkat sedang offline.' });
+      return;
+    }
     setIsSyncing(true);
+    if (manual) setSyncMessage(null);
     try {
       const res = await fetch(`${apiBase}/api/report?action=reports`);
       const data = await res.json();
-      if (data.success && Array.isArray(data.reports)) {
-        const localAll = await db.reports.toArray();
-        const byCloudId = new Map<string, any>();
-        for (const loc of localAll) {
-          if (loc.cloudId) byCloudId.set(loc.cloudId, loc);
-        }
+      if (!res.ok || !data.success || !Array.isArray(data.reports)) {
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
 
-        for (const remote of data.reports) {
-          if (!remote?.cloudId) continue;
-          const existing = byCloudId.get(remote.cloudId);
-          if (existing) {
-            const remoteTime = new Date(remote.updatedAt || remote.createdAt || 0).getTime();
-            const localTime = new Date(existing.updatedAt || existing.createdAt || 0).getTime();
-            if (remoteTime >= localTime) {
-              await db.reports.put({
-                ...existing,
-                ...remote,
-                id: existing.id,
-              });
-            }
-          } else {
-            await db.reports.add({
+      const localAll = await db.reports.toArray();
+      const byCloudId = new Map<string, any>();
+      for (const loc of localAll) {
+        if (loc.cloudId) byCloudId.set(loc.cloudId, loc);
+      }
+
+      const remoteCloudIds = new Set<string>();
+      let pulledCount = 0;
+
+      for (const remote of data.reports) {
+        if (!remote?.cloudId) continue;
+        remoteCloudIds.add(remote.cloudId);
+        const existing = byCloudId.get(remote.cloudId);
+        if (existing) {
+          const remoteTime = new Date(remote.updatedAt || remote.createdAt || 0).getTime();
+          const localTime = new Date(existing.updatedAt || existing.createdAt || 0).getTime();
+          if (remoteTime >= localTime) {
+            await db.reports.put({
+              ...existing,
               ...remote,
-              createdAt: remote.createdAt || new Date().toISOString(),
+              id: existing.id,
             });
           }
+        } else {
+          await db.reports.add({
+            ...remote,
+            createdAt: remote.createdAt || new Date().toISOString(),
+          });
+          pulledCount++;
         }
-        await loadLocalReports();
       }
-    } catch (err) {
+
+      // Push laporan lokal yang belum ada di cloud index (mis. dibuat sebelum update sync lintas device)
+      let pushedCount = 0;
+      for (const loc of localAll) {
+        const cid = loc.cloudId || `${loc.inspectionTypeCode || 'IPP'}_${loc.inspectionId || loc.id}`;
+        if (!remoteCloudIds.has(cid)) {
+          if (!loc.cloudId) {
+            await db.reports.update(loc.id, { cloudId: cid });
+          }
+          const { skpAhliImage: _s1, skpPerusahaanImage: _s2, ...safeGeneral } = loc.generalData || {};
+          const summary = {
+            cloudId: cid,
+            inspectionId: loc.inspectionId || '',
+            reportNumber: loc.reportNumber || '',
+            inspectionTypeCode: loc.inspectionTypeCode || 'IPP',
+            configVersion: loc.configVersion || '2.0.0',
+            status: loc.status || 'completed',
+            generalData: safeGeneral,
+            technicalData: loc.technicalData || {},
+            checklistData: loc.checklistData || {},
+            formulaResults: loc.formulaResults || {},
+            aiNarrative: loc.aiNarrative || {},
+            docxDriveFileId: loc.docxDriveFileId || '',
+            pdfDriveFileId: loc.pdfDriveFileId || '',
+            driveFileId: loc.driveFileId || loc.pdfDriveFileId || loc.docxDriveFileId || '',
+            createdAt: loc.createdAt || new Date().toISOString(),
+            updatedAt: loc.updatedAt || new Date().toISOString(),
+          };
+          const pushRes = await fetch(`${apiBase}/api/report?action=reports`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ report: summary }),
+          });
+          if (pushRes.ok) {
+            pushedCount++;
+            remoteCloudIds.add(cid);
+          }
+        }
+      }
+
+      await loadLocalReports();
+      if (manual) {
+        setSyncMessage({
+          type: 'success',
+          text: `Sinkron selesai: ${data.reports.length} di cloud (${pulledCount} baru ditarik, ${pushedCount} lokal diunggah).`,
+        });
+      }
+    } catch (err: any) {
       console.warn('[ReportDashboard] Gagal sync daftar laporan dari cloud:', err);
+      if (manual) {
+        setSyncMessage({ type: 'error', text: `Gagal sync cloud: ${err.message}` });
+      }
     } finally {
       setIsSyncing(false);
     }
@@ -141,7 +202,7 @@ export function ReportDashboard({ onNewReport, onEditReport }: ReportDashboardPr
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={syncFromCloud}
+            onClick={() => syncFromCloud(true)}
             disabled={isSyncing}
             className="flex items-center justify-center gap-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-xs px-4 py-3 rounded-xl transition-all disabled:opacity-50"
           >
@@ -156,6 +217,18 @@ export function ReportDashboard({ onNewReport, onEditReport }: ReportDashboardPr
           </button>
         </div>
       </div>
+
+      {syncMessage && (
+        <div
+          className={`px-4 py-3 rounded-xl text-xs font-bold border ${
+            syncMessage.type === 'success'
+              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+              : 'bg-red-50 text-red-700 border-red-200'
+          }`}
+        >
+          {syncMessage.text}
+        </div>
+      )}
 
       {/* Filter and Stats */}
       <div className="flex flex-wrap gap-2 items-center bg-gray-50/50 p-2.5 rounded-xl border border-gray-200/50">

@@ -178,8 +178,7 @@ async function handleNarrative(req: VercelRequest, res: VercelResponse) {
   }
 
   const genAI = new GoogleGenerativeAI(apiKey);
-  const modelName = modelTier === 'pro' ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
-  const model = genAI.getGenerativeModel({ model: modelName });
+  const primaryModelName = modelTier === 'pro' ? 'gemini-2.5-pro' : 'gemini-3.8-flash';
 
   const promptInstructions = `
 Ikuti instruksi sistem berikut secara ketat:
@@ -208,7 +207,7 @@ ${prompts.conclusion}
 Kembalikan respon Anda strictly dalam bentuk JSON sesuai dengan schema yang ditentukan.
 `;
 
-  const result = await model.generateContent({
+  const requestConfig: any = {
     contents: [{ role: 'user', parts: [{ text: promptInstructions }] }],
     generationConfig: {
       responseMimeType: 'application/json',
@@ -225,7 +224,18 @@ Kembalikan respon Anda strictly dalam bentuk JSON sesuai dengan schema yang dite
       },
       temperature: 0.2,
     }
-  });
+  };
+
+  let result;
+  try {
+    result = await genAI.getGenerativeModel({ model: primaryModelName }).generateContent(requestConfig);
+  } catch (err: any) {
+    if (primaryModelName !== 'gemini-3.8-flash' && (err?.status === 404 || String(err?.message).includes('404'))) {
+      result = await genAI.getGenerativeModel({ model: 'gemini-3.8-flash' }).generateContent(requestConfig);
+    } else {
+      throw err;
+    }
+  }
 
   const responseText = result.response.text();
   const parsedNarrative = JSON.parse(responseText);
@@ -838,7 +848,7 @@ async function handleInspectors(req: VercelRequest, res: VercelResponse) {
   return res.status(405).json({ error: 'Method not allowed' });
 }
 
-// 7. VISION & PRE-FLIGHT QC (Gemini 2.5 Flash)
+// 7. VISION & PRE-FLIGHT QC (Gemini 3.8 Flash)
 async function handleVision(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   const apiKey = process.env.GEMINI_API_KEY;
@@ -848,7 +858,7 @@ async function handleVision(req: VercelRequest, res: VercelResponse) {
 
   const { mode, imageDataUrl, photos, context, payload } = req.body || {};
   const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-3.8-flash' });
 
   if (mode === 'ocr_meter') {
     if (!imageDataUrl) return res.status(400).json({ error: 'imageDataUrl wajib diisi.' });
