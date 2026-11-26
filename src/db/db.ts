@@ -77,12 +77,32 @@ export interface UserRole {
   createdAt: number;
 }
 
+export interface InspectorProfile {
+  id: string;
+  name: string;
+  field: string;
+  regNumber: string;
+  skpImageDataUrl?: string;
+  skpDriveFileId?: string;
+  createdAt: number;
+  updatedAt?: number;
+  deleted?: boolean;
+}
+
+export interface CompanySetting {
+  id: string;
+  value: string;
+  updatedAt: number;
+}
+
 export class MyDatabase extends Dexie {
   inspection_sessions!: Table<InspectionSession>;
   inspection_photos!: Table<InspectionPhoto>;
   client_templates!: Table<ClientTemplate>;
   unit_templates!: Table<UnitTemplate>;
   user_roles!: Table<UserRole>;
+  inspectors!: Table<InspectorProfile>;
+  company_settings!: Table<CompanySetting>;
   reports!: Table<any>;
   templateConfigs!: Table<any>;
   masterComponents!: Table<any>;
@@ -137,6 +157,35 @@ export class MyDatabase extends Dexie {
       client_templates: 'id, name, createdAt, createdBy, deleted',
       unit_templates: 'id, clientId, objectType, createdAt, createdBy, deleted',
       user_roles: 'id, role, createdAt',
+      reports: '++id, inspectionId, reportNumber, inspectionTypeCode, status, createdAt',
+      templateConfigs: '++id, inspectionTypeCode, version, isActive',
+      masterComponents: '++id, componentId, inspectionTypeCode, categoryId, isActive',
+      auditLogs: '++id, entityType, entityId, action, timestamp, syncedToDrive',
+      sequenceCounters: '++id, inspectionTypeCode, year, month',
+      reportJobs: '++id, jobId, reportId, status, createdAt',
+    });
+    this.version(11).stores({
+      inspection_sessions: 'id, clientName, status, createdAt, templateClientId, inspectorEmail, driveFolderId, uploadStatus',
+      inspection_photos: 'id, sessionId, createdAt, driveFileId, fileName',
+      client_templates: 'id, name, createdAt, createdBy, deleted',
+      unit_templates: 'id, clientId, objectType, createdAt, createdBy, deleted',
+      user_roles: 'id, role, createdAt',
+      inspectors: 'id, name, regNumber, createdAt, deleted',
+      reports: '++id, inspectionId, reportNumber, inspectionTypeCode, status, createdAt',
+      templateConfigs: '++id, inspectionTypeCode, version, isActive',
+      masterComponents: '++id, componentId, inspectionTypeCode, categoryId, isActive',
+      auditLogs: '++id, entityType, entityId, action, timestamp, syncedToDrive',
+      sequenceCounters: '++id, inspectionTypeCode, year, month',
+      reportJobs: '++id, jobId, reportId, status, createdAt',
+    });
+    this.version(12).stores({
+      inspection_sessions: 'id, clientName, status, createdAt, templateClientId, inspectorEmail, driveFolderId, uploadStatus',
+      inspection_photos: 'id, sessionId, createdAt, driveFileId, fileName',
+      client_templates: 'id, name, createdAt, createdBy, deleted',
+      unit_templates: 'id, clientId, objectType, createdAt, createdBy, deleted',
+      user_roles: 'id, role, createdAt',
+      inspectors: 'id, name, regNumber, createdAt, deleted',
+      company_settings: 'id, updatedAt',
       reports: '++id, inspectionId, reportNumber, inspectionTypeCode, status, createdAt',
       templateConfigs: '++id, inspectionTypeCode, version, isActive',
       masterComponents: '++id, componentId, inspectionTypeCode, categoryId, isActive',
@@ -362,5 +411,64 @@ export const RoleRepository = {
   seedIfEmpty: async (ownerEmail: string, ownerName: string) => {
     const count = await db.user_roles.count();
     if (count === 0 && ownerEmail) await db.user_roles.add({ id: ownerEmail, role: 'admin', name: ownerName || 'Owner', addedBy: 'system', createdAt: Date.now() });
+  },
+};
+
+export const InspectorRepository = {
+  getAll: async (): Promise<InspectorProfile[]> => {
+    const all = await db.inspectors.toArray();
+    return all.filter(i => i.deleted !== true).sort((a, b) => a.name.localeCompare(b.name));
+  },
+  getById: async (id: string): Promise<InspectorProfile | undefined> => {
+    const item = await db.inspectors.get(id);
+    return item && item.deleted !== true ? item : undefined;
+  },
+  upsert: async (profile: Omit<InspectorProfile, 'id' | 'createdAt'> & { id?: string }): Promise<string> => {
+    const id = profile.id || crypto.randomUUID();
+    const existing = await db.inspectors.get(id);
+    if (existing) {
+      await db.inspectors.update(id, {
+        ...profile,
+        id,
+        updatedAt: Date.now(),
+        deleted: false,
+      });
+    } else {
+      await db.inspectors.add({
+        ...profile,
+        id,
+        createdAt: Date.now(),
+        deleted: false,
+      });
+    }
+    return id;
+  },
+  delete: async (id: string) => {
+    await db.inspectors.update(id, { deleted: true, updatedAt: Date.now() });
+  },
+  replaceAllFromSync: async (profiles: InspectorProfile[]) => {
+    await db.transaction('rw', db.inspectors, async () => {
+      await db.inspectors.clear();
+      if (profiles.length > 0) {
+        await db.inspectors.bulkPut(profiles);
+      }
+    });
+  },
+};
+
+export const CompanySkpRepository = {
+  getSkpImage: async (): Promise<string> => {
+    const row = await db.company_settings.get('skp_perusahaan');
+    return row?.value || '';
+  },
+  saveSkpImage: async (dataUrl: string): Promise<void> => {
+    await db.company_settings.put({
+      id: 'skp_perusahaan',
+      value: dataUrl,
+      updatedAt: Date.now(),
+    });
+  },
+  clearSkpImage: async (): Promise<void> => {
+    await db.company_settings.delete('skp_perusahaan');
   },
 };

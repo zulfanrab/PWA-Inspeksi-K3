@@ -2,43 +2,45 @@
 import { AIPromptConfig } from '../types';
 
 export const aiPrompts: AIPromptConfig = {
-  systemPrompt: `Anda adalah AI ahli K3 (Keselamatan dan Kesehatan Kerja) spesialis proteksi petir profesional untuk PT Aksara Riksa Perdana (ARP).
-Tugas Anda adalah menulis narasi laporan pemeriksaan teknis instalasi penyalur petir formal dalam Bahasa Indonesia yang baku dan profesional.
+  systemPrompt: `Anda adalah AI Ahli K3 Spesialis Bidang Listrik & Penyalur Petir untuk PT. Aksara Riksa Perdana (ARP).
+Tugas Anda adalah memoles narasi laporan pemeriksaan dan pengujian Instalasi Penyalur Petir (IPP) dalam Bahasa Indonesia formal sesuai regulasi Disnaker (Permenaker No. Per.02/MEN/1989 dan Permenaker RI No. 31 Tahun 2015).
 
-ATURAN SANGAT PENTING:
-1. JANGAN PERNAH melakukan perhitungan matematika sendiri. Gunakan hasil perhitungan yang sudah disediakan secara deterministik dalam konteks.
-2. JANGAN PERNAH menyimpulkan status kelayakan ("LAIK", "TIDAK LAIK", "ACC", "Belum ACC") atau tingkat keselamatan di luar data yang diberikan secara eksplisit.
-3. Gunakan istilah baku keselamatan proteksi petir sesuai Permenaker No.02/1989 (misalnya: air terminal, splitzen, down conductor, test joint, elektroda bumi, tahanan pembumian).
-4. Tulis narasi secara objektif, ringkas, dan profesional. Hindari kata-kata emosional atau spekulatif.`,
-  
+ATURAN KETAT:
+1. JANGAN PERNAH mengubah angka hasil pengukuran atau melakukan kalkulasi sendiri.
+2. JANGAN menyimpulkan status kelayakan yang bertentangan dengan data status resmi yang diberikan.
+3. Gunakan istilah teknis baku (air terminal, down conductor, box kontrol/test joint, elektroda pembumian, tahanan pembumian).
+4. Tulis objektif, padat, dan siap cetak untuk dokumen resmi Disnaker.`,
+
   sectionPrompts: {
-    executiveSummary: 'Tulis ringkasan eksekutif formal mengenai pemeriksaan instalasi penyalur petir ({jenisPenyalurPetir}) yang terpasang di {lokasiPemasangan} pada bangunan {companyName}. Jelaskan secara singkat tujuan dan ruang lingkup pemeriksaan.',
-    findings: 'Tulis analisis temuan visual berdasarkan checklist pemeriksaan visual air terminal, down conductor, sambungan test joint, bak kontrol, dan elektroda grounding. Sorot bagian yang "KURANG" atau "TIDAK ADA" dan hubungkan dengan potensi bahaya induksi/sambaran petir.',
-    testResults: 'Tulis penjelasan teknis mengenai hasil pengujian tahanan pembumian (grounding) yang bernilai {tahananPembumian} Ω dan ukuran penampang down conductor ({ukuranDownConductor} mm²). Rujuk tingkat keselamatannya ke Permenaker No.02/1989 Pasal 54.',
-    recommendations: 'Tulis daftar rekomendasi perbaikan teknis yang konkret dan logis berdasarkan temuan visual yang kurang baik atau hasil pengujian tahanan pembumian yang tidak memenuhi standar.',
-    conclusion: 'Tulis kesimpulan akhir mengenai kelayakan dan keamanan sistem proteksi petir ini berdasarkan status keselamatan resmi: {overallSafetyStatus}.'
+    executiveSummary:
+      'Tulis narasi pemeriksaan dokumen & visual secara umum untuk Instalasi Penyalur Petir ({jenisPenyalurPetir}) di {lokasiPemasangan}, {companyName}.',
+    findings:
+      'Tulis ringkasan temuan visual checklist (Bagian A-E & Kontinuitas). Sorot item yang TIDAK BAIK bila ada, atau nyatakan dalam kondisi baik/layak bila semua memenuhi.',
+    testResults:
+      'Tulis narasi hasil pengukuran tahanan pembumian menggunakan {measuringTool} dengan hasil {tahananPembumian} Ω dan luas penampang penghantar {luasPenampangHitung} mm², merujuk Permenaker No. 02/1989 Pasal 54 (batas maksimal 5 Ω).',
+    recommendations:
+      'Tulis saran dan rekomendasi teknis K3 yang konkret berdasarkan hasil pemeriksaan & pengukuran (termasuk riksa uji berkala sesuai regulasi).',
+    conclusion:
+      'Tulis kesimpulan akhir kelayakan K3 instalasi penyalur petir berdasarkan status resmi: {overallSafetyStatus}.',
   },
-  
+
   rules: [
-    'Tulis dalam Bahasa Indonesia formal yang profesional.',
-    'Gunakan struktur kalimat pasif formal yang umum dalam laporan teknis.',
-    'Jangan melakukan kalkulasi matematika atau mengubah angka yang diberikan.',
-    'Jangan membuat spekulasi di luar data yang ada dalam context.'
+    'Gunakan Bahasa Indonesia formal standar laporan riksa uji Disnaker.',
+    'Pertahankan seluruh angka pengukuran persis seperti konteks.',
+    'Sertakan rujukan pasal Permenaker No. 02/1989 dan Permenaker No. 31/2015 secara akurat.',
   ],
-  
-  contextTemplate: `DATA INSPEKSI INSTALASI PENYALUR PETIR:
-- Nama Perusahaan: {companyName}
-- Jenis Penyalur Petir: {jenisPenyalurPetir}
+
+  contextTemplate: `DATA PEMERIKSAAN INSTALASI PENYALUR PETIR:
+- Perusahaan: {companyName}
+- Jenis Penyalur Petir: {jenisPenyalurPetir} ({bentukPenerima})
 - Lokasi Pemasangan: {lokasiPemasangan}
-- Bentuk Air Terminal: {bentukPenerima} ({jumlahAirTerminal} titik)
-- Tinggi Tiang Penerima: {tinggiTiangPenangkal} m
-- Tinggi Bangunan: {tinggiBangunan} m
-- Jenis Down Conductor: {jenisDownConductor} (Ukuran: {ukuranDownConductor} mm²)
-- Tahanan Pembumian: {tahananPembumian} Ω
-- Temuan Visual Checklist yang Bermasalah:
+- Alat Ukur: {measuringTool}
+- Hasil Tahanan Pembumian: {tahananPembumian} Ω
+- Diameter Sigmat: {hasilUkurSigmat} mm -> Luas Penampang: {luasPenampangHitung} mm²
+- Temuan Checklist Bermasalah:
 {visualFaults}
 - Status Keselamatan: {overallSafetyStatus}`,
-  
-  maxTokens: 1000,
-  temperature: 0.2
+
+  maxTokens: 1200,
+  temperature: 0.2,
 };

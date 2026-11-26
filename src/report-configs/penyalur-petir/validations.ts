@@ -7,15 +7,15 @@ export const validations: ValidationRule[] = [
     fieldId: 'tahananPembumian',
     type: 'range',
     params: { max: 5.0 },
-    errorMessage: 'Tahanan Pembumian melebihi batas standar 5.0 Ω. Bahaya kegagalan penyaluran petir.',
-    severity: 'error'
+    errorMessage: 'Tahanan Pembumian melebihi batas standar 5.0 Ω (Permenaker No. 02/1989 Pasal 54).',
+    severity: 'error',
   },
   {
     ruleId: 'down_conductor_size_limit',
-    fieldId: 'ukuranDownConductor',
+    fieldId: 'luasPenampangHitung',
     type: 'range',
     params: { min: 50.0 },
-    errorMessage: 'Penampang down conductor di bawah standar minimum 50 mm² (bisa memicu overheating saat pelepasan arus petir).',
-    severity: 'error'
-  }
+    errorMessage: 'Luas penampang penghantar penurunan di bawah standar minimum 50 mm².',
+    severity: 'warning',
+  },
 ];

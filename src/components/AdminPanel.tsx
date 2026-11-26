@@ -6,15 +6,18 @@ import {
   ClientRepository,
   UnitRepository,
   RoleRepository,
+  InspectorRepository,
+  CompanySkpRepository,
   type ClientTemplate,
   type UnitTemplate,
   type UserRole,
+  type InspectorProfile,
 } from '../db/db';
 
 import { pushTemplatesToDrive, pullTemplatesFromDrive } from '../services/syncService';
-import { getValidToken } from '../services/driveService';
 import { UNIT_NAME_SUGGESTIONS } from '../config/suggestions';
 import { getApiBaseUrl } from '../config';
+import { processSkpFileToImageDataUrl } from '../utils/skpImageHelper';
 
 // ==========================================
 // FIELD DEFINITIONS (copy dari App.tsx agar AdminPanel mandiri)
@@ -104,15 +107,19 @@ const SPECIFIC_FIELDS: Record<string, FieldDef[]> = {
     { name: 'nomorSertifikatSLO',  label: 'Nomor Sertifikat SLO',        type: 'text',   placeholder: 'Nomor SLO dari PLN/Disnaker' },
   ],
   'Penyalur Petir': [
-    { name: 'jenisPenyalurPetir',  label: 'Jenis Sistem Penangkal',      type: 'select', required: true,
-      options: ['Sistem Franklin (Konvensional)', 'Sistem Faraday (Sangkar)', 'Early Streamer Emission (ESE)', 'Sistem Kawat Catenary', 'Lainnya'] },
-    { name: 'luasAreaPetir',       label: 'Luas Area yang Dilindungi',   type: 'number', unit: 'm²',   required: true },
-    { name: 'tinggiTiangPenangkal',label: 'Tinggi Tiang Penangkal',      type: 'number', unit: 'm',    required: true },
-    { name: 'tahananPembumian',    label: 'Nilai Tahanan Pembumian',     type: 'number', unit: 'Ω',    required: true },
-    { name: 'jumlahTitikGrounding',label: 'Jumlah Titik Grounding',      type: 'number', unit: 'titik' },
-    { name: 'jenisElektroda',      label: 'Jenis Elektroda Pembumian',   type: 'select',
-      options: ['Copper Rod', 'Copper Plate', 'Copper Strip', 'Galvanized Rod', 'Lainnya'] },
-    { name: 'kedalamanElektroda',  label: 'Kedalaman Elektroda',         type: 'number', unit: 'm' },
+    { name: 'jenisPenyalurPetir',       label: 'Jenis Penyalur Petir',        type: 'select', required: true, options: ['Elektrostatis', 'Konvensional'] },
+    { name: 'bentukPenerima',           label: 'Bentuk Penerima',             type: 'select', options: ['Bulat Runcing', 'Runcing', 'Multi-point'] },
+    { name: 'tinggiTiangPenerima',      label: 'Tinggi Tiang Penerima',       type: 'text',   placeholder: '± 5 meter' },
+    { name: 'tinggiBangunan',           label: 'Tinggi Bangunan',             type: 'text',   placeholder: '± 77 Meter' },
+    { name: 'radiusPerlindungan',       label: 'Radius Perlindungan',         type: 'text',   placeholder: '70 Meter' },
+    { name: 'jumlahAirTerminal',        label: 'Jumlah Air Terminal',         type: 'text',   placeholder: '1 unit' },
+    { name: 'jumlahDownConductor',      label: 'Jumlah Penghantar Penurunan', type: 'text',   placeholder: '1 buah' },
+    { name: 'jenisDownConductor',       label: 'Jenis Penghantar Penurunan',  type: 'text',   placeholder: 'BC 50 mm2' },
+    { name: 'hasilUkurSigmat',          label: 'Hasil Ukur Sigmat (Diameter)',type: 'number', unit: 'mm', placeholder: '8.24' },
+    { name: 'jumlahBoxKontrol',         label: 'Jumlah Box Kontrol',          type: 'text',   placeholder: '1 unit' },
+    { name: 'jumlahElektrodaPembumian', label: 'Jumlah Elektroda Pembumian',  type: 'text',   placeholder: '1 buah' },
+    { name: 'tahananPembumian',         label: 'Tahanan Pembumian',           type: 'text',   unit: 'Ω', placeholder: '1.39 atau 1.39, 2.10' },
+    { name: 'lokasiPemasangan',         label: 'Lokasi Pemasangan',           type: 'text',   placeholder: 'Rooftop Gedung / Tower A' },
   ],
   'Lift': [
     { name: 'jenisLift',           label: 'Jenis Elevator/Eskalator',    type: 'select', required: true,
@@ -155,7 +162,7 @@ const OBJECT_TYPES = [
 // TYPES
 // ==========================================
 
-type AdminTab = 'clients' | 'roles' | 'templates';
+type AdminTab = 'clients' | 'roles' | 'inspectors' | 'templates';
 type ClientSubView = 'list' | 'form' | 'units' | 'unit-form';
 
 interface AdminPanelProps {
@@ -195,26 +202,26 @@ export function AdminPanel({ currentUserEmail, onClose }: AdminPanelProps) {
   const [tab, setTab] = useState<AdminTab>('clients');
 
   return (
-    <div className="space-y-4">
+    <div className="w-full max-w-full min-w-0 space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
           <h2 className="text-base font-black text-gray-900">🛡️ Admin Panel</h2>
-          <p className="text-xs text-gray-400 font-medium mt-0.5">Kelola klien, unit template & akses pengguna</p>
+          <p className="text-xs text-gray-400 font-medium mt-0.5 truncate">Kelola klien, unit template, ahli K3 & template Word</p>
         </div>
         <button
           onClick={onClose}
-          className="w-8 h-8 rounded-lg bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500 transition-all"
+          className="w-8 h-8 rounded-lg bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500 transition-all shrink-0"
         >
           ✕
         </button>
       </div>
 
       {/* Tab Switcher */}
-      <div className="flex gap-2 bg-gray-100 rounded-xl p-1">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 bg-gray-100 rounded-xl p-1 w-full">
         <button
           onClick={() => setTab('clients')}
-          className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${
+          className={`py-2 px-2 rounded-lg text-xs font-bold transition-all truncate ${
             tab === 'clients' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
           }`}
         >
@@ -222,15 +229,23 @@ export function AdminPanel({ currentUserEmail, onClose }: AdminPanelProps) {
         </button>
         <button
           onClick={() => setTab('roles')}
-          className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${
+          className={`py-2 px-2 rounded-lg text-xs font-bold transition-all truncate ${
             tab === 'roles' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
           }`}
         >
           👥 Akses User
         </button>
         <button
+          onClick={() => setTab('inspectors')}
+          className={`py-2 px-2 rounded-lg text-xs font-bold transition-all truncate ${
+            tab === 'inspectors' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          👷 Ahli K3
+        </button>
+        <button
           onClick={() => setTab('templates')}
-          className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${
+          className={`py-2 px-2 rounded-lg text-xs font-bold transition-all truncate ${
             tab === 'templates' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
           }`}
         >
@@ -241,6 +256,7 @@ export function AdminPanel({ currentUserEmail, onClose }: AdminPanelProps) {
       {/* Content */}
       {tab === 'clients' && <ClientManager currentUserEmail={currentUserEmail} />}
       {tab === 'roles' && <RoleManager currentUserEmail={currentUserEmail} />}
+      {tab === 'inspectors' && <InspectorManager />}
       {tab === 'templates' && <TemplateManager />}
 
       {/* Bottom Close Button for Mobile */}
@@ -291,42 +307,63 @@ function TemplateManager() {
 
   const handleUpload = async (typeCode: string, file: File) => {
     setUploading(typeCode);
+    const apiBase = getApiBaseUrl();
+    const docxMime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
     try {
-      const folderId = (window as any)._templatesFolderId;
-      if (!folderId) {
-        throw new Error('Folder Templates belum ditemukan. Silakan muat ulang.');
+      // 1. Minta Resumable Upload Session URI dari server (pakai OAuth Refresh Token perusahaan, bukan token user browser)
+      const sessionRes = await fetch(`${apiBase}/api/report?action=template-upload-session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ typeCode }),
+      });
+      const sessionData = await sessionRes.json();
+      if (!sessionRes.ok || !sessionData.success || !sessionData.uploadUrl) {
+        throw new Error(sessionData.error || 'Gagal menyiapkan sesi upload Google Drive.');
       }
 
-      const token = getValidToken();
-      const fileName = `Template_${typeCode.toUpperCase()}.docx`;
+      // 2. Upload langsung dari browser ke Google Drive API (aman untuk file > 4.5MB tanpa kena limit Vercel 413)
+      let uploadedDirect = false;
+      try {
+        const putRes = await fetch(sessionData.uploadUrl, {
+          method: 'PUT',
+          headers: { 'Content-Type': docxMime },
+          body: file,
+        });
+        if (!putRes.ok) {
+          const errText = await putRes.text().catch(() => '');
+          throw new Error(`HTTP ${putRes.status} ${errText}`);
+        }
+        uploadedDirect = true;
+      } catch (directErr: any) {
+        // Fallback hanya jika file < 3.5MB dan direct PUT terkendala CORS/network
+        if (file.size <= 3.5 * 1024 * 1024) {
+          const base64 = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result || ''));
+            reader.onerror = () => reject(new Error('Gagal membaca file template.'));
+            reader.readAsDataURL(file);
+          });
+          const fallbackRes = await fetch(`${apiBase}/api/report?action=template`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ typeCode, fileBase64: base64, fileName: file.name }),
+          });
+          const fallbackData = await fallbackRes.json();
+          if (!fallbackRes.ok || !fallbackData.success) {
+            throw new Error(fallbackData.error || directErr.message);
+          }
+          uploadedDirect = true;
+        } else {
+          throw directErr;
+        }
+      }
 
-      const metadata = {
-        name: fileName,
-        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        parents: [folderId]
-      };
-
-      const form = new FormData();
-      form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
-      form.append('file', file);
-
-      const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        },
-        body: form
-      });
-
-      if (res.ok) {
-        alert(`Template ${typeCode} berhasil diupload!`);
-        loadTemplates();
-      } else {
-        const err = await res.json();
-        throw new Error(err.error?.message || 'Gagal upload ke Drive');
+      if (uploadedDirect) {
+        alert(`✅ Template ${typeCode} berhasil diunggah ke Google Drive!`);
+        await loadTemplates();
       }
     } catch (err: any) {
-      alert(`Gagal: ${err.message}`);
+      alert(`Gagal mengunggah template: ${err.message}`);
     } finally {
       setUploading(null);
     }
@@ -338,9 +375,9 @@ function TemplateManager() {
   };
 
   return (
-    <div className="space-y-4 bg-white p-4 rounded-xl border border-gray-150">
+    <div className="w-full max-w-full min-w-0 space-y-4 bg-white p-4 rounded-xl border border-gray-200">
       <h3 className="text-xs font-black uppercase text-gray-500 tracking-wider">Kelola Template Laporan Word (.docx)</h3>
-      <p className="text-[11px] text-gray-400">Unggah template dokumen Word dengan penanda tag seperti <code>{`{companyName}`}</code>. File template harus dinamai <code>Template_[CODE].docx</code> di Drive.</p>
+      <p className="text-[11px] text-gray-400 break-words">Unggah template dokumen Word dengan penanda tag seperti <code>{`{companyName}`}</code>. File template otomatis disimpan sebagai <code>Template_[CODE].docx</code> di Drive.</p>
       
       {loading ? (
         <div className="text-center py-4 text-xs font-bold text-gray-400">Memeriksa status template di Google Drive...</div>
@@ -351,13 +388,14 @@ function TemplateManager() {
             { code: 'IPP', name: 'Penyalur Petir' }
           ].map(t => {
             const info = getTemplateInfo(t.code);
+            const dateStr = info?.modifiedTime || info?.createdTime;
             return (
-              <div key={t.code} className="p-3.5 border border-gray-100 rounded-xl flex flex-col sm:flex-row justify-between sm:items-center gap-3 bg-gray-50/50">
-                <div>
+              <div key={t.code} className="p-3.5 border border-gray-200 rounded-xl flex flex-col sm:flex-row justify-between sm:items-center gap-3 bg-gray-50/50 w-full min-w-0">
+                <div className="min-w-0">
                   <h4 className="text-xs font-bold text-gray-800">{t.name} ({t.code})</h4>
                   {info ? (
                     <p className="text-[10px] text-emerald-600 font-bold mt-0.5">
-                      ✓ Aktif di Drive (Diunggah: {new Date(info.createdTime).toLocaleDateString('id-ID')})
+                      ✓ Aktif di Drive (Diperbarui: {dateStr ? new Date(dateStr).toLocaleDateString('id-ID') : '-'})
                     </p>
                   ) : (
                     <p className="text-[10px] text-rose-500 font-bold mt-0.5">
@@ -365,7 +403,7 @@ function TemplateManager() {
                     </p>
                   )}
                 </div>
-                <div>
+                <div className="shrink-0">
                   <input
                     type="file"
                     accept=".docx"
@@ -374,12 +412,14 @@ function TemplateManager() {
                     onChange={e => {
                       const file = e.target.files?.[0];
                       if (file) handleUpload(t.code, file);
+                      e.target.value = '';
                     }}
                   />
                   <button
+                    type="button"
                     disabled={uploading === t.code}
                     onClick={() => document.getElementById(`file-${t.code}`)?.click()}
-                    className="text-xs font-bold text-white bg-emerald-600 border border-emerald-600 px-3 py-1.5 rounded-lg hover:bg-emerald-700 active:scale-95 transition-all"
+                    className="w-full sm:w-auto text-xs font-bold text-white bg-emerald-600 border border-emerald-600 px-3.5 py-2 rounded-lg hover:bg-emerald-700 active:scale-95 transition-all whitespace-nowrap disabled:opacity-50"
                   >
                     {uploading === t.code ? 'Mengunggah...' : 'Unggah File .docx'}
                   </button>
@@ -615,10 +655,10 @@ function ClientManager({ currentUserEmail }: { currentUserEmail: string }) {
 
   if (subView === 'list') {
     return (
-      <div className="space-y-4">
+      <div className="w-full max-w-full min-w-0 space-y-4">
         {/* Search + Refresh + Add */}
-        <div className="flex flex-wrap sm:flex-nowrap gap-2">
-          <div className="relative flex-1 min-w-[180px]">
+        <div className="flex flex-wrap items-center gap-2 w-full min-w-0">
+          <div className="relative flex-1 min-w-[160px]">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">🔍</span>
             <input
               type="text"
@@ -628,21 +668,25 @@ function ClientManager({ currentUserEmail }: { currentUserEmail: string }) {
               className="w-full pl-9 pr-4 py-2.5 bg-white border border-gray-200 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20 rounded-xl text-sm outline-none transition-all"
             />
           </div>
-          <button
-            onClick={handleRefreshFromDrive}
-            disabled={refreshingDrive}
-            title="Tarik ulang data bersih dari Google Drive & bersihkan data terhapus"
-            className="px-3 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-bold rounded-xl transition-all shadow-sm flex items-center gap-1.5 whitespace-nowrap"
-          >
-            <span>{refreshingDrive ? '⏳' : '🔄'}</span>
-            <span className="hidden sm:inline">Sync Drive</span>
-          </button>
-          <button
-            onClick={openAddClient}
-            className="px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold rounded-xl transition-all shadow-sm whitespace-nowrap"
-          >
-            + Klien Baru
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={handleRefreshFromDrive}
+              disabled={refreshingDrive}
+              title="Tarik ulang data bersih dari Google Drive & bersihkan data terhapus"
+              className="px-3 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-bold rounded-xl transition-all shadow-sm flex items-center gap-1.5 whitespace-nowrap"
+            >
+              <span>{refreshingDrive ? '⏳' : '🔄'}</span>
+              <span>Sync Drive</span>
+            </button>
+            <button
+              type="button"
+              onClick={openAddClient}
+              className="px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold rounded-xl transition-all shadow-sm whitespace-nowrap"
+            >
+              + Klien Baru
+            </button>
+          </div>
         </div>
 
         {/* List */}
@@ -1247,6 +1291,419 @@ function AdminFormField({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ==========================================
+// INSPECTOR MANAGER (Master Ahli K3 & SKP)
+// ==========================================
+
+function InspectorManager() {
+  const [inspectors, setInspectors] = useState<InspectorProfile[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [convertingPdf, setConvertingPdf] = useState(false);
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [name, setName] = useState('');
+  const [field, setField] = useState('Ahli Keselamatan dan Kesehatan Kerja Bidang Listrik');
+  const [regNumber, setRegNumber] = useState('');
+  const [skpImageDataUrl, setSkpImageDataUrl] = useState<string>('');
+
+  const [companySkpImage, setCompanySkpImage] = useState<string>('');
+  const [savingCompanySkp, setSavingCompanySkp] = useState(false);
+
+  const apiBase = getApiBaseUrl();
+
+  const loadLocal = useCallback(async () => {
+    const [list, compSkp] = await Promise.all([
+      InspectorRepository.getAll(),
+      CompanySkpRepository.getSkpImage(),
+    ]);
+    setInspectors(list);
+    setCompanySkpImage(compSkp);
+    return list;
+  }, []);
+
+  const syncFromCloud = useCallback(async () => {
+    setSyncing(true);
+    try {
+      const res = await fetch(`${apiBase}/api/report?action=inspectors`);
+      const data = await res.json();
+      if (data.success) {
+        if (Array.isArray(data.inspectors) && data.inspectors.length > 0) {
+          await InspectorRepository.replaceAllFromSync(data.inspectors);
+        }
+        if (typeof data.companySkpImage === 'string' && data.companySkpImage) {
+          await CompanySkpRepository.saveSkpImage(data.companySkpImage);
+        }
+        await loadLocal();
+      }
+    } catch (err) {
+      console.warn('[InspectorManager] Gagal tarik dari cloud, gunakan data lokal:', err);
+    } finally {
+      setSyncing(false);
+      setLoading(false);
+    }
+  }, [apiBase, loadLocal]);
+
+  useEffect(() => {
+    loadLocal().then(() => syncFromCloud());
+  }, [loadLocal, syncFromCloud]);
+
+  const pushToCloud = async (payload: { inspectors?: InspectorProfile[]; companySkpImage?: string }) => {
+    const res = await fetch(`${apiBase}/api/report?action=inspectors`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || 'Gagal menyinkronkan ke Google Drive.');
+    }
+  };
+
+  const handleCompanySkpUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setMessage(null);
+    setSavingCompanySkp(true);
+    try {
+      const dataUrl = await processSkpFileToImageDataUrl(file);
+      await CompanySkpRepository.saveSkpImage(dataUrl);
+      setCompanySkpImage(dataUrl);
+      await pushToCloud({ companySkpImage: dataUrl });
+      setMessage({ type: 'success', text: 'Scan SKP PJK3 Perusahaan berhasil disimpan & tersinkron ke Drive.' });
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.message || 'Gagal mengunggah SKP PJK3 Perusahaan.' });
+    } finally {
+      setSavingCompanySkp(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleClearCompanySkp = async () => {
+    if (!confirm('Hapus lampiran scan SKP PJK3 Perusahaan?')) return;
+    setSavingCompanySkp(true);
+    setMessage(null);
+    try {
+      await CompanySkpRepository.clearSkpImage();
+      setCompanySkpImage('');
+      await pushToCloud({ companySkpImage: '' });
+      setMessage({ type: 'success', text: 'SKP PJK3 Perusahaan dihapus.' });
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.message || 'Gagal menghapus SKP PJK3 Perusahaan.' });
+    } finally {
+      setSavingCompanySkp(false);
+    }
+  };
+
+  const resetForm = () => {
+    setEditingId(null);
+    setName('');
+    setField('Ahli Keselamatan dan Kesehatan Kerja Bidang Listrik');
+    setRegNumber('');
+    setSkpImageDataUrl('');
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setMessage(null);
+    setConvertingPdf(true);
+    try {
+      const dataUrl = await processSkpFileToImageDataUrl(file);
+      setSkpImageDataUrl(dataUrl);
+      setMessage({ type: 'success', text: 'File SKP siap dilampirkan.' });
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.message || 'Gagal memproses file SKP.' });
+    } finally {
+      setConvertingPdf(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim() || !regNumber.trim()) {
+      setMessage({ type: 'error', text: 'Nama lengkap dan Nomor Registrasi SKP wajib diisi.' });
+      return;
+    }
+
+    setSaving(true);
+    setMessage(null);
+    try {
+      await InspectorRepository.upsert({
+        id: editingId || undefined,
+        name: name.trim(),
+        field: field.trim() || 'Ahli Keselamatan dan Kesehatan Kerja Bidang Listrik',
+        regNumber: regNumber.trim(),
+        skpImageDataUrl: skpImageDataUrl || undefined,
+      });
+
+      const updated = await loadLocal();
+      await pushToCloud({ inspectors: updated });
+      setMessage({ type: 'success', text: editingId ? 'Data Ahli K3 diperbarui & tersinkron.' : 'Ahli K3 baru ditambahkan & tersinkron.' });
+      resetForm();
+    } catch (err: any) {
+      setMessage({ type: 'error', text: `Tersimpan lokal, tapi gagal sync Drive: ${err.message}` });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleEdit = (item: InspectorProfile) => {
+    setEditingId(item.id);
+    setName(item.name);
+    setField(item.field);
+    setRegNumber(item.regNumber);
+    setSkpImageDataUrl(item.skpImageDataUrl || '');
+    setMessage(null);
+  };
+
+  const handleDelete = async (id: string, itemName: string) => {
+    if (!confirm(`Hapus Ahli K3 "${itemName}"?`)) return;
+    try {
+      await InspectorRepository.delete(id);
+      const updated = await loadLocal();
+      await pushToCloud({ inspectors: updated });
+      setMessage({ type: 'success', text: `Ahli K3 "${itemName}" dihapus.` });
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.message || 'Gagal menghapus Ahli K3.' });
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-800 flex items-center justify-between gap-2">
+        <div>
+          <p className="font-bold">Master Ahli K3 & Lampiran SKP</p>
+          <p className="text-[11px] opacity-80">
+            Data ahli & scan SKP (JPG/PNG/PDF 1 hal.) otomatis masuk ke blok tanda tangan dan lampiran akhir laporan Word.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={syncFromCloud}
+          disabled={syncing}
+          className="px-3 py-1.5 rounded-lg bg-white border border-emerald-300 text-emerald-700 font-bold text-[11px] hover:bg-emerald-100 disabled:opacity-50 shrink-0"
+        >
+          {syncing ? 'Sinkron...' : '↻ Sync Drive'}
+        </button>
+      </div>
+
+      {message && (
+        <div
+          className={`p-3 rounded-xl text-xs font-semibold ${
+            message.type === 'success'
+              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+              : 'bg-red-50 text-red-700 border border-red-200'
+          }`}
+        >
+          {message.text}
+        </div>
+      )}
+
+      {/* Kartu Kelola SKP PJK3 Perusahaan */}
+      <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-xs font-extrabold text-amber-900 uppercase tracking-wider">
+              SKP PJK3 Perusahaan (PT. Aksara Riksa Perdana)
+            </h3>
+            <p className="text-[11px] text-amber-800/80 mt-0.5">
+              Upload scan SKP Perusahaan (PDF 1 hal. / JPG / PNG). Otomatis masuk sebagai lampiran{' '}
+              <span className="font-mono font-bold">{'{%skpPerusahaanImage}'}</span> di Template_IPP-v3.docx.
+            </p>
+          </div>
+          {companySkpImage && (
+            <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold shrink-0">
+              ✓ Tersimpan
+            </span>
+          )}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="px-3.5 py-2 rounded-xl bg-white border border-amber-300 text-xs font-bold text-amber-900 hover:bg-amber-100 cursor-pointer">
+            {savingCompanySkp ? 'Memproses & Sync...' : companySkpImage ? 'Ganti SKP Perusahaan' : '+ Upload SKP Perusahaan'}
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp,application/pdf"
+              onChange={handleCompanySkpUpload}
+              className="hidden"
+              disabled={savingCompanySkp}
+            />
+          </label>
+          {companySkpImage && (
+            <div className="flex items-center gap-2">
+              <img
+                src={companySkpImage}
+                alt="Preview SKP PJK3 Perusahaan"
+                className="w-12 h-16 object-cover rounded-lg border border-amber-300 bg-white"
+              />
+              <button
+                type="button"
+                onClick={handleClearCompanySkp}
+                disabled={savingCompanySkp}
+                className="text-[11px] font-bold text-red-600 hover:text-red-800 disabled:opacity-50"
+              >
+                Hapus SKP
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <form onSubmit={handleSave} className="bg-gray-50 border border-gray-200 rounded-2xl p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-extrabold text-gray-800 uppercase tracking-wider">
+            {editingId ? 'Edit Ahli K3' : 'Tambah Ahli K3 Baru'}
+          </h3>
+          {editingId && (
+            <button type="button" onClick={resetForm} className="text-[11px] font-bold text-gray-500 hover:text-gray-700">
+              Batal Edit
+            </button>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-[11px] font-bold text-gray-600 mb-1">Nama Lengkap *</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Contoh: Fauzan Akmaluddin"
+              className="w-full px-3 py-2 text-xs bg-white border border-gray-200 rounded-xl focus:outline-none focus:border-emerald-500"
+            />
+          </div>
+          <div>
+            <label className="block text-[11px] font-bold text-gray-600 mb-1">Nomor Registrasi SKP *</label>
+            <input
+              type="text"
+              value={regNumber}
+              onChange={(e) => setRegNumber(e.target.value)}
+              placeholder="No. 5 / 10425 / AS.01.04 / V / 2025"
+              className="w-full px-3 py-2 text-xs bg-white border border-gray-200 rounded-xl focus:outline-none focus:border-emerald-500"
+            />
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-[11px] font-bold text-gray-600 mb-1">Bidang Keahlian</label>
+          <input
+            type="text"
+            value={field}
+            onChange={(e) => setField(e.target.value)}
+            placeholder="Ahli Keselamatan dan Kesehatan Kerja Bidang Listrik"
+            className="w-full px-3 py-2 text-xs bg-white border border-gray-200 rounded-xl focus:outline-none focus:border-emerald-500"
+          />
+        </div>
+
+        <div>
+          <label className="block text-[11px] font-bold text-gray-600 mb-1">
+            Scan SKP Ahli K3 (JPG / PNG / PDF 1 halaman)
+          </label>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="px-3 py-2 rounded-xl bg-white border border-gray-300 text-xs font-bold text-gray-700 hover:bg-gray-100 cursor-pointer">
+              {convertingPdf ? 'Mengonversi...' : skpImageDataUrl ? 'Ganti File SKP' : 'Pilih File SKP'}
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp,application/pdf"
+                onChange={handleFileChange}
+                className="hidden"
+                disabled={convertingPdf}
+              />
+            </label>
+            {skpImageDataUrl && (
+              <div className="flex items-center gap-2">
+                <img
+                  src={skpImageDataUrl}
+                  alt="Preview SKP"
+                  className="w-12 h-16 object-cover rounded-lg border border-gray-300 bg-white"
+                />
+                <button
+                  type="button"
+                  onClick={() => setSkpImageDataUrl('')}
+                  className="text-[11px] font-bold text-red-500 hover:text-red-700"
+                >
+                  Hapus Lampiran
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="pt-1 flex justify-end">
+          <button
+            type="submit"
+            disabled={saving || convertingPdf}
+            className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 disabled:opacity-50"
+          >
+            {saving ? 'Menyimpan...' : editingId ? 'Simpan Perubahan' : '+ Simpan Ahli K3'}
+          </button>
+        </div>
+      </form>
+
+      <div className="space-y-2">
+        <h3 className="text-xs font-extrabold text-gray-700 uppercase tracking-wider">
+          Daftar Ahli K3 ({inspectors.length})
+        </h3>
+        {loading ? (
+          <p className="text-xs text-gray-400 py-4 text-center">Memuat daftar Ahli K3...</p>
+        ) : inspectors.length === 0 ? (
+          <p className="text-xs text-gray-400 py-6 text-center bg-gray-50 rounded-xl border border-dashed border-gray-200">
+            Belum ada data Ahli K3. Tambahkan di form atas.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {inspectors.map((item) => (
+              <div
+                key={item.id}
+                className="flex items-center justify-between gap-3 p-3 bg-white border border-gray-200 rounded-xl"
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  {item.skpImageDataUrl ? (
+                    <img
+                      src={item.skpImageDataUrl}
+                      alt={item.name}
+                      className="w-10 h-12 object-cover rounded-lg border border-gray-200 shrink-0"
+                    />
+                  ) : (
+                    <div className="w-10 h-12 rounded-lg bg-gray-100 border border-gray-200 flex items-center justify-center text-[10px] font-bold text-gray-400 shrink-0">
+                      No SKP
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold text-gray-900 truncate">{item.name}</p>
+                    <p className="text-[11px] text-gray-500 truncate">{item.field}</p>
+                    <p className="text-[11px] font-mono text-emerald-700 truncate">{item.regNumber}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleEdit(item)}
+                    className="px-2.5 py-1.5 rounded-lg bg-gray-100 text-gray-700 text-[11px] font-bold hover:bg-gray-200"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(item.id, item.name)}
+                    className="px-2.5 py-1.5 rounded-lg bg-red-50 text-red-600 text-[11px] font-bold hover:bg-red-100"
+                  >
+                    Hapus
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

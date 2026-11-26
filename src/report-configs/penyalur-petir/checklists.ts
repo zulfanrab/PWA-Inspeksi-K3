@@ -2,75 +2,93 @@
 import { ChecklistConfig } from '../types';
 
 export const checklists: ChecklistConfig = {
-  version: '1.0.0',
+  version: '2.0.0',
   categories: [
     {
       categoryId: 'penerima_air_terminal',
-      categoryName: 'Pemeriksaan Visual Penerima (Air Terminal / Splitzen)',
+      categoryName: 'A. Penerima (Air Terminal)',
       components: [
         {
           componentId: 'air_terminal_components',
-          componentName: 'Komponen Air Terminal',
+          componentName: 'Penerima (Air Terminal)',
           isDefault: true,
           items: [
-            { itemId: 'jenis_terminal', description: 'Jenis terminal udara sesuai dengan gambar rencana', standard: 'Permenaker 02/1989' },
-            { itemId: 'radius_proteksi', description: 'Tinggi dan radius proteksi memenuhi syarat area bangunan', standard: 'Permenaker 02/1989' },
-            { itemId: 'kondisi_terminal', description: 'Ujung runcing terminal udara dalam keadaan tajam dan tidak cacat', standard: 'Permenaker 02/1989' },
-            { itemId: 'karat_logam', description: 'Bahan terminal udara bebas dari karat logam aktif', standard: 'Permenaker 02/1989' },
-            { itemId: 'tiang_penyangga', description: 'Tiang penyangga terminal terpasang kokoh', standard: 'Permenaker 02/1989' }
-          ]
-        }
-      ]
+            { itemId: 'A.1', description: 'Jenis Air Terminal', standard: 'Permenaker 02/1989' },
+            { itemId: 'A.2', description: 'Jarak / Radius Proteksi', standard: 'Permenaker 02/1989' },
+            { itemId: 'A.3', description: 'Tinggi air terminal', standard: 'Permenaker 02/1989' },
+            { itemId: 'A.4', description: 'Jumlah dan Jarak', standard: 'Permenaker 02/1989' },
+            { itemId: 'A.5', description: 'Kondisi fisik ujung penerima, bebas karat & terpasang kokoh', standard: 'Permenaker 02/1989' },
+          ],
+        },
+      ],
     },
     {
       categoryId: 'penghantar_down_conductor',
-      categoryName: 'Pemeriksaan Visual Penghantar Penurunan (Down Conductor)',
+      categoryName: 'B. Penghantar (Down Conductor)',
       components: [
         {
           componentId: 'down_conductor_components',
-          componentName: 'Kabel Down Conductor',
+          componentName: 'Penghantar (Down Conductor)',
           isDefault: true,
           items: [
-            { itemId: 'jumlah_down_conductor', description: 'Jumlah penghantar penurunan (down conductor) memenuhi standar minimum', standard: 'Permenaker 02/1989' },
-            { itemId: 'luas_penampang', description: 'Luas penampang kawat tembaga memenuhi syarat minimum (Ref: >= BC 50mm2)', standard: 'Permenaker 02/1989' },
-            { itemId: 'jalur_penurunan', description: 'Penghantar penurunan ditarik lewat rute terpendek dan lurus', standard: 'Permenaker 02/1989' },
-            { itemId: 'klem_penyangga', description: 'Jarak klem penyangga teratur dan menahan kawat dengan kencang', standard: 'Permenaker 02/1989' },
-            { itemId: 'perlindungan_mekanis', description: 'Terdapat pipa pelindung mekanis setinggi minimum 2 meter dari tanah', standard: 'Permenaker 02/1989' }
-          ]
-        }
-      ]
+            { itemId: 'B.1', description: 'Jumlah Down Conductor', standard: 'Permenaker 02/1989' },
+            { itemId: 'B.2', description: 'Jalur penghantar penurunan ditarik lurus & rute terpendek', standard: 'Permenaker 02/1989' },
+            { itemId: 'B.3', description: 'Luas Penampang (>= 50 mm2)', standard: 'Permenaker 02/1989' },
+            { itemId: 'B.4', description: 'Tebal / Diameter Penampang (Hasil Ukur Sigmat)', standard: 'Permenaker 02/1989' },
+            { itemId: 'B.5', description: 'Klem penyangga terpasang kuat dan jarak teratur', standard: 'Permenaker 02/1989' },
+            { itemId: 'B.6', description: 'Tinggi Bangunan', standard: 'Permenaker 02/1989' },
+            { itemId: 'B.7', description: 'Luas Bangunan', standard: 'Permenaker 02/1989' },
+          ],
+        },
+      ],
+    },
+    {
+      categoryId: 'pelindung_mekanis',
+      categoryName: 'C. Perlengkapan & Pelindung Mekanis',
+      components: [
+        {
+          componentId: 'mechanical_protection_components',
+          componentName: 'Pelindung Mekanis',
+          isDefault: true,
+          items: [
+            { itemId: 'C.1', description: 'Terdapat pipa pelindung mekanis setinggi min. 2 meter dari tanah', standard: 'Permenaker 02/1989' },
+            { itemId: 'C.2', description: 'Isolasi / penyekat tiang penerima terhadap struktur logam sekitar', standard: 'Permenaker 02/1989' },
+          ],
+        },
+      ],
     },
     {
       categoryId: 'sambungan_box_kontrol',
-      categoryName: 'Pemeriksaan Visual Sambungan & Box Kontrol',
+      categoryName: 'D. Sambungan & Box Kontrol (Test Joint)',
       components: [
         {
           componentId: 'box_control_components',
           componentName: 'Sambungan & Bak Kontrol',
           isDefault: true,
           items: [
-            { itemId: 'bak_kontrol_kondisi', description: 'Bak kontrol dalam kondisi bersih dan mudah diakses', standard: 'Permenaker 02/1989' },
-            { itemId: 'klem_sambungan', description: 'Klem sambungan ukur (test joint) kencang dan tidak korosi', standard: 'Permenaker 02/1989' },
-            { itemId: 'penomoran_box', description: 'Setiap bak kontrol memiliki penomoran yang jelas', standard: 'Permenaker 02/1989' }
-          ]
-        }
-      ]
+            { itemId: 'D.1', description: 'Bak kontrol bersih, tidak tergenang, dan mudah diakses', standard: 'Permenaker 02/1989' },
+            { itemId: 'D.2', description: 'Klem sambungan ukur (test joint) kencang dan bebas korosi', standard: 'Permenaker 02/1989' },
+            { itemId: 'D.3', description: 'Jumlah Box Control', standard: 'Permenaker 02/1989' },
+          ],
+        },
+      ],
     },
     {
       categoryId: 'elektroda_bumi',
-      categoryName: 'Pemeriksaan Elektroda Bumi (Grounding)',
+      categoryName: 'E. Elektroda Bumi (Grounding)',
       components: [
         {
           componentId: 'grounding_electrodes',
-          componentName: 'Elektroda Grounding',
+          componentName: 'Elektroda Bumi',
           isDefault: true,
           items: [
-            { itemId: 'material_elektroda', description: 'Material elektroda bumi sesuai spesifikasi standar korosi tanah', standard: 'Permenaker 02/1989' },
-            { itemId: 'jenis_elektroda', description: 'Jenis elektroda bumi (pasak/pita/pelat) sesuai kondisi lingkungan', standard: 'Permenaker 02/1989' },
-            { itemId: 'jumlah_titik', description: 'Jumlah titik pembumian sesuai standar instalasi', standard: 'Permenaker 02/1989' }
-          ]
-        }
-      ]
+            { itemId: 'E.1', description: 'Material elektroda bumi sesuai standar tahan korosi tanah', standard: 'Permenaker 02/1989' },
+            { itemId: 'E.2', description: 'Jenis elektroda bumi (pasak/pita/pelat) sesuai kondisi tanah', standard: 'Permenaker 02/1989' },
+            { itemId: 'E.3', description: 'Nilai tahanan pembumian <= 5 Ohm (Permenaker 02/1989 Pasal 54)', standard: 'Permenaker 02/1989' },
+            { itemId: 'E.4', description: 'Jumlah Elektroda Bumi', standard: 'Permenaker 02/1989' },
+          ],
+        },
+      ],
     },
     {
       categoryId: 'hubungan_antar_bagian',
@@ -81,13 +99,13 @@ export const checklists: ChecklistConfig = {
           componentName: 'Hubungan Antar Bagian / Kontinuitas',
           isDefault: true,
           items: [
-            { itemId: 'penerima_ke_penerima', description: 'Hubungan antara Penerima dengan Penerima', standard: 'Permenaker 02/1989' },
-            { itemId: 'penerima_ke_penurunan', description: 'Hubungan antara Penerima dengan Penghantar Penurunan', standard: 'Permenaker 02/1989' },
-            { itemId: 'ujung_ke_ujung_penurunan', description: 'Hubungan antara Ujung-ujung Penghantar Penurunan', standard: 'Permenaker 02/1989' },
-            { itemId: 'penurunan_ke_bumi', description: 'Hubungan antara Penghantar Penurunan dengan Elektroda Bumi', standard: 'Permenaker 02/1989' }
-          ]
-        }
-      ]
-    }
-  ]
+            { itemId: '1', description: 'Antara Penerima dengan Penerima', standard: 'Permenaker 02/1989' },
+            { itemId: '2', description: 'Antara Penerima dengan Penghantar Penurunan', standard: 'Permenaker 02/1989' },
+            { itemId: '3', description: 'Antara Ujung-ujung Penghantar Penurunan', standard: 'Permenaker 02/1989' },
+            { itemId: '4', description: 'Antara Penghantar Penurunan dengan Elektroda Bumi', standard: 'Permenaker 02/1989' },
+          ],
+        },
+      ],
+    },
+  ],
 };

@@ -6,7 +6,7 @@ import ImageModule from 'docxtemplater-image-module-free';
 import sizeOf from 'image-size';
 import { v4 as uuidv4 } from 'uuid';
 import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
-import { getDriveClient } from './driveClient.js';
+import { getDriveClient, getDriveAccessToken } from './driveClient.js';
 
 // --- ROMAN MONTHS CONSTANT ---
 const ROMAN_MONTHS = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII'];
@@ -157,7 +157,7 @@ async function handleSequence(req: VercelRequest, res: VercelResponse) {
 // 2. NARRATIVE
 async function handleNarrative(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-  const { systemPrompt, prompts } = req.body;
+  const { systemPrompt, prompts, modelTier } = req.body;
 
   if (!systemPrompt || !prompts || typeof prompts !== 'object') {
     return res.status(400).json({ error: 'Payload tidak valid: systemPrompt dan prompts wajib ada.' });
@@ -178,7 +178,8 @@ async function handleNarrative(req: VercelRequest, res: VercelResponse) {
   }
 
   const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+  const modelName = modelTier === 'pro' ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
+  const model = genAI.getGenerativeModel({ model: modelName });
 
   const promptInstructions = `
 Ikuti instruksi sistem berikut secara ketat:
@@ -235,6 +236,22 @@ Kembalikan respon Anda strictly dalam bentuk JSON sesuai dengan schema yang dite
   });
 }
 
+function formatIndonesianDayAndDate(dateStr?: string): { day: string; formatted: string } {
+  if (!dateStr) return { day: '', formatted: '' };
+  const parsed = new Date(dateStr.includes('T') ? dateStr : `${dateStr}T00:00:00+07:00`);
+  if (isNaN(parsed.getTime())) return { day: '', formatted: dateStr };
+
+  const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+  const months = [
+    'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+    'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+  ];
+  return {
+    day: days[parsed.getDay()] || '',
+    formatted: `${parsed.getDate()} ${months[parsed.getMonth()]} ${parsed.getFullYear()}`
+  };
+}
+
 // 3. GENERATE
 async function handleGenerate(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -264,16 +281,39 @@ async function handleGenerate(req: VercelRequest, res: VercelResponse) {
   const imageOptions = {
     centered: false,
     getImage(tagValue: string) {
+      if (!tagValue || typeof tagValue !== 'string' || !tagValue.includes('base64,')) {
+        return false as any;
+      }
       const base64Data = tagValue.replace(/^data:image\/\w+;base64,/, '');
+      if (!base64Data) return false as any;
       return Buffer.from(base64Data, 'base64');
     },
-    getSize(imgBuffer: Buffer) {
+    getSize(imgBuffer: Buffer, _tagValue: string, tagName?: string) {
+      if (!imgBuffer || !Buffer.isBuffer(imgBuffer) || imgBuffer.length === 0) {
+        return [1, 1];
+      }
       try {
         const dimensions = sizeOf(imgBuffer);
-        const maxWidth = 550;
-        const maxHeight = 350;
-        let width = dimensions.width || 300;
-        let height = dimensions.height || 200;
+        let maxWidth = 550;
+        let maxHeight = 350;
+
+        if (tagName === 'img1' || tagName === 'img2' || tagName === 'img3') {
+          maxWidth = 180;
+          maxHeight = 135;
+        } else if (tagName === 'jointPhoto') {
+          maxWidth = 460;
+          maxHeight = 300;
+        } else if (
+          tagName === 'skpAhliImage' ||
+          tagName === 'skpPerusahaanImage' ||
+          (tagName === 'image' && String(reportData.inspectionTypeCode).toUpperCase() === 'IPP')
+        ) {
+          maxWidth = 560;
+          maxHeight = 840;
+        }
+
+        let width = dimensions.width || maxWidth;
+        let height = dimensions.height || maxHeight;
 
         if (width > maxWidth) {
           height = Math.round((height * maxWidth) / width);
@@ -285,7 +325,7 @@ async function handleGenerate(req: VercelRequest, res: VercelResponse) {
         }
         return [width, height];
       } catch (e) {
-        return [300, 200];
+        return [180, 135];
       }
     }
   };
@@ -297,35 +337,108 @@ async function handleGenerate(req: VercelRequest, res: VercelResponse) {
   });
 
   const visualFaultsList: string[] = [];
-  reportData.checklistData.components.forEach((c: any) => {
-    c.items.forEach((item: any) => {
-      if (item.result === 'KURANG' || item.result === 'TIDAK_ADA') {
-        visualFaultsList.push(`- ${item.description}: ${item.result === 'KURANG' ? 'Kurang' : 'Tidak Ada'} (${item.remarks || '-'})`);
+  (reportData.checklistData?.components || []).forEach((c: any) => {
+    (c.items || []).forEach((item: any) => {
+      if (item.result === 'KURANG' || item.result === 'TIDAK_ADA' || item.result === 'TIDAK_BAIK') {
+        visualFaultsList.push(`- ${item.description}: ${item.result} (${item.remarks || '-'})`);
       }
     });
   });
 
+  const inspDateInfo = formatIndonesianDayAndDate(reportData.generalData?.inspectionDate);
+  const repDateInfo = formatIndonesianDayAndDate(reportData.generalData?.reportDate);
+
+  const rawPhotos = Array.isArray(reportData.photoDocumentation?.photos) ? reportData.photoDocumentation.photos : [];
+  const photoRows: Array<Record<string, string>> = [];
+  for (let i = 0; i < rawPhotos.length; i += 3) {
+    const p1 = rawPhotos[i];
+    const p2 = rawPhotos[i + 1];
+    const p3 = rawPhotos[i + 2];
+    photoRows.push({
+      img1: p1?.dataUrl || '',
+      caption1: p1?.caption || '',
+      img2: p2?.dataUrl || '',
+      caption2: p2?.caption || '',
+      img3: p3?.dataUrl || '',
+      caption3: p3?.caption || '',
+    });
+  }
+
+  const sections = reportData.aiNarrative?.sections || {};
+  const tech = reportData.technicalData || {};
+
   const templateData = {
-    companyName: reportData.generalData.companyName,
-    companyAddress: reportData.generalData.companyAddress,
-    inspectionDate: reportData.generalData.inspectionDate,
-    reportDate: reportData.generalData.reportDate,
-    reportNumber: reportData.reportNumber,
-    inspectorName: reportData.generalData.inspectorName,
-    inspectorCertNumber: reportData.generalData.inspectorCertNumber,
-    ...reportData.technicalData,
-    components: reportData.checklistData.components,
-    continuity: reportData.checklistData.continuity || [],
-    overallResult: reportData.checklistData.overallResult,
+    companyName: reportData.generalData?.companyName || '',
+    companyAddress: reportData.generalData?.companyAddress || '',
+    inspectionDate: reportData.generalData?.inspectionDate || '',
+    reportDate: reportData.generalData?.reportDate || '',
+    inspectionDay: inspDateInfo.day,
+    inspectionDateFormatted: inspDateInfo.formatted,
+    reportDateFormatted: repDateInfo.formatted,
+    reportNumber: reportData.reportNumber || '',
+    inspectorCompany: reportData.generalData?.inspectorCompany || 'PT. AKSARA RIKSA PERDANA',
+    inspectorName: reportData.generalData?.inspectorName || '',
+    inspectorField: reportData.generalData?.inspectorField || '',
+    inspectorRegNumber: reportData.generalData?.inspectorRegNumber || reportData.generalData?.inspectorCertNumber || '',
+    inspectorCertNumber: reportData.generalData?.inspectorCertNumber || reportData.generalData?.inspectorRegNumber || '',
+    skpAhliImage: reportData.generalData?.skpAhliImage || '',
+    skpPerusahaanImage: reportData.generalData?.skpPerusahaanImage || '',
+
+    // 20 Data Umum + technical fields
+    jenisAlat: tech.jenisAlat || 'Instalasi Penyalur Petir',
+    jenisPenyalurPetir: tech.jenisPenyalurPetir || '',
+    bentukPenerima: tech.bentukPenerima || '',
+    merkType: tech.merkType || '-',
+    tahunPemasangan: tech.tahunPemasangan || '-',
+    tinggiTiangPenerima: tech.tinggiTiangPenerima || '',
+    tinggiBangunan: tech.tinggiBangunan || '',
+    jumlahAirTerminal: tech.jumlahAirTerminal || '',
+    jumlahBoxKontrol: tech.jumlahBoxKontrol || '',
+    jumlahElektrodaPembumian: tech.jumlahElektrodaPembumian || '',
+    radiusPerlindungan: tech.radiusPerlindungan || '',
+    jumlahDownConductor: tech.jumlahDownConductor || '',
+    jenisDownConductor: tech.jenisDownConductor || '',
+    diameterTiangPenerima: tech.diameterTiangPenerima || '',
+    luasBangunan: tech.luasBangunan || '-',
+    jenisKonstruksi: tech.jenisKonstruksi || '',
+    atapBangunan: tech.atapBangunan || '',
+    dindingBangunan: tech.dindingBangunan || '',
+    lantaiBangunan: tech.lantaiBangunan || '',
+    lokasiPemasangan: tech.lokasiPemasangan || '',
+    measuringTool: tech.measuringTool || 'Earth Tester Merk Kyoritsu',
+    ...tech,
+
+    // Checklists
+    checklistSections: reportData.checklistData?.checklistSections || [],
+    continuityItems: reportData.checklistData?.continuityItems || reportData.checklistData?.continuity || [],
+    components: reportData.checklistData?.components || [],
+    continuity: reportData.checklistData?.continuity || [],
+    overallResult: reportData.checklistData?.overallResult || '',
     visualFaults: visualFaultsList.join('\n'),
-    calculations: reportData.formulaResults.calculations,
-    overallSafetyStatus: reportData.formulaResults.overallSafetyStatus,
-    executiveSummary: reportData.aiNarrative.sections.executiveSummary,
-    findingsNarrative: reportData.aiNarrative.sections.findingsNarrative,
-    testResultsNarrative: reportData.aiNarrative.sections.testResultsNarrative,
-    recommendations: reportData.aiNarrative.sections.recommendations,
-    conclusion: reportData.aiNarrative.sections.conclusion,
-    photos: reportData.photoDocumentation.photos.map((p: any) => ({
+
+    // Grounding & calculations
+    groundingPoints: tech.groundingPoints || [],
+    calculations: reportData.formulaResults?.calculations || [],
+    overallSafetyStatus: reportData.formulaResults?.overallSafetyStatus || 'AMAN',
+
+    // Narratives (kontrak IPP + legacy)
+    visualSummary: sections.visualSummary || sections.executiveSummary || '',
+    measurementSummary: sections.measurementSummary || sections.testResultsNarrative || '',
+    executiveSummary: sections.executiveSummary || sections.visualSummary || '',
+    findingsNarrative: sections.findingsNarrative || sections.visualSummary || '',
+    testResultsNarrative: sections.testResultsNarrative || sections.measurementSummary || '',
+    recommendations: sections.recommendations || '',
+    conclusion: sections.conclusion || '',
+
+    // Photos & Extra Attachments
+    photoRows,
+    jointPhoto: reportData.photoDocumentation?.jointPhoto || '',
+    extraAttachments: Array.isArray(reportData.extraAttachments)
+      ? reportData.extraAttachments
+          .filter((att: any) => typeof att?.image === 'string' && att.image.includes('base64,'))
+          .map((att: any) => ({ image: att.image }))
+      : [],
+    photos: rawPhotos.map((p: any) => ({
       image: p.dataUrl,
       caption: p.caption
     }))
@@ -338,8 +451,9 @@ async function handleGenerate(req: VercelRequest, res: VercelResponse) {
     compression: 'DEFLATE'
   });
 
-  const clientFolderId = reportData.technicalData.driveFolderId || rootFolderId;
-  const reportFileName = `Laporan_${reportData.inspectionTypeCode}_${reportData.reportNumber.replace(/\//g, '_')}.docx`;
+  const clientFolderId = reportData.technicalData?.driveFolderId || rootFolderId;
+  const safeReportNum = String(reportData.reportNumber || 'REPORT').replace(/[\/\s]+/g, '_');
+  const reportFileName = `Laporan_${reportData.inspectionTypeCode}_${safeReportNum}.docx`;
   
   const uploadRes = await drive.files.create({
     requestBody: {
@@ -355,7 +469,55 @@ async function handleGenerate(req: VercelRequest, res: VercelResponse) {
     supportsAllDrives: true,
   });
 
-  const fileId = uploadRes.data.id;
+  const fileId = uploadRes.data.id!;
+  let pdfDriveFileId: string | undefined;
+
+  // Konversi ke PDF identik melalui Google Docs API jika diminta exportFormat === 'pdf'
+  if (reportData.exportFormat === 'pdf') {
+    let tempDocId: string | undefined;
+    try {
+      const tempDoc = await drive.files.create({
+        requestBody: {
+          name: `_temp_${jobId}`,
+          mimeType: 'application/vnd.google-apps.document',
+          parents: [clientFolderId]
+        },
+        media: {
+          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          body: Readable.from(outputBuffer)
+        },
+        fields: 'id',
+        supportsAllDrives: true,
+      });
+      tempDocId = tempDoc.data.id!;
+
+      const pdfExportRes = await drive.files.export(
+        { fileId: tempDocId, mimeType: 'application/pdf' },
+        { responseType: 'arraybuffer' }
+      );
+      const pdfBuffer = Buffer.from(pdfExportRes.data as ArrayBuffer);
+      const pdfFileName = reportFileName.replace(/\.docx$/i, '.pdf');
+
+      const pdfUpload = await drive.files.create({
+        requestBody: {
+          name: pdfFileName,
+          mimeType: 'application/pdf',
+          parents: [clientFolderId]
+        },
+        media: {
+          mimeType: 'application/pdf',
+          body: Readable.from(pdfBuffer)
+        },
+        fields: 'id',
+        supportsAllDrives: true,
+      });
+      pdfDriveFileId = pdfUpload.data.id!;
+    } finally {
+      if (tempDocId) {
+        drive.files.delete({ fileId: tempDocId, supportsAllDrives: true }).catch(() => {});
+      }
+    }
+  }
 
   const jobFileName = `_job_${jobId}.json`;
   const jobContent = {
@@ -363,6 +525,7 @@ async function handleGenerate(req: VercelRequest, res: VercelResponse) {
     status: 'completed',
     progress: 100,
     outputDriveFileId: fileId,
+    pdfDriveFileId,
     createdAt: new Date().toISOString()
   };
 
@@ -382,7 +545,9 @@ async function handleGenerate(req: VercelRequest, res: VercelResponse) {
   return res.status(200).json({
     success: true,
     jobId,
-    message: 'Pembuatan laporan diproses secara instan.'
+    outputDriveFileId: fileId,
+    pdfDriveFileId,
+    message: 'Pembuatan laporan selesai.'
   });
 }
 
@@ -444,7 +609,7 @@ async function handleTemplate(req: VercelRequest, res: VercelResponse) {
     const q = `'${templatesFolderId}' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed=false`;
     const listRes = await drive.files.list({
       q,
-      fields: 'files(id, name, createdTime, size)',
+      fields: 'files(id, name, createdTime, modifiedTime, size)',
       spaces: 'drive',
       supportsAllDrives: true,
       includeItemsFromAllDrives: true,
@@ -519,6 +684,303 @@ async function handleTemplate(req: VercelRequest, res: VercelResponse) {
   }
 }
 
+// 6. INSPECTORS (Master Ahli K3)
+async function handleInspectors(req: VercelRequest, res: VercelResponse) {
+  const drive = getDriveClient();
+  const rootFolderId = process.env.ROOT_FOLDER_ID?.trim() || 'root';
+  const fileName = '_inspectors.json';
+
+  const q = `name='${fileName}' and '${rootFolderId}' in parents and trashed=false`;
+  const searchRes = await drive.files.list({
+    q,
+    fields: 'files(id)',
+    spaces: 'drive',
+    pageSize: 1,
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
+  });
+  const existingFileId = searchRes.data.files?.[0]?.id;
+
+  if (req.method === 'GET') {
+    if (!existingFileId) {
+      return res.status(200).json({ success: true, inspectors: [], companySkpImage: '' });
+    }
+    const downloadRes = await drive.files.get(
+      { fileId: existingFileId, alt: 'media', supportsAllDrives: true },
+      { responseType: 'text' }
+    );
+    const parsed = JSON.parse((downloadRes.data as string) || '{}');
+    return res.status(200).json({
+      success: true,
+      inspectors: Array.isArray(parsed.inspectors) ? parsed.inspectors : [],
+      companySkpImage: typeof parsed.companySkpImage === 'string' ? parsed.companySkpImage : '',
+    });
+  }
+
+  if (req.method === 'POST') {
+    const { inspectors, companySkpImage } = req.body || {};
+    if (inspectors !== undefined && !Array.isArray(inspectors)) {
+      return res.status(400).json({ error: 'Payload tidak valid: inspectors harus berupa array.' });
+    }
+    if (inspectors === undefined && companySkpImage === undefined) {
+      return res.status(400).json({ error: 'Payload kosong: kirim inspectors atau companySkpImage.' });
+    }
+
+    let currentData: { inspectors: any[]; companySkpImage?: string } = {
+      inspectors: [],
+      companySkpImage: '',
+    };
+    if (existingFileId) {
+      try {
+        const currentRes = await drive.files.get(
+          { fileId: existingFileId, alt: 'media', supportsAllDrives: true },
+          { responseType: 'text' }
+        );
+        const parsed = JSON.parse((currentRes.data as string) || '{}');
+        currentData = {
+          inspectors: Array.isArray(parsed.inspectors) ? parsed.inspectors : [],
+          companySkpImage: typeof parsed.companySkpImage === 'string' ? parsed.companySkpImage : '',
+        };
+      } catch {
+        // abaikan jika file belum valid
+      }
+    }
+
+    const payload = JSON.stringify(
+      {
+        inspectors: inspectors !== undefined ? inspectors : currentData.inspectors,
+        companySkpImage: companySkpImage !== undefined ? companySkpImage : currentData.companySkpImage,
+        updatedAt: new Date().toISOString(),
+      },
+      null,
+      2
+    );
+    const media = {
+      mimeType: 'application/json',
+      body: Readable.from(payload),
+    };
+
+    if (existingFileId) {
+      await drive.files.update({
+        fileId: existingFileId,
+        requestBody: { name: fileName },
+        media,
+        supportsAllDrives: true,
+      });
+    } else {
+      await drive.files.create({
+        requestBody: {
+          name: fileName,
+          mimeType: 'application/json',
+          parents: [rootFolderId],
+        },
+        media,
+        fields: 'id',
+        supportsAllDrives: true,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Data Master Ahli K3 berhasil disinkronkan.',
+    });
+  }
+
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
+// 7. VISION & PRE-FLIGHT QC (Gemini 2.5 Flash)
+async function handleVision(req: VercelRequest, res: VercelResponse) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return res.status(400).json({ error: 'GEMINI_API_KEY belum dikonfigurasi di server.' });
+  }
+
+  const { mode, imageDataUrl, photos, context, payload } = req.body || {};
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+
+  if (mode === 'ocr_meter') {
+    if (!imageDataUrl) return res.status(400).json({ error: 'imageDataUrl wajib diisi.' });
+    const base64 = String(imageDataUrl).replace(/^data:image\/\w+;base64,/, '');
+    const mimeType = String(imageDataUrl).match(/^data:(image\/\w+);base64,/)?.[1] || 'image/jpeg';
+
+    const result = await model.generateContent({
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { inlineData: { data: base64, mimeType } },
+            {
+              text: 'Baca layar alat ukur Earth Tester pada foto ini. Ekstrak angka tahanan pembumian dalam Ohm (hanya angka desimal, misal "1.39") dan merk/tipe alat ukur jika terlihat. Kembalikan JSON.'
+            }
+          ]
+        }
+      ],
+      generationConfig: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: SchemaType.OBJECT,
+          properties: {
+            resistanceValue: { type: SchemaType.STRING, description: 'Angka tahanan Ohm saja, misal 1.39' },
+            toolBrand: { type: SchemaType.STRING, description: 'Merk/tipe alat ukur jika terlihat' }
+          }
+        },
+        temperature: 0.1
+      }
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: JSON.parse(result.response.text())
+    });
+  }
+
+  if (mode === 'categorize_photos') {
+    if (!Array.isArray(photos) || photos.length === 0) {
+      return res.status(400).json({ error: 'photos wajib diisi.' });
+    }
+    const parts: any[] = [];
+    photos.forEach((p: any, idx: number) => {
+      const base64 = String(p.dataUrl || '').replace(/^data:image\/\w+;base64,/, '');
+      const mimeType = String(p.dataUrl || '').match(/^data:(image\/\w+);base64,/)?.[1] || 'image/jpeg';
+      if (base64) {
+        parts.push({ text: `Foto ID: ${p.id} (Urutan ${idx + 1})` });
+        parts.push({ inlineData: { data: base64, mimeType } });
+      }
+    });
+
+    parts.push({
+      text: `Identifikasi setiap foto inspeksi penyalur petir ini (misal: Air Terminal / Splitzen, Box Kontrol / Test Joint, Pengukuran Grounding ${context?.tahananPembumian || ''} Ohm dengan ${context?.measuringTool || 'Earth Tester'}, atau Foto Bersama Pihak Perusahaan). Berikan caption Bahasa Indonesia formal yang singkat & konsisten untuk setiap ID, dan tandai isJointPhoto=true maksimal pada 1 foto bersama tim/perusahaan jika ada.`
+    });
+
+    const result = await model.generateContent({
+      contents: [{ role: 'user', parts }],
+      generationConfig: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: SchemaType.OBJECT,
+          properties: {
+            items: {
+              type: SchemaType.ARRAY,
+              items: {
+                type: SchemaType.OBJECT,
+                properties: {
+                  id: { type: SchemaType.STRING },
+                  caption: { type: SchemaType.STRING },
+                  isJointPhoto: { type: SchemaType.BOOLEAN }
+                },
+                required: ['id', 'caption', 'isJointPhoto']
+              }
+            }
+          },
+          required: ['items']
+        },
+        temperature: 0.2
+      }
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: JSON.parse(result.response.text())
+    });
+  }
+
+  if (mode === 'preflight_qc') {
+    const result = await model.generateContent({
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              text: `Periksa konsistensi angka & status hukum K3 pada payload laporan IPP berikut (apakah angka tahanan pembumian di tabel sama dengan di narasi, apakah status memenuhi <= 5 Ohm konsisten dengan kesimpulan). Jawab singkat dalam 2-4 poin Bahasa Indonesia:\n${JSON.stringify(payload)}`
+            }
+          ]
+        }
+      ],
+      generationConfig: { temperature: 0.1 }
+    });
+    return res.status(200).json({
+      success: true,
+      data: { summary: result.response.text() }
+    });
+  }
+
+  return res.status(400).json({ error: `Mode vision "${mode}" tidak dikenal.` });
+}
+
+// 5B. TEMPLATE RESUMABLE UPLOAD SESSION (Direct Browser -> Drive tanpa lewat Vercel payload)
+async function handleTemplateUploadSession(req: VercelRequest, res: VercelResponse) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  const { typeCode } = req.body || {};
+  if (!typeCode) {
+    return res.status(400).json({ error: 'Parameter typeCode wajib disertakan.' });
+  }
+
+  const drive = getDriveClient();
+  const rootFolderId = process.env.ROOT_FOLDER_ID?.trim() || 'root';
+  const templatesFolderId = await getTemplatesFolderId(drive, rootFolderId);
+
+  const cleanTypeCode = String(typeCode).toUpperCase();
+  const targetFileName = `Template_${cleanTypeCode}.docx`;
+  const docxMime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+  const q = `name='${targetFileName}' and '${templatesFolderId}' in parents and trashed=false`;
+  const searchRes = await drive.files.list({
+    q,
+    fields: 'files(id)',
+    spaces: 'drive',
+    pageSize: 1,
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
+  });
+
+  const existingFileId = searchRes.data.files?.[0]?.id;
+  const accessToken = await getDriveAccessToken();
+  const originHeader = typeof req.headers.origin === 'string' ? req.headers.origin : undefined;
+
+  const initUrl = existingFileId
+    ? `https://www.googleapis.com/upload/drive/v3/files/${existingFileId}?uploadType=resumable&supportsAllDrives=true`
+    : `https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true`;
+
+  const metadata = existingFileId
+    ? { name: targetFileName, mimeType: docxMime }
+    : { name: targetFileName, mimeType: docxMime, parents: [templatesFolderId] };
+
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${accessToken}`,
+    'Content-Type': 'application/json; charset=UTF-8',
+    'X-Upload-Content-Type': docxMime,
+  };
+  if (originHeader) {
+    headers.Origin = originHeader;
+  }
+
+  const initRes = await fetch(initUrl, {
+    method: existingFileId ? 'PATCH' : 'POST',
+    headers,
+    body: JSON.stringify(metadata),
+  });
+
+  if (!initRes.ok) {
+    const errText = await initRes.text();
+    throw new Error(`Gagal menginisiasi sesi upload Drive (${initRes.status}): ${errText}`);
+  }
+
+  const uploadUrl = initRes.headers.get('location');
+  if (!uploadUrl) {
+    throw new Error('Google Drive tidak mengembalikan upload session URI.');
+  }
+
+  return res.status(200).json({
+    success: true,
+    uploadUrl,
+    existingFileId: existingFileId || null,
+    targetFileName,
+  });
+}
+
 // --- MAIN ROUTER ---
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', process.env.ALLOWED_ORIGIN ?? '*');
@@ -540,6 +1002,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return await handleStatus(req, res);
     } else if (action === 'template') {
       return await handleTemplate(req, res);
+    } else if (action === 'template-upload-session') {
+      return await handleTemplateUploadSession(req, res);
+    } else if (action === 'inspectors') {
+      return await handleInspectors(req, res);
+    } else if (action === 'vision') {
+      return await handleVision(req, res);
     } else {
       return res.status(400).json({ error: `Action "${action}" tidak valid.` });
     }

@@ -3,9 +3,10 @@ import { google } from 'googleapis';
 type DriveClient = ReturnType<typeof google.drive>;
 
 let cachedDriveClient: DriveClient | null = null;
+let cachedOAuth2Client: InstanceType<typeof google.auth.OAuth2> | null = null;
 let cachedCredentialsKey = '';
 
-export function getDriveClient(): DriveClient {
+function getOAuth2Client() {
   const clientId = process.env.VITE_GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
   const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
@@ -15,8 +16,8 @@ export function getDriveClient(): DriveClient {
   }
 
   const credentialsKey = `${clientId}:${refreshToken}`;
-  if (cachedDriveClient && cachedCredentialsKey === credentialsKey) {
-    return cachedDriveClient;
+  if (cachedOAuth2Client && cachedCredentialsKey === credentialsKey) {
+    return cachedOAuth2Client;
   }
 
   const oauth2Client = new google.auth.OAuth2(
@@ -26,8 +27,23 @@ export function getDriveClient(): DriveClient {
   );
 
   oauth2Client.setCredentials({ refresh_token: refreshToken });
-
-  cachedDriveClient = google.drive({ version: 'v3', auth: oauth2Client });
+  cachedOAuth2Client = oauth2Client;
   cachedCredentialsKey = credentialsKey;
-  return cachedDriveClient;
+  cachedDriveClient = google.drive({ version: 'v3', auth: oauth2Client });
+  return oauth2Client;
+}
+
+export function getDriveClient(): DriveClient {
+  getOAuth2Client();
+  return cachedDriveClient!;
+}
+
+export async function getDriveAccessToken(): Promise<string> {
+  const oauth2Client = getOAuth2Client();
+  const res = await oauth2Client.getAccessToken();
+  const token = res?.token;
+  if (!token) {
+    throw new Error('[driveClient] Gagal memperoleh access token Google Drive.');
+  }
+  return token;
 }

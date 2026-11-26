@@ -8,6 +8,7 @@ import { ImageCompressor } from '../../engines/ImageCompressor';
 import { SequenceGenerator } from '../../engines/SequenceGenerator';
 import { getApiBaseUrl } from '../../config';
 import { registerBackInterceptor } from '../../utils/navigationGuard';
+import { IppReportWizard } from './IppReportWizard';
 
 interface ReportWizardProps {
   reportId: number | null; // null jika buat baru
@@ -77,6 +78,7 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
 
   // Tipe inspeksi terdeteksi dari source
   const [typeCode, setTypeCode] = useState<string>('IL');
+  const [loadedReportData, setLoadedReportData] = useState<any>(null);
 
   useEffect(() => {
     loadSourceInspections();
@@ -94,6 +96,7 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
     try {
       const rep = await db.reports.get(id);
       if (rep) {
+        setLoadedReportData(rep);
         setFormData({
           ...rep.generalData,
           ...rep.technicalData,
@@ -507,6 +510,18 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
       setIsGenerating(false);
     }
   };
+
+  if (typeCode === 'IPP' && selectedInspection && currentStep >= 2) {
+    return (
+      <IppReportWizard
+        selectedInspection={selectedInspection}
+        reportId={reportId}
+        initialReportData={loadedReportData}
+        onChangeSource={() => setCurrentStep(1)}
+        onClose={onClose}
+      />
+    );
+  }
 
   return (
     <div className="bg-white rounded-2xl border border-gray-150 shadow-sm max-w-4xl mx-auto overflow-hidden">

@@ -128,13 +128,19 @@ const SPECIFIC_FIELDS: Record<string, FieldDef[]> = {
     { name: 'nomorSertifikatSLO', label: 'Nomor Sertifikat SLO',  type: 'text',   placeholder: 'Nomor SLO dari PLN/Disnaker' },
   ],
   'Penyalur Petir': [
-    { name: 'jenisPenyalurPetir',   label: 'Jenis Sistem Penangkal',     type: 'select', options: ['Sistem Franklin (Konvensional)','Sistem Faraday (Sangkar)','Early Streamer Emission (ESE)','Sistem Kawat Catenary','Lainnya'] },
-    { name: 'luasAreaPetir',        label: 'Luas Area yang Dilindungi',  type: 'number', unit: 'm²' },
-    { name: 'tinggiTiangPenangkal', label: 'Tinggi Tiang Penangkal',     type: 'number', unit: 'm' },
-    { name: 'tahananPembumian',     label: 'Nilai Tahanan Pembumian',    type: 'number', unit: 'Ω' },
-    { name: 'jumlahTitikGrounding', label: 'Jumlah Titik Grounding',     type: 'number', unit: 'titik' },
-    { name: 'jenisElektroda',       label: 'Jenis Elektroda Pembumian',  type: 'select', options: ['Copper Rod','Copper Plate','Copper Strip','Galvanized Rod','Lainnya'] },
-    { name: 'kedalamanElektroda',   label: 'Kedalaman Elektroda',        type: 'number', unit: 'm' },
+    { name: 'jenisPenyalurPetir',       label: 'Jenis Penyalur Petir',        type: 'select', options: ['Elektrostatis', 'Konvensional'] },
+    { name: 'bentukPenerima',           label: 'Bentuk Penerima',             type: 'select', options: ['Bulat Runcing', 'Runcing', 'Multi-point'] },
+    { name: 'tinggiTiangPenerima',      label: 'Tinggi Tiang Penerima',       type: 'text',   placeholder: '± 5 meter' },
+    { name: 'tinggiBangunan',           label: 'Tinggi Bangunan',             type: 'text',   placeholder: '± 77 Meter' },
+    { name: 'radiusPerlindungan',       label: 'Radius Perlindungan',         type: 'text',   placeholder: '70 Meter' },
+    { name: 'jumlahAirTerminal',        label: 'Jumlah Air Terminal',         type: 'text',   placeholder: '1 unit' },
+    { name: 'jumlahDownConductor',      label: 'Jumlah Penghantar Penurunan', type: 'text',   placeholder: '1 buah' },
+    { name: 'jenisDownConductor',       label: 'Jenis Penghantar Penurunan',  type: 'text',   placeholder: 'BC 50 mm2' },
+    { name: 'hasilUkurSigmat',          label: 'Hasil Ukur Sigmat (Diameter)',type: 'number', unit: 'mm', placeholder: '8.24' },
+    { name: 'jumlahBoxKontrol',         label: 'Jumlah Box Kontrol',          type: 'text',   placeholder: '1 unit' },
+    { name: 'jumlahElektrodaPembumian', label: 'Jumlah Elektroda Pembumian',  type: 'text',   placeholder: '1 buah' },
+    { name: 'tahananPembumian',         label: 'Tahanan Pembumian',           type: 'text',   unit: 'Ω', placeholder: '1.39 atau 1.39, 2.10' },
+    { name: 'lokasiPemasangan',         label: 'Lokasi Pemasangan',           type: 'text',   placeholder: 'Rooftop Gedung / Tower A' },
   ],
   Lift: [
     { name: 'jenisLift',          label: 'Jenis Elevator/Eskalator', type: 'select', options: ['Lift Penumpang','Lift Barang','Lift Barang + Penumpang','Lift Panoramik','Lift Rumah Sakit (Dumbwaiter)','Eskalator','Moving Walk / Travelator','Lainnya'] },
@@ -1378,7 +1384,7 @@ const handleDelete = async (id: string) => {
       )}
 
       {/* MAIN */}
-      <main style={{ maxWidth: isDesktop ? 'none' : 640, margin: isDesktop ? 0 : '0 auto', padding: isDesktop ? '24px 24px 32px' : '16px 16px 100px', marginLeft: isDesktop ? 260 : 'auto', display: 'flex', flexDirection: 'column', gap: isDesktop ? 24 : 16, width: isDesktop ? 'calc(100% - 260px)' : '100%', minWidth: 0, boxSizing: 'border-box', overflowX: 'clip', touchAction: 'pan-y' }}>
+      <main style={{ maxWidth: isDesktop ? 'calc(100vw - 260px)' : 640, margin: isDesktop ? 0 : '0 auto', padding: isDesktop ? '24px 24px 32px' : '16px 16px 100px', marginLeft: isDesktop ? 260 : 'auto', display: 'flex', flexDirection: 'column', gap: isDesktop ? 24 : 16, width: isDesktop ? 'calc(100% - 260px)' : '100%', minWidth: 0, boxSizing: 'border-box', overflowX: 'clip', touchAction: 'pan-y' }}>
 
         {/* Desktop Alerts - Visible across all views on Desktop */}
         {isDesktop && (
