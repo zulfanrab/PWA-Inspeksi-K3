@@ -100,17 +100,25 @@ export function FormView({
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
   const handleCancelClick = () => {
+    if (isEdit) {
+      onCancel();
+      return;
+    }
     setShowCancelConfirm(true);
   };
 
   useEffect(() => {
     const unregister = registerBackInterceptor(() => {
       if (showCustomCamera) return false;
+      if (isEdit) {
+        onCancel();
+        return true;
+      }
       setShowCancelConfirm(true);
       return true;
     });
     return unregister;
-  }, [showCustomCamera]);
+  }, [showCustomCamera, isEdit, onCancel]);
 
   const REQUIRED_COMMON = ['namaUnit', 'nomorSeri'];
   const requiredFields = commonFields.filter(f => REQUIRED_COMMON.includes(f.name));

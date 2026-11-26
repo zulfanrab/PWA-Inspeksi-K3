@@ -677,6 +677,13 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
   const [error, setError] = useState<string | null>(null);
   // Watermark HARUS SELALU OFF secara default (opsional, hanya aktif jika dicentang manual oleh user)
   const [watermark, setWatermark] = useState(false);
+  const [saveToGallery, setSaveToGallery] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('aksara_camera_save_to_gallery') === 'true';
+    } catch {
+      return false;
+    }
+  });
   const [gps, setGps] = useState<GpsData | null>(() => getStoredGpsCache()?.gps ?? null);
   const [location, setLocation] = useState<LocationDetail>(() => getStoredGpsCache()?.location ?? { poiName: null, areaName: null });
   const [locationLoading, setLocationLoading] = useState(false);
@@ -1389,6 +1396,28 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
       if (watermark) await drawWatermark(ctx, W, H, gps, location);
       const dataUrl = c.toDataURL('image/jpeg', 0.82);
       setPhotos(prev => [...prev, dataUrl]);
+
+      if (saveToGallery) {
+        try {
+          const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+          const safeClient = (clientName || 'Aksara').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 24);
+          const fileName = `Aksara_${safeClient}_${ts}.jpg`;
+          c.toBlob((blob) => {
+            if (!blob) return;
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileName;
+            a.style.display = 'none';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(url), 4000);
+          }, 'image/jpeg', 0.88);
+        } catch (saveErr) {
+          console.warn('Gagal simpan foto ke galeri perangkat:', saveErr);
+        }
+      }
     } catch (e) { console.error('Capture error:', e); }
     finally { setTimeout(() => setCapturing(false), 180); }
   };
@@ -1486,7 +1515,7 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
 
         {/* ── TOP BAR ──────────────────────────────────────────────────── */}
         <div style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap',
           padding: '10px 14px',
           paddingTop: 'max(12px, calc(10px + env(safe-area-inset-top, 0px)))',
           background: 'rgba(0,0,0,0.86)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)',
@@ -1506,8 +1535,8 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
           </button>
 
           <label style={{
-            display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer',
-            padding: '6px 12px',
+            display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
+            padding: '6px 10px',
             background: watermark ? 'rgba(16,185,129,0.15)' : 'rgba(255,255,255,0.07)',
             border: `1px solid ${watermark ? 'rgba(16,185,129,0.4)' : 'rgba(255,255,255,0.1)'}`,
             borderRadius: 8, transition: 'all 0.2s',
@@ -1515,8 +1544,32 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
             <input type="checkbox" checked={watermark}
               onChange={e => setWatermark(e.target.checked)}
               style={{ accentColor: '#10B981', width: 14, height: 14 }} />
-            <span style={{ color: watermark ? '#10B981' : '#94A3B8', fontSize: 12, fontWeight: 600 }}>
+            <span style={{ color: watermark ? '#10B981' : '#94A3B8', fontSize: 11.5, fontWeight: 600 }}>
               Watermark
+            </span>
+          </label>
+
+          <label style={{
+            display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
+            padding: '6px 10px',
+            background: saveToGallery ? 'rgba(16,185,129,0.15)' : 'rgba(255,255,255,0.07)',
+            border: `1px solid ${saveToGallery ? 'rgba(16,185,129,0.4)' : 'rgba(255,255,255,0.1)'}`,
+            borderRadius: 8, transition: 'all 0.2s',
+          }}>
+            <input
+              type="checkbox"
+              checked={saveToGallery}
+              onChange={e => {
+                const checked = e.target.checked;
+                setSaveToGallery(checked);
+                try {
+                  localStorage.setItem('aksara_camera_save_to_gallery', String(checked));
+                } catch {}
+              }}
+              style={{ accentColor: '#10B981', width: 14, height: 14 }}
+            />
+            <span style={{ color: saveToGallery ? '#10B981' : '#94A3B8', fontSize: 11.5, fontWeight: 600 }}>
+              Simpan Galeri
             </span>
           </label>
 
