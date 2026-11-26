@@ -39,6 +39,8 @@ import { ClientPicker, type PickedUnit } from './components/ClientPicker';
 import { useResponsive } from './hooks/useResponsive';
 import { useUploadQueue } from './hooks/useUploadQueue';
 import { FloatingUploadWidget } from './components/FloatingUploadWidget';
+import { useAppUpdate } from './hooks/useAppUpdate';
+import { UpdateNotificationModal } from './components/UpdateNotificationModal';
 import { uploadProfilePhoto, getProfilePhoto } from './services/profilePhotoService';
 import { compressFileToDataUrl, compressDataUrl, yieldToMain } from './utils/photoCompressor';
 import { triggerBackAction, initGlobalGestureBlocker } from './utils/navigationGuard';
@@ -663,6 +665,8 @@ const uploadQueue = useUploadQueue({
   onReleaseWakeLock: releaseWakeLock,
 });
 
+const appUpdate = useAppUpdate();
+
 useEffect(() => {
   isSyncingRef.current = uploadQueue.isUploading;
 }, [uploadQueue.isUploading]);
@@ -1092,7 +1096,7 @@ const handleDelete = async (id: string) => {
   // ── RENDER ────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ minHeight: '100vh', width: '100%', maxWidth: '100vw', overflowX: 'hidden', position: 'relative', touchAction: 'pan-y', background: T.bg, fontFamily: 'system-ui, -apple-system, sans-serif', color: T.textPrimary }}>
+    <div style={{ minHeight: '100vh', width: '100%', maxWidth: '100vw', overflowX: 'clip', position: 'relative', touchAction: 'pan-y', background: T.bg, fontFamily: 'system-ui, -apple-system, sans-serif', color: T.textPrimary }}>
       <style>{`
         @keyframes spin {
           to { transform: rotate(360deg); }
@@ -1122,7 +1126,26 @@ const handleDelete = async (id: string) => {
                 <h1 style={{ fontSize: 15, fontWeight: 700, color: T.textPrimary }}>
                   Aksara <span style={{ color: '#10B981' }}>Inspect</span>
                 </h1>
-                <p style={{ fontSize: 10, color: T.textSecondary, marginTop: 2 }}>PWA Inspeksi K3</p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                  <p style={{ fontSize: 10, color: T.textSecondary, margin: 0 }}>PWA Inspeksi K3</p>
+                  <button
+                    type="button"
+                    onClick={appUpdate.openChangelog}
+                    title="Lihat catatan pembaruan"
+                    style={{
+                      fontSize: 9.5,
+                      fontWeight: 700,
+                      padding: '1px 6px',
+                      borderRadius: 999,
+                      background: darkMode ? '#1E293B' : '#ECFDF5',
+                      color: '#10B981',
+                      border: `1px solid ${darkMode ? '#334155' : '#A7F3D0'}`,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    v{appUpdate.appVersion}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -1268,6 +1291,23 @@ const handleDelete = async (id: string) => {
               </span>
             </button>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <button
+                type="button"
+                onClick={appUpdate.openChangelog}
+                title="Lihat catatan pembaruan"
+                style={{
+                  fontSize: 9.5,
+                  fontWeight: 700,
+                  padding: '3px 6px',
+                  borderRadius: 999,
+                  background: darkMode ? '#1E293B' : '#ECFDF5',
+                  color: '#10B981',
+                  border: `0.5px solid ${darkMode ? '#334155' : '#A7F3D0'}`,
+                  cursor: 'pointer',
+                }}
+              >
+                v{appUpdate.appVersion}
+              </button>
               <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px', borderRadius: 20, background: isOnline ? '#ECFDF5' : '#FEF2F2', border: `0.5px solid ${isOnline ? '#6EE7B7' : '#FCA5A5'}` }}>
                 <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: isOnline ? '#10B981' : '#EF4444' }} />
                 <span style={{ fontSize: 10, fontWeight: 600, color: isOnline ? '#065F46' : '#B91C1C' }}>{isOnline ? 'Online' : 'Offline'}</span>
@@ -1338,7 +1378,7 @@ const handleDelete = async (id: string) => {
       )}
 
       {/* MAIN */}
-      <main style={{ maxWidth: isDesktop ? 'none' : 640, margin: isDesktop ? '0 24px' : '0 auto', padding: isDesktop ? '24px 24px 32px' : '16px 16px 100px', marginLeft: isDesktop ? 260 : 'auto', display: 'flex', flexDirection: 'column', gap: isDesktop ? 24 : 16, width: '100%', overflowX: 'hidden', touchAction: 'pan-y' }}>
+      <main style={{ maxWidth: isDesktop ? 'none' : 640, margin: isDesktop ? '0 24px' : '0 auto', padding: isDesktop ? '24px 24px 32px' : '16px 16px 100px', marginLeft: isDesktop ? 260 : 'auto', display: 'flex', flexDirection: 'column', gap: isDesktop ? 24 : 16, width: '100%', overflowX: 'clip', touchAction: 'pan-y' }}>
 
         {/* Desktop Alerts - Visible across all views on Desktop */}
         {isDesktop && (
@@ -1572,6 +1612,19 @@ const handleDelete = async (id: string) => {
         onCancelAll={uploadQueue.cancelAll}
         onRetryFailed={uploadQueue.retryFailed}
         onDismiss={uploadQueue.dismissFinished}
+      />
+
+      {/* ── Notifikasi Pembaruan Aplikasi & Penjelasan Fitur Baru ── */}
+      <UpdateNotificationModal
+        isOpen={appUpdate.showChangelogModal}
+        previousVersion={appUpdate.previousVersion}
+        hasLiveUpdate={appUpdate.hasLiveUpdate}
+        isUploading={uploadQueue.isUploading}
+        isDesktop={isDesktop}
+        darkMode={darkMode}
+        onDismissModal={appUpdate.dismissChangelog}
+        onApplyLiveUpdate={appUpdate.applyLiveUpdate}
+        onDismissLiveBanner={appUpdate.dismissLiveBanner}
       />
 
       {/* ── Global Toast Notification ── */}

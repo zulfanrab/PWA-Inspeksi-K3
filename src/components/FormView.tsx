@@ -1,6 +1,7 @@
 // src/components/FormView.tsx
 import { CustomCamera } from './CustomCamera';
 import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { registerBackInterceptor } from '../utils/navigationGuard';
 import type { ReactNode } from 'react';
 import type { InspectionPhoto } from '../db/db';
@@ -162,9 +163,9 @@ export function FormView({
       </div>
 
       {/* Tanggal & Sifat Pemeriksaan — sebelum data teknis */}
-      <div className="space-y-5 bg-white p-5 rounded-3xl border border-gray-100 shadow-sm">
+      <div className="space-y-5 bg-white p-5 rounded-3xl border border-gray-100 shadow-sm min-w-0">
         <SectionDivider label="Penjadwalan Inspeksi" />
-        <div>
+        <div className="w-full min-w-0">
           <label className="block text-[11px] font-bold uppercase tracking-widest text-emerald-700 mb-2">
             Tanggal Inspeksi <span className="text-red-500">*</span>
           </label>
@@ -173,7 +174,8 @@ export function FormView({
             type="date"
             value={formData.tanggal_inspeksi || todayISO()}
             onChange={(e) => onFieldChange('tanggal_inspeksi', e.target.value)}
-            className="w-full bg-white border border-emerald-200 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/20 rounded-2xl px-4 py-3.5 text-sm text-gray-900 outline-none transition-all duration-300 shadow-sm"
+            style={{ WebkitAppearance: 'none', appearance: 'none', width: '100%', maxWidth: '100%', minWidth: 0, boxSizing: 'border-box' }}
+            className="block w-full min-w-0 max-w-full box-border appearance-none bg-white border border-emerald-200 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/20 rounded-2xl px-4 py-3.5 text-sm text-gray-900 text-left outline-none transition-all duration-300 shadow-sm"
           />
           <p className="text-[10px] text-gray-400 mt-1.5">Ubah ke tanggal asli untuk data arsip/backlog tahun lalu.</p>
         </div>
@@ -424,8 +426,8 @@ export function FormView({
       <div className="h-16"></div>
 
       {/* Confirmation Modal Batal */}
-      {showCancelConfirm && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+      {showCancelConfirm && createPortal((
+        <div className="fixed inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" style={{ zIndex: 10010 }}>
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 max-w-sm w-full shadow-2xl text-center space-y-4">
             <div className="w-14 h-14 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center text-2xl mx-auto">
               ⚠️
@@ -463,7 +465,7 @@ export function FormView({
             </div>
           </div>
         </div>
-      )}
+      ), document.body)}
     </div>
   );
 }

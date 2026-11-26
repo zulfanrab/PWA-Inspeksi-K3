@@ -1,5 +1,6 @@
 // src/components/CustomCamera.tsx
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { registerBackInterceptor } from '../utils/navigationGuard';
 
 // ─── TYPES ────────────────────────────────────────────────────────────────────
@@ -515,14 +516,14 @@ function PhotoGallery({ photos, initialIndex, onClose, onDeleteOne, onDeleteAll 
 
   return (
     <div style={{
-      position: 'fixed', inset: 0, zIndex: 10000,
+      position: 'fixed', inset: 0, zIndex: 10010,
       background: 'rgba(0,0,0,0.97)',
       display: 'flex', flexDirection: 'column',
     }}>
       {/* Top bar galeri */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '12px 16px', paddingTop: 'calc(12px + env(safe-area-inset-top))',
+        padding: '12px 16px', paddingTop: 'max(14px, calc(12px + env(safe-area-inset-top, 0px)))',
         background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(10px)',
         borderBottom: '1px solid rgba(255,255,255,0.07)', flexShrink: 0,
       }}>
@@ -1085,10 +1086,10 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
   };
 
   // ─── RENDER ──────────────────────────────────────────────────────────────
-  return (
+  const cameraContent = (
     <>
       <div style={{
-        position: 'fixed', inset: 0, background: '#000', zIndex: 9999,
+        position: 'fixed', inset: 0, background: '#000', zIndex: 10000,
         display: 'flex', flexDirection: 'column', userSelect: 'none',
         WebkitUserSelect: 'none',
         touchAction: 'none',
@@ -1101,10 +1102,11 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
         {/* ── TOP BAR ──────────────────────────────────────────────────── */}
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '10px 16px',
-          paddingTop: 'calc(10px + env(safe-area-inset-top))',
-          background: 'rgba(0,0,0,0.82)', backdropFilter: 'blur(8px)',
-          borderBottom: '1px solid rgba(255,255,255,0.06)', gap: 10, flexShrink: 0,
+          padding: '10px 14px',
+          paddingTop: 'max(12px, calc(10px + env(safe-area-inset-top, 0px)))',
+          background: 'rgba(0,0,0,0.86)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)',
+          borderBottom: '1px solid rgba(255,255,255,0.08)', gap: 8, flexShrink: 0,
+          position: 'relative', zIndex: 25,
         }}>
           <button onClick={requestClose} style={{
             background: 'rgba(255,255,255,0.08)', color: '#E2E8F0',
@@ -1216,7 +1218,7 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
           {/* Target Unit Badge (Jika dibuka via Quick Photo) */}
           {unitLabel && (
             <div style={{
-              position: 'absolute', top: 14, left: '50%', transform: 'translateX(-50%)',
+              position: 'absolute', top: photos.length > 0 ? 50 : 14, left: '50%', transform: 'translateX(-50%)',
               background: 'rgba(15, 23, 42, 0.88)', backdropFilter: 'blur(10px)',
               border: '1px solid rgba(16, 185, 129, 0.45)', borderRadius: 24,
               padding: '6px 16px', zIndex: 30, pointerEvents: 'none',
@@ -1480,7 +1482,7 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
           style={{
             position: 'fixed',
             inset: 0,
-            zIndex: 10001,
+            zIndex: 10020,
             background: 'rgba(0, 0, 0, 0.85)',
             backdropFilter: 'blur(12px)',
             WebkitBackdropFilter: 'blur(12px)',
@@ -1619,4 +1621,8 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
       )}
     </>
   );
+
+  return typeof document !== 'undefined'
+    ? createPortal(cameraContent, document.body)
+    : cameraContent;
 }

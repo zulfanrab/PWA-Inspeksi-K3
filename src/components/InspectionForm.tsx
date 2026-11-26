@@ -114,7 +114,7 @@ export default function InspectionForm({ activeObject, activeClient, onSave, tem
 
       {/* Tanggal & Sifat Pemeriksaan — sebelum data teknis */}
       <div className="space-y-4 pb-2 border-b border-gray-100">
-        <div>
+        <div className="w-full min-w-0">
           <label className="block text-[11px] font-bold text-gray-500 uppercase mb-1">
             Tanggal Inspeksi <span className="text-red-500">*</span>
           </label>
@@ -123,7 +123,8 @@ export default function InspectionForm({ activeObject, activeClient, onSave, tem
             type="date"
             value={formData.tanggal_inspeksi || todayISO()}
             onChange={(e) => setFormData({ ...formData, tanggal_inspeksi: e.target.value })}
-            className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm"
+            style={{ WebkitAppearance: 'none', appearance: 'none', width: '100%', maxWidth: '100%', minWidth: 0, boxSizing: 'border-box' }}
+            className="block w-full min-w-0 max-w-full box-border appearance-none px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-left"
           />
           <p className="text-[10px] text-gray-400 mt-1">Ubah ke tanggal asli untuk data arsip/backlog tahun lalu.</p>
         </div>

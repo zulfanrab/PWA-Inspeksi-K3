@@ -1,5 +1,6 @@
 // src/components/HistoryView.tsx
 import { useState, useRef, useMemo, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import type { InspectionSession, InspectionPhoto } from '../db/db';
 import { getInspectionYear, getSifatPemeriksaan, getTanggalInspeksi } from '../types';
 import { exportToPDF } from '../utils/pdfExport';
@@ -704,8 +705,8 @@ function LightboxViewer({
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex flex-col justify-between outline-none select-none"
-      style={{ background: 'rgba(5, 5, 10, 0.98)' }}
+      className="fixed inset-0 flex flex-col justify-between outline-none select-none"
+      style={{ background: 'rgba(5, 5, 10, 0.98)', zIndex: 10050 }}
       onWheel={handleWheel}
       onKeyDown={handleKeyDown}
       tabIndex={0}
@@ -714,7 +715,7 @@ function LightboxViewer({
       <div
         className="w-full flex items-center justify-between px-4 py-2.5 flex-shrink-0 z-30"
         style={{
-          paddingTop: 'calc(10px + env(safe-area-inset-top, 0px))',
+          paddingTop: 'max(10px, calc(10px + env(safe-area-inset-top, 0px)))',
           background: 'rgba(15, 23, 42, 0.88)',
           backdropFilter: 'blur(16px)',
           borderBottom: '1px solid rgba(255,255,255,0.08)',
@@ -989,28 +990,28 @@ function PhotoGalleryModal({
   const downloadSelected = () => downloadAsZip(Array.from(selected));
   const downloadAll = () => downloadAsZip(photos.map((_, i) => i));
 
-  return (
+  const modalContent = (
     <div
-      className="fixed inset-0 z-50 flex flex-col"
-      style={{ background: 'rgba(10,10,15,0.92)', backdropFilter: 'blur(8px)', paddingTop: 'env(safe-area-inset-top)' }}
+      className="fixed inset-0 flex flex-col"
+      style={{ background: 'rgba(10,10,15,0.94)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', zIndex: 10000 }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       {/* ─── Header ─── */}
-      <div className="flex items-center justify-between px-4 py-3 flex-shrink-0"
-        style={{ background: 'rgba(20,20,30,0.85)', backdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'rgba(16,185,129,0.15)' }}>
+      <div className="flex items-center justify-between gap-2 px-4 pb-3 flex-shrink-0"
+        style={{ paddingTop: 'max(12px, calc(12px + env(safe-area-inset-top, 0px)))', background: 'rgba(20,20,30,0.92)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+        <div className="flex items-center gap-3 min-w-0 flex-1">
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(16,185,129,0.15)' }}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="2" strokeLinecap="round">
               <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
             </svg>
           </div>
-          <div>
-            <p className="text-white text-sm font-bold">{unitName}</p>
-            <p className="text-gray-500 text-[10px] font-medium">{photos.length} foto dokumentasi</p>
+          <div className="min-w-0 flex-1">
+            <p className="text-white text-sm font-bold truncate">{unitName}</p>
+            <p className="text-gray-400 text-[10px] font-medium truncate">{photos.length} foto dokumentasi</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 flex-shrink-0">
           {selected.size > 0 ? (
             <>
               <span className="px-2.5 py-1 rounded-full text-[10px] font-bold text-emerald-400"
@@ -1073,7 +1074,7 @@ function PhotoGalleryModal({
       )}
 
       {/* ─── Photo Grid ─── */}
-      <div className="flex-1 overflow-y-auto p-3">
+      <div className="flex-1 overflow-y-auto p-3" style={{ paddingBottom: 'calc(24px + env(safe-area-inset-bottom, 0px))' }}>
         <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-5">
           {photos.map((photo, idx) => {
             const src = getSrc(photo);
@@ -1175,6 +1176,10 @@ function PhotoGalleryModal({
       )}
     </div>
   );
+
+  return typeof document !== 'undefined'
+    ? createPortal(modalContent, document.body)
+    : modalContent;
 }
 
 // ==========================================

@@ -597,22 +597,24 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
                   className="w-full text-xs border border-gray-200 p-2.5 rounded-lg focus:ring-1 focus:ring-emerald-500"
                 />
               </div>
-              <div>
+              <div className="w-full min-w-0">
                 <label className="block text-xs font-bold text-gray-700 mb-1">Tanggal Inspeksi *</label>
                 <input
                   type="date"
                   value={formData.inspectionDate}
                   onChange={e => handleInputChange('inspectionDate', e.target.value)}
-                  className="w-full text-xs border border-gray-200 p-2.5 rounded-lg focus:ring-1 focus:ring-emerald-500"
+                  style={{ WebkitAppearance: 'none', appearance: 'none', width: '100%', maxWidth: '100%', minWidth: 0, boxSizing: 'border-box' }}
+                  className="block w-full min-w-0 max-w-full box-border appearance-none text-xs text-left border border-gray-200 p-2.5 rounded-lg focus:ring-1 focus:ring-emerald-500"
                 />
               </div>
-              <div>
+              <div className="w-full min-w-0">
                 <label className="block text-xs font-bold text-gray-700 mb-1">Tanggal Laporan *</label>
                 <input
                   type="date"
                   value={formData.reportDate}
                   onChange={e => handleInputChange('reportDate', e.target.value)}
-                  className="w-full text-xs border border-gray-200 p-2.5 rounded-lg focus:ring-1 focus:ring-emerald-500"
+                  style={{ WebkitAppearance: 'none', appearance: 'none', width: '100%', maxWidth: '100%', minWidth: 0, boxSizing: 'border-box' }}
+                  className="block w-full min-w-0 max-w-full box-border appearance-none text-xs text-left border border-gray-200 p-2.5 rounded-lg focus:ring-1 focus:ring-emerald-500"
                 />
               </div>
               <div>
