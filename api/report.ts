@@ -154,6 +154,40 @@ async function handleSequence(req: VercelRequest, res: VercelResponse) {
   });
 }
 
+async function generateContentWithRetry(
+  genAI: GoogleGenerativeAI,
+  modelCandidates: string[],
+  requestConfig: any
+) {
+  let lastError: any;
+  for (const modelName of modelCandidates) {
+    const model = genAI.getGenerativeModel({ model: modelName });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        return await model.generateContent(requestConfig);
+      } catch (err: any) {
+        lastError = err;
+        const msg = String(err?.message || '');
+        const isNotFound = err?.status === 404 || msg.includes('404') || msg.includes('no longer available');
+        if (isNotFound) {
+          break; // model tidak tersedia -> coba kandidat berikutnya
+        }
+        const isTransient = err?.status === 503 || err?.status === 429 || msg.includes('503') || msg.includes('high demand');
+        if (isTransient && attempt === 0) {
+          await new Promise((r) => setTimeout(r, 900));
+          continue;
+        }
+        break;
+      }
+    }
+  }
+  const lastMsg = String(lastError?.message || '');
+  if (lastError?.status === 503 || lastMsg.includes('503') || lastMsg.includes('high demand')) {
+    throw new Error('Server AI Gemini sedang padat sementara (503). Silakan tunggu beberapa detik lalu coba lagi.');
+  }
+  throw lastError;
+}
+
 // 2. NARRATIVE
 async function handleNarrative(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -178,7 +212,9 @@ async function handleNarrative(req: VercelRequest, res: VercelResponse) {
   }
 
   const genAI = new GoogleGenerativeAI(apiKey);
-  const primaryModelName = modelTier === 'pro' ? 'gemini-2.5-pro' : 'gemini-3.8-flash';
+  const modelCandidates = modelTier === 'pro'
+    ? ['gemini-2.5-pro', 'gemini-3.8-pro', 'gemini-3.8-flash']
+    : ['gemini-3.8-flash'];
 
   const promptInstructions = `
 Ikuti instruksi sistem berikut secara ketat:
@@ -226,16 +262,7 @@ Kembalikan respon Anda strictly dalam bentuk JSON sesuai dengan schema yang dite
     }
   };
 
-  let result;
-  try {
-    result = await genAI.getGenerativeModel({ model: primaryModelName }).generateContent(requestConfig);
-  } catch (err: any) {
-    if (primaryModelName !== 'gemini-3.8-flash' && (err?.status === 404 || String(err?.message).includes('404'))) {
-      result = await genAI.getGenerativeModel({ model: 'gemini-3.8-flash' }).generateContent(requestConfig);
-    } else {
-      throw err;
-    }
-  }
+  const result = await generateContentWithRetry(genAI, modelCandidates, requestConfig);
 
   const responseText = result.response.text();
   const parsedNarrative = JSON.parse(responseText);
@@ -308,9 +335,9 @@ async function handleGenerate(req: VercelRequest, res: VercelResponse) {
         let maxHeight = 350;
 
         if (tagName === 'img1' || tagName === 'img2' || tagName === 'img3') {
-          // Area efektif Folio margin 1 inci = ~165 mm (~55 mm/kolom); 165x125 px (~43.6x33.1 mm) aman di sel 55 mm
-          maxWidth = 165;
-          maxHeight = 125;
+          // Area efektif Folio margin 1 inci = ~165 mm (~55 mm/kolom); 190x215 px (~50.2x56.9 mm) agar foto portrait & landscape tampil besar
+          maxWidth = 190;
+          maxHeight = 215;
         } else if (tagName === 'jointPhoto') {
           maxWidth = 440;
           maxHeight = 260;
@@ -858,14 +885,14 @@ async function handleVision(req: VercelRequest, res: VercelResponse) {
 
   const { mode, imageDataUrl, photos, context, payload } = req.body || {};
   const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({ model: 'gemini-3.8-flash' });
+  const flashCandidates = ['gemini-3.8-flash', 'gemini-3.8-flash-lite', 'gemini-2.5-flash'];
 
   if (mode === 'ocr_meter') {
     if (!imageDataUrl) return res.status(400).json({ error: 'imageDataUrl wajib diisi.' });
     const base64 = String(imageDataUrl).replace(/^data:image\/\w+;base64,/, '');
     const mimeType = String(imageDataUrl).match(/^data:(image\/\w+);base64,/)?.[1] || 'image/jpeg';
 
-    const result = await model.generateContent({
+    const result = await generateContentWithRetry(genAI, flashCandidates, {
       contents: [
         {
           role: 'user',
@@ -914,7 +941,7 @@ async function handleVision(req: VercelRequest, res: VercelResponse) {
       text: `Identifikasi setiap foto inspeksi penyalur petir ini (misal: Air Terminal / Splitzen, Box Kontrol / Test Joint, Pengukuran Grounding ${context?.tahananPembumian || ''} Ohm dengan ${context?.measuringTool || 'Earth Tester'}, atau Foto Bersama Pihak Perusahaan). Berikan caption Bahasa Indonesia formal yang singkat & konsisten untuk setiap ID, dan tandai isJointPhoto=true maksimal pada 1 foto bersama tim/perusahaan jika ada.`
     });
 
-    const result = await model.generateContent({
+    const result = await generateContentWithRetry(genAI, flashCandidates, {
       contents: [{ role: 'user', parts }],
       generationConfig: {
         responseMimeType: 'application/json',
@@ -947,7 +974,7 @@ async function handleVision(req: VercelRequest, res: VercelResponse) {
   }
 
   if (mode === 'preflight_qc') {
-    const result = await model.generateContent({
+    const result = await generateContentWithRetry(genAI, flashCandidates, {
       contents: [
         {
           role: 'user',
@@ -1043,9 +1070,9 @@ async function handleTemplateUploadSession(req: VercelRequest, res: VercelRespon
 // 8. CLOUD REPORTS INDEX (_reports_index.json untuk sinkronisasi Desktop <-> Mobile)
 const REPORTS_INDEX_FILENAME = '_reports_index.json';
 
-async function readReportsIndex(drive: any, rootFolderId: string): Promise<{ fileId: string | null; reports: any[] }> {
-  const q = `name='${REPORTS_INDEX_FILENAME}' and '${rootFolderId}' in parents and trashed=false`;
-  const searchRes = await drive.files.list({
+async function readReportsIndex(drive: any, rootFolderId: string): Promise<{ fileId: string | null; reports: any[]; deletedCloudIds: string[] }> {
+  let q = `name='${REPORTS_INDEX_FILENAME}' and '${rootFolderId}' in parents and trashed=false`;
+  let searchRes = await drive.files.list({
     q,
     fields: 'files(id)',
     spaces: 'drive',
@@ -1053,8 +1080,23 @@ async function readReportsIndex(drive: any, rootFolderId: string): Promise<{ fil
     supportsAllDrives: true,
     includeItemsFromAllDrives: true,
   });
-  const fileId = searchRes.data.files?.[0]?.id || null;
-  if (!fileId) return { fileId: null, reports: [] };
+  let fileId = searchRes.data.files?.[0]?.id || null;
+
+  if (!fileId) {
+    // Fallback pencarian global jika ROOT_FOLDER_ID berbeda
+    q = `name='${REPORTS_INDEX_FILENAME}' and trashed=false`;
+    searchRes = await drive.files.list({
+      q,
+      fields: 'files(id)',
+      spaces: 'drive',
+      pageSize: 1,
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
+    });
+    fileId = searchRes.data.files?.[0]?.id || null;
+  }
+
+  if (!fileId) return { fileId: null, reports: [], deletedCloudIds: [] };
 
   try {
     const dl = await drive.files.get(
@@ -1065,14 +1107,21 @@ async function readReportsIndex(drive: any, rootFolderId: string): Promise<{ fil
     return {
       fileId,
       reports: Array.isArray(parsed.reports) ? parsed.reports : [],
+      deletedCloudIds: Array.isArray(parsed.deletedCloudIds) ? parsed.deletedCloudIds : [],
     };
   } catch {
-    return { fileId, reports: [] };
+    return { fileId, reports: [], deletedCloudIds: [] };
   }
 }
 
-async function writeReportsIndex(drive: any, rootFolderId: string, existingFileId: string | null, reports: any[]) {
-  const payload = JSON.stringify({ reports, updatedAt: new Date().toISOString() }, null, 2);
+async function writeReportsIndex(
+  drive: any,
+  rootFolderId: string,
+  existingFileId: string | null,
+  reports: any[],
+  deletedCloudIds: string[] = []
+) {
+  const payload = JSON.stringify({ reports, deletedCloudIds, updatedAt: new Date().toISOString() }, null, 2);
   const media = { mimeType: 'application/json', body: Readable.from(payload) };
   if (existingFileId) {
     await drive.files.update({
@@ -1092,7 +1141,7 @@ async function writeReportsIndex(drive: any, rootFolderId: string, existingFileI
 }
 
 async function upsertReportToCloudIndex(drive: any, rootFolderId: string, summary: any) {
-  const { fileId, reports } = await readReportsIndex(drive, rootFolderId);
+  const { fileId, reports, deletedCloudIds } = await readReportsIndex(drive, rootFolderId);
   const idx = reports.findIndex((r: any) => r.cloudId === summary.cloudId);
   const next = [...reports];
   if (idx >= 0) {
@@ -1105,7 +1154,137 @@ async function upsertReportToCloudIndex(drive: any, rootFolderId: string, summar
   } else {
     next.unshift(summary);
   }
-  await writeReportsIndex(drive, rootFolderId, fileId, next);
+  const filteredDeleted = deletedCloudIds.filter((id) => id !== summary.cloudId);
+  await writeReportsIndex(drive, rootFolderId, fileId, next, filteredDeleted);
+}
+
+async function discoverExistingDriveReports(
+  drive: any,
+  existingReports: any[],
+  deletedCloudIds: string[]
+): Promise<{ discovered: any[]; changed: boolean }> {
+  const knownFileIds = new Set<string>();
+  for (const r of existingReports) {
+    if (r.docxDriveFileId) knownFileIds.add(r.docxDriveFileId);
+    if (r.pdfDriveFileId) knownFileIds.add(r.pdfDriveFileId);
+    if (r.driveFileId) knownFileIds.add(r.driveFileId);
+  }
+
+  const res = await drive.files.list({
+    q: `(name contains 'Laporan_IPP_' or name contains 'Laporan_IL_') and trashed=false`,
+    fields: 'files(id, name, mimeType, createdTime, modifiedTime, parents)',
+    spaces: 'drive',
+    pageSize: 100,
+    orderBy: 'modifiedTime desc',
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
+  });
+
+  const files = res.data.files || [];
+  if (files.length === 0) return { discovered: [], changed: false };
+
+  const grouped = new Map<string, {
+    baseName: string;
+    parentId: string;
+    typeCode: string;
+    docxId: string;
+    pdfId: string;
+    createdAt: string;
+    updatedAt: string;
+  }>();
+
+  for (const f of files) {
+    const fname = String(f.name || '');
+    if (!/\.(docx|pdf)$/i.test(fname)) continue;
+    if (knownFileIds.has(f.id)) continue;
+
+    const baseName = fname.replace(/\.(docx|pdf)$/i, '');
+    const parentId = f.parents?.[0] || 'root';
+    const key = `${parentId}__${baseName}`;
+    const typeMatch = baseName.match(/^Laporan_(IPP|IL)_/i);
+    const typeCode = typeMatch ? typeMatch[1].toUpperCase() : 'IPP';
+
+    const existing = grouped.get(key) || {
+      baseName,
+      parentId,
+      typeCode,
+      docxId: '',
+      pdfId: '',
+      createdAt: f.createdTime || new Date().toISOString(),
+      updatedAt: f.modifiedTime || f.createdTime || new Date().toISOString(),
+    };
+
+    if (/\.docx$/i.test(fname) && !existing.docxId) existing.docxId = f.id;
+    if (/\.pdf$/i.test(fname) && !existing.pdfId) existing.pdfId = f.id;
+    grouped.set(key, existing);
+  }
+
+  if (grouped.size === 0) return { discovered: [], changed: false };
+
+  const parentMetaCache = new Map<string, any>();
+  const discovered: any[] = [];
+  const deletedSet = new Set(deletedCloudIds);
+
+  for (const [, grp] of grouped) {
+    const cloudId = `drive_${grp.parentId}_${grp.baseName}`;
+    if (deletedSet.has(cloudId)) continue;
+
+    // Cari apakah ada entry existing di folder & reportNumber yang sama untuk merge file ID-nya
+    const rawNumPart = grp.baseName.replace(/^Laporan_(IPP|IL)_/i, '');
+    const parsedReportNum = rawNumPart.replace(/_/g, '/');
+
+    let inspMeta = parentMetaCache.get(grp.parentId);
+    if (inspMeta === undefined && grp.parentId !== 'root') {
+      try {
+        const metaSearch = await drive.files.list({
+          q: `name='data-inspeksi.json' and '${grp.parentId}' in parents and trashed=false`,
+          fields: 'files(id)',
+          pageSize: 1,
+          supportsAllDrives: true,
+          includeItemsFromAllDrives: true,
+        });
+        const metaId = metaSearch.data.files?.[0]?.id;
+        if (metaId) {
+          const metaDl = await drive.files.get(
+            { fileId: metaId, alt: 'media', supportsAllDrives: true },
+            { responseType: 'json' }
+          );
+          inspMeta = typeof metaDl.data === 'string' ? JSON.parse(metaDl.data) : metaDl.data;
+        } else {
+          inspMeta = null;
+        }
+      } catch {
+        inspMeta = null;
+      }
+      parentMetaCache.set(grp.parentId, inspMeta);
+    }
+
+    discovered.push({
+      cloudId,
+      inspectionId: inspMeta?.id || '',
+      reportNumber: parsedReportNum,
+      inspectionTypeCode: grp.typeCode,
+      configVersion: '2.0.0',
+      status: 'completed',
+      generalData: {
+        companyName: inspMeta?.clientName || 'Laporan di Google Drive',
+        companyAddress: inspMeta?.unitData?.lokasiUnit || '',
+        inspectionDate: inspMeta?.tanggal_inspeksi || inspMeta?.unitData?.tanggal_inspeksi || '',
+        reportDate: grp.updatedAt.slice(0, 10),
+      },
+      technicalData: {
+        ...(inspMeta?.unitData || {}),
+        driveFolderId: grp.parentId,
+      },
+      docxDriveFileId: grp.docxId,
+      pdfDriveFileId: grp.pdfId,
+      driveFileId: grp.pdfId || grp.docxId,
+      createdAt: grp.createdAt,
+      updatedAt: grp.updatedAt,
+    });
+  }
+
+  return { discovered, changed: discovered.length > 0 };
 }
 
 async function handleReports(req: VercelRequest, res: VercelResponse) {
@@ -1113,7 +1292,17 @@ async function handleReports(req: VercelRequest, res: VercelResponse) {
   const rootFolderId = process.env.ROOT_FOLDER_ID?.trim() || 'root';
 
   if (req.method === 'GET') {
-    const { reports } = await readReportsIndex(drive, rootFolderId);
+    const { fileId, reports, deletedCloudIds } = await readReportsIndex(drive, rootFolderId);
+    try {
+      const { discovered, changed } = await discoverExistingDriveReports(drive, reports, deletedCloudIds);
+      if (changed) {
+        const merged = [...discovered, ...reports];
+        await writeReportsIndex(drive, rootFolderId, fileId, merged, deletedCloudIds).catch(() => {});
+        return res.status(200).json({ success: true, reports: merged });
+      }
+    } catch (discErr: any) {
+      console.warn('[api/report] Gagal auto-discover laporan Drive:', discErr?.message);
+    }
     return res.status(200).json({ success: true, reports });
   }
 
@@ -1131,9 +1320,10 @@ async function handleReports(req: VercelRequest, res: VercelResponse) {
     if (!cloudId) {
       return res.status(400).json({ error: 'Parameter cloudId wajib disertakan.' });
     }
-    const { fileId, reports } = await readReportsIndex(drive, rootFolderId);
+    const { fileId, reports, deletedCloudIds } = await readReportsIndex(drive, rootFolderId);
     const filtered = reports.filter((r: any) => r.cloudId !== cloudId);
-    await writeReportsIndex(drive, rootFolderId, fileId, filtered);
+    const nextDeleted = Array.from(new Set([...deletedCloudIds, cloudId]));
+    await writeReportsIndex(drive, rootFolderId, fileId, filtered, nextDeleted);
     return res.status(200).json({ success: true });
   }
 

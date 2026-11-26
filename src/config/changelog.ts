@@ -19,10 +19,47 @@ export interface ReleaseNote {
   highlights: ChangelogItem[];
 }
 
-export const APP_VERSION = '1.2.1';
+export const APP_VERSION = '1.3.0';
 export const LAST_SEEN_VERSION_KEY = 'aksara_last_seen_version';
 
 export const CHANGELOG: ReleaseNote[] = [
+  {
+    version: '1.3.0',
+    date: '27 November 2026',
+    title: 'Modul Laporan IPP v5, Lampiran Multi-Halaman & Sync Laporan Lintas Perangkat',
+    summary:
+      'Wizard 4 langkah mobile-first untuk Instalasi Penyalur Petir, Master Ahli K3 & SKP Perusahaan, gabung lampiran PDF multi-halaman otomatis, AI Gemini 3.8 Flash, serta sinkronisasi daftar laporan antar Desktop & HP.',
+    highlights: [
+      {
+        icon: '⚡',
+        title: 'Wizard Laporan Penyalur Petir (IPP) 4 Langkah',
+        description:
+          'Kalkulator Sigmat otomatis, multi-titik tahanan pembumian, auto-mirror ke checklist A-E & kontinuitas, serta ekspor Word (.docx) & PDF identik ukuran Folio.',
+        tag: 'Baru',
+      },
+      {
+        icon: '📑',
+        title: 'Master SKP & Lampiran PDF Multi-Halaman',
+        description:
+          'Simpan SKP PJK3 Perusahaan dan SKP Ahli K3 di Panel Admin, plus unggah lampiran PDF/foto multi-halaman yang otomatis digabung ke halaman Folio laporan.',
+        tag: 'Baru',
+      },
+      {
+        icon: '☁️',
+        title: 'Sinkronisasi Daftar Laporan Desktop ↔ HP',
+        description:
+          'Laporan yang dibuat atau diekspor di Desktop otomatis disinkronkan ke Google Drive sehingga dapat dibuka, diedit, atau diunduh langsung dari HP.',
+        tag: 'Baru',
+      },
+      {
+        icon: '✨',
+        title: 'Upgrade AI ke Gemini 3.8 Flash',
+        description:
+          'OCR layar alat ukur Earth Tester, sortir & caption foto otomatis, poles narasi K3, dan Pre-Flight QC kini berjalan menggunakan model Gemini 3.8 Flash.',
+        tag: 'Perbaikan',
+      },
+    ],
+  },
   {
     version: '1.2.1',
     date: '26 November 2026',

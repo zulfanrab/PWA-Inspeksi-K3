@@ -28,6 +28,24 @@ export function useAppUpdate() {
     typeof navigator !== 'undefined' && 'serviceWorker' in navigator && Boolean(navigator.serviceWorker.controller)
   );
 
+  const attachRegistrationListeners = useCallback((registration: ServiceWorkerRegistration) => {
+    if (registration.waiting && navigator.serviceWorker?.controller) {
+      setControllerUpdated(true);
+      setLiveBannerDismissed(false);
+    }
+
+    registration.addEventListener('updatefound', () => {
+      const installing = registration.installing;
+      if (!installing) return;
+      installing.addEventListener('statechange', () => {
+        if (installing.state === 'installed' && navigator.serviceWorker?.controller) {
+          setControllerUpdated(true);
+          setLiveBannerDismissed(false);
+        }
+      });
+    });
+  }, []);
+
   const {
     needRefresh: [needRefresh, setNeedRefresh],
     updateServiceWorker,
@@ -35,16 +53,17 @@ export function useAppUpdate() {
     onRegisteredSW(_swUrl, registration) {
       if (registration) {
         swRegistrationRef.current = registration;
-        // Cek update langsung saat SW terdaftar (penting untuk PWA iOS Safari)
+        attachRegistrationListeners(registration);
+
         if (navigator.onLine) {
           registration.update().catch(() => {});
         }
-        // Cek update berkala setiap 15 menit saat aplikasi terbuka
+        // Cek update berkala setiap 2 menit saat aplikasi terbuka di Desktop maupun HP
         setInterval(() => {
           if (navigator.onLine) {
             registration.update().catch(() => {});
           }
-        }, 15 * 60 * 1000);
+        }, 2 * 60 * 1000);
       }
     },
     onRegisterError(error) {
@@ -52,8 +71,6 @@ export function useAppUpdate() {
     },
   });
 
-  // Cek update SW saat user kembali ke tab/aplikasi atau saat kembali online,
-  // serta deteksi controllerchange (skipWaiting) agar iOS PWA langsung memunculkan prompt muat ulang
   useEffect(() => {
     const checkForUpdate = () => {
       if (navigator.onLine && swRegistrationRef.current) {
@@ -102,6 +119,10 @@ export function useAppUpdate() {
   }, []);
 
   const openChangelog = useCallback(() => {
+    // Saat user klik badge versi, cek sekalian apakah ada update SW terbaru
+    if (navigator.onLine && swRegistrationRef.current) {
+      swRegistrationRef.current.update().catch(() => {});
+    }
     setShowChangelogModal(true);
   }, []);
 
