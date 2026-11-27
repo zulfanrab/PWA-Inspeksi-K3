@@ -90,3 +90,18 @@ input[type='date']::-webkit-date-and-time-value {
   background-color: #0F172A;
   color: #F1F5F9;
 }
+
+/* Live .docx preview canvas styling (docx-preview wrapper override) */
+.aksara-docx-preview-wrapper {
+  background: transparent !important;
+  padding: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  gap: 20px !important;
+}
+
+.aksara-docx-preview-wrapper > section.aksara-docx-preview {
+  box-shadow: 0 4px 18px rgba(15, 23, 42, 0.16) !important;
+  margin-bottom: 0 !important;
+}

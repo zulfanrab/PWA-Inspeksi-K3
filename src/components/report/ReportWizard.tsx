@@ -1,5 +1,5 @@
 // src/components/report/ReportWizard.tsx
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { db, SessionRepository } from '../../db/db';
 import { getConfigByCode, mapObjectTypeToCode } from '../../report-configs/registry';
 import { FormulaEngine } from '../../engines/FormulaEngine';
@@ -10,6 +10,13 @@ import { getApiBaseUrl } from '../../config';
 import { registerBackInterceptor } from '../../utils/navigationGuard';
 import { IppReportWizard } from './IppReportWizard';
 import { IlReportWizard } from './IlReportWizard';
+import {
+  AttachmentSectionCard,
+  mapInitialAttachments,
+  type AttachmentPageItem,
+} from './AttachmentSectionCard';
+import { ReportWorkspaceLayout } from './preview/ReportWorkspaceLayout';
+import type { ReportPreviewData } from '../../utils/reportTemplatePayload';
 
 interface ReportWizardProps {
   reportId: number | null; // null jika buat baru
@@ -71,6 +78,8 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
   const [aiNarrative, setAiNarrative] = useState<any>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [selectedPhotos, setSelectedPhotos] = useState<any[]>([]);
+  const [bapAttachments, setBapAttachments] = useState<AttachmentPageItem[]>([]);
+  const [extraAttachments, setExtraAttachments] = useState<AttachmentPageItem[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [genStatus, setGenStatus] = useState<string>('');
   const [genLink, setGenLink] = useState<string>('');
@@ -124,6 +133,8 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
         
         setCalculations(rep.formulaResults);
         setAiNarrative(rep.aiNarrative?.sections);
+        setBapAttachments(mapInitialAttachments(rep.bapAttachments, 'bap'));
+        setExtraAttachments(mapInitialAttachments(rep.extraAttachments, 'extra'));
         
         // Photos
         const sourceInsp = rep.inspectionId ? await SessionRepository.getById(rep.inspectionId) : null;
@@ -451,6 +462,16 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
           compressionQuality: 75,
           maxDimension: 1200
         },
+        bapAttachments: bapAttachments.map((att) => ({
+          image: att.dataUrl,
+          sourceFileName: att.sourceFileName,
+          pageNumber: att.pageNumber,
+        })),
+        extraAttachments: extraAttachments.map((att) => ({
+          image: att.dataUrl,
+          sourceFileName: att.sourceFileName,
+          pageNumber: att.pageNumber,
+        })),
         createdBy: 'zulfanrafly03@gmail.com',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
@@ -522,6 +543,81 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
     }
   };
 
+  const genericPreviewData = useMemo<ReportPreviewData>(() => {
+    const checklistSections: any[] = [];
+    config?.checklists.categories.forEach((cat) => {
+      const items: any[] = [];
+      let no = 1;
+      cat.components.forEach((comp) => {
+        comp.items.forEach((it) => {
+          items.push({
+            no: no++,
+            obyek: it.description,
+            description: it.description,
+            hasil: checklistResponses[it.itemId] || 'BAIK',
+            result: checklistResponses[it.itemId] || 'BAIK',
+            nilaiRujukan: it.standard || '-',
+            standard: it.standard || '-',
+            remarks: checklistRemarks[it.itemId] || '',
+          });
+        });
+      });
+      checklistSections.push({
+        sectionTitle: cat.categoryName,
+        categoryName: cat.categoryName,
+        items,
+      });
+    });
+
+    return {
+      inspectionTypeCode: typeCode || 'K3',
+      reportNumber: reportNum || '',
+      generalData: {
+        companyName: formData.companyName || '',
+        companyAddress: formData.companyAddress || '',
+        inspectionDate: formData.inspectionDate || '',
+        reportDate: formData.reportDate || '',
+        inspectorCompany: 'PT. AKSARA RIKSA PERDANA',
+        inspectorName: '',
+        inspectorField: 'Ahli Keselamatan dan Kesehatan Kerja',
+        inspectorCertNumber: '',
+      },
+      technicalData: { ...formData },
+      checklistSections,
+      calculations,
+      narratives: aiNarrative || {},
+      gridPhotos: selectedPhotos.map((p: any, idx: number) => ({
+        id: p.id || String(idx),
+        caption: p.fileName || `Foto Temuan #${idx + 1}`,
+        dataUrl: p.dataUrl,
+        driveFileId: p.driveFileId,
+      })),
+      jointPhoto: null,
+      bapAttachments: bapAttachments.map((att) => ({
+        sourceFileName: att.sourceFileName,
+        pageNumber: att.pageNumber,
+        dataUrl: att.dataUrl,
+      })),
+      extraAttachments: extraAttachments.map((att) => ({
+        sourceFileName: att.sourceFileName,
+        pageNumber: att.pageNumber,
+        dataUrl: att.dataUrl,
+      })),
+    };
+  }, [
+    typeCode,
+    reportNum,
+    formData,
+    config,
+    checklistResponses,
+    checklistRemarks,
+    calculations,
+    aiNarrative,
+    selectedPhotos,
+    bapAttachments,
+    extraAttachments,
+  ]);
+
   if (typeCode === 'IPP' && selectedInspection && currentStep >= 2) {
     return (
       <IppReportWizard
@@ -546,71 +642,131 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
     );
   }
 
-  return (
-    <div className="bg-white rounded-2xl border border-gray-150 shadow-sm max-w-4xl mx-auto overflow-hidden">
-      {/* Wizard Header Progress Bar */}
-      <div className="bg-gray-50 border-b border-gray-100 p-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 font-black text-sm">
-            ❌ Batal
+  const genericHeaderNode = (
+    <div className="flex items-center justify-between gap-2">
+      <div className="flex items-center gap-3 min-w-0">
+        <button onClick={onClose} className="text-gray-500 hover:text-gray-700 font-bold text-xs">
+          ❌ Batal
+        </button>
+        <span className="h-4 w-[1px] bg-gray-200" />
+        <span className="text-xs font-bold text-gray-700 truncate">
+          Step {currentStep} / 9:{' '}
+          {currentStep === 2
+            ? 'Data Umum'
+            : currentStep === 3
+            ? 'Data Teknis'
+            : currentStep === 4
+            ? 'Visual Checklist'
+            : currentStep === 5
+            ? 'Data Pengujian'
+            : currentStep === 6
+            ? 'Hasil Formula'
+            : currentStep === 7
+            ? 'AI Narrative'
+            : currentStep === 8
+            ? 'Foto & Lampiran'
+            : 'Review & Generate'}
+        </span>
+      </div>
+    </div>
+  );
+
+  const genericFooterNode = !isGenerating && !genLink ? (
+    <div className="flex justify-between gap-2">
+      <button
+        onClick={() => setCurrentStep((prev) => prev - 1)}
+        className="text-xs font-bold text-gray-600 border border-gray-200 bg-white px-4 py-2 rounded-xl hover:bg-gray-50"
+      >
+        ← Kembali
+      </button>
+      {currentStep === 5 ? (
+        <button
+          onClick={handleProceedToCalculations}
+          className="text-xs font-bold text-white bg-emerald-600 px-5 py-2 rounded-xl hover:bg-emerald-700"
+        >
+          Uji &amp; Hitung K3 →
+        </button>
+      ) : currentStep === 6 ? (
+        <div className="flex gap-2">
+          <button
+            onClick={skipToManualNarrative}
+            className="text-xs font-bold text-gray-700 border border-gray-200 bg-white px-3 py-2 rounded-xl"
+          >
+            Manual
           </button>
-          <span className="h-4 w-[1px] bg-gray-200"></span>
-          <span className="text-xs font-bold text-gray-500">
-            Step {currentStep} of 9: {
-              currentStep === 1 ? 'Pilih Inspeksi' :
-              currentStep === 2 ? 'Data Umum' :
-              currentStep === 3 ? 'Data Teknis' :
-              currentStep === 4 ? 'Visual Checklist' :
-              currentStep === 5 ? 'Data Pengujian' :
-              currentStep === 6 ? 'Hasil Formula' :
-              currentStep === 7 ? 'AI Narrative' :
-              currentStep === 8 ? 'Pilih Foto' : 'Review & Generate'
-            }
-          </span>
+          <button
+            onClick={generateNarrative}
+            className="text-xs font-bold text-white bg-emerald-600 px-4 py-2 rounded-xl"
+          >
+            AI Narasi →
+          </button>
         </div>
-        <div className="flex gap-1">
-          {[1,2,3,4,5,6,7,8,9].map(step => (
-            <div
-              key={step}
-              className={`h-1.5 w-6 rounded-full transition-colors ${
-                step === currentStep ? 'bg-emerald-600' :
-                step < currentStep ? 'bg-emerald-200' : 'bg-gray-200'
-              }`}
-            />
-          ))}
+      ) : currentStep < 9 ? (
+        <button
+          onClick={() => setCurrentStep((prev) => prev + 1)}
+          className="text-xs font-bold text-white bg-emerald-600 px-5 py-2 rounded-xl hover:bg-emerald-700"
+        >
+          Lanjutkan →
+        </button>
+      ) : null}
+    </div>
+  ) : null;
+
+  if (currentStep === 1) {
+    return (
+      <div className="bg-white rounded-2xl border border-gray-150 shadow-sm max-w-4xl mx-auto overflow-hidden">
+        <div className="bg-gray-50 border-b border-gray-100 p-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 font-black text-sm">
+              ❌ Batal
+            </button>
+            <span className="h-4 w-[1px] bg-gray-200" />
+            <span className="text-xs font-bold text-gray-500">Pilih Sesi Inspeksi</span>
+          </div>
+        </div>
+        <div className="p-6 min-h-[360px] max-h-[75vh] overflow-y-auto space-y-4">
+          <h3 className="text-sm font-black text-gray-900">1. Pilih Sumber Inspeksi (Synced)</h3>
+          <p className="text-xs text-gray-500 font-medium">
+            Laporan akan dibuat dengan mengambil data dasar dari riwayat inspeksi lapangan yang sudah tersinkronisasi di bawah ini.
+          </p>
+          <div className="space-y-2.5">
+            {inspectionsList.map((insp) => (
+              <div
+                key={insp.id}
+                onClick={() => handleSelectInspection(insp)}
+                className="border border-gray-150 p-4 rounded-xl hover:border-emerald-500 hover:bg-emerald-50/10 cursor-pointer flex justify-between items-center transition-all"
+              >
+                <div>
+                  <p className="text-xs font-bold text-gray-800">{insp.clientName}</p>
+                  <p className="text-[10px] text-gray-400 font-bold mt-0.5">
+                    Tipe: {insp.objectType} | {new Date(insp.createdAt).toLocaleDateString('id-ID')}
+                  </p>
+                </div>
+                <span className="text-xs font-bold text-emerald-600">Pilih ➔</span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
+    );
+  }
 
-      <div className="p-6 min-h-[400px] max-h-[70vh] overflow-y-auto">
-        {errors.length > 0 && (
-          <div className="bg-rose-50 border border-rose-200 p-4 rounded-xl text-xs text-rose-700 font-semibold space-y-1 mb-4">
-            <p className="font-bold">Perbaiki kesalahan berikut sebelum melanjutkan:</p>
-            {errors.map((e, i) => <p key={i}>• {e}</p>)}
-          </div>
-        )}
+  return (
+    <ReportWorkspaceLayout
+      previewData={genericPreviewData}
+      stickyHeader={genericHeaderNode}
+      bottomNav={genericFooterNode}
+    >
+      {errors.length > 0 && (
+        <div className="bg-rose-50 border border-rose-200 p-4 rounded-xl text-xs text-rose-700 font-semibold space-y-1">
+          <p className="font-bold">Perbaiki kesalahan berikut sebelum melanjutkan:</p>
+          {errors.map((e, i) => (
+            <p key={i}>• {e}</p>
+          ))}
+        </div>
+      )}
 
-        {/* STEP 1: PILIH SOURCE INSPEKSI */}
-        {currentStep === 1 && (
-          <div className="space-y-4">
-            <h3 className="text-sm font-black text-gray-900">1. Pilih Sumber Inspeksi (Synced)</h3>
-            <p className="text-xs text-gray-500 font-medium">Laporan akan dibuat dengan mengambil data dasar dari riwayat inspeksi lapangan yang sudah tersinkronisasi di bawah ini.</p>
-            <div className="space-y-2.5">
-              {inspectionsList.map(insp => (
-                <div
-                  key={insp.id}
-                  onClick={() => handleSelectInspection(insp)}
-                  className="border border-gray-150 p-4 rounded-xl hover:border-emerald-500 hover:bg-emerald-50/10 cursor-pointer flex justify-between items-center transition-all"
-                >
-                  <div>
-                    <p className="text-xs font-bold text-gray-800">{insp.clientName}</p>
-                    <p className="text-[10px] text-gray-400 font-bold mt-0.5">Tipe: {insp.objectType} | {new Date(insp.createdAt).toLocaleDateString('id-ID')}</p>
-                  </div>
-                  <span className="text-xs font-bold text-emerald-600">Pilih ➔</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+      <div className="bg-white rounded-2xl border border-gray-200 p-4">
 
         {/* STEP 2: DATA UMUM */}
         {currentStep === 2 && (
@@ -920,6 +1076,34 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
                 </div>
               ))}
             </div>
+
+            <div className="space-y-3 pt-2">
+              <AttachmentSectionCard
+                title="Lampiran BAP (Berita Acara Pemeriksaan)"
+                badgeText="Sebelum Halaman SKP"
+                subtitle="Unggah scan/foto/PDF Berita Acara Pemeriksaan setelah riksa uji selesai. Otomatis disisipkan sebelum halaman SKP PJK3 & SKP Ahli."
+                emptyText="Belum ada lampiran BAP (Berita Acara Pemeriksaan)."
+                buttonLabel="+ Unggah BAP (PDF / Foto)"
+                accent="indigo"
+                items={bapAttachments}
+                onChange={setBapAttachments}
+              />
+
+              <div className="px-3 py-2 rounded-xl bg-gray-50 border border-dashed border-gray-300 text-[11px] font-semibold text-gray-600 text-center">
+                📄 Halaman SKP PJK3 Perusahaan &amp; SKP Ahli K3 disisipkan otomatis di sini
+              </div>
+
+              <AttachmentSectionCard
+                title="Lampiran Tambahan Akhir (PDF / Gambar)"
+                badgeText="Setelah Halaman SKP"
+                subtitle="Sertifikat kalibrasi, surat tugas, denah, atau dokumen pendukung lain di halaman paling akhir."
+                emptyText="Belum ada lampiran tambahan akhir."
+                buttonLabel="+ Tambah Lampiran (PDF / Foto)"
+                accent="emerald"
+                items={extraAttachments}
+                onChange={setExtraAttachments}
+              />
+            </div>
           </div>
         )}
 
@@ -935,6 +1119,8 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
                 <p>⚡ <span className="font-bold text-gray-800">Nomor Laporan:</span> {reportNum || 'Dibuat otomatis oleh antrean server'}</p>
                 <p>⚡ <span className="font-bold text-gray-800">Status Proteksi:</span> {calculations?.overallSafetyStatus}</p>
                 <p>⚡ <span className="font-bold text-gray-800">Foto Siap Upload:</span> {selectedPhotos.length} item</p>
+                <p>⚡ <span className="font-bold text-gray-800">Lampiran BAP (Sebelum SKP):</span> {bapAttachments.length} halaman</p>
+                <p>⚡ <span className="font-bold text-gray-800">Lampiran Tambahan Akhir:</span> {extraAttachments.length} halaman</p>
               </div>
             </div>
 
@@ -981,69 +1167,6 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
           </div>
         )}
       </div>
-
-      {/* Navigation Footer */}
-      {!isGenerating && !genLink && (
-        <div className="bg-gray-50 border-t border-gray-100 p-4 flex justify-between gap-2">
-          {currentStep === 1 ? (
-            <button
-              onClick={onClose}
-              className="text-xs font-bold text-rose-600 border border-rose-200 bg-white px-4 py-3 rounded-xl hover:bg-rose-50 flex-1 text-center active:scale-[0.98] transition-all"
-            >
-              ❌ Batalkan & Tutup Wizard
-            </button>
-          ) : (
-            <>
-              <div className="flex gap-2">
-                <button
-                  onClick={onClose}
-                  className="text-xs font-bold text-rose-600 border border-rose-200 bg-white px-3.5 py-2.5 rounded-xl hover:bg-rose-50 active:scale-95 transition-all"
-                  title="Batalkan Wizard"
-                >
-                  ❌ Batal
-                </button>
-                <button
-                  onClick={() => setCurrentStep(prev => prev - 1)}
-                  className="text-xs font-bold text-gray-550 border border-gray-250 bg-white px-4 py-2.5 rounded-xl hover:bg-gray-50 active:scale-95 transition-all"
-                >
-                  ← Kembali
-                </button>
-              </div>
-
-              {currentStep === 5 ? (
-                <button
-                  onClick={handleProceedToCalculations}
-                  className="text-xs font-bold text-white bg-emerald-600 border border-emerald-600 px-5 py-2.5 rounded-xl hover:bg-emerald-700 active:scale-95 transition-all"
-                >
-                  Uji & Hitung K3 →
-                </button>
-              ) : currentStep === 6 ? (
-                <div className="flex gap-2">
-                  <button
-                    onClick={skipToManualNarrative}
-                    className="text-xs font-bold text-gray-700 border border-gray-250 bg-white px-4 py-2.5 rounded-xl hover:bg-gray-50 active:scale-95 transition-all"
-                  >
-                    Tulis Manual (Tanpa AI)
-                  </button>
-                  <button
-                    onClick={generateNarrative}
-                    className="text-xs font-bold text-white bg-emerald-600 border border-emerald-600 px-5 py-2.5 rounded-xl hover:bg-emerald-700 active:scale-95 transition-all"
-                  >
-                    Generate AI Narasi (Gemini) →
-                  </button>
-                </div>
-              ) : currentStep < 9 ? (
-                <button
-                  onClick={() => setCurrentStep(prev => prev + 1)}
-                  className="text-xs font-bold text-white bg-emerald-600 border border-emerald-600 px-5 py-2.5 rounded-xl hover:bg-emerald-700 active:scale-95 transition-all"
-                >
-                  Lanjutkan →
-                </button>
-              ) : null}
-            </>
-          )}
-        </div>
-      )}
-    </div>
+    </ReportWorkspaceLayout>
   );
 }

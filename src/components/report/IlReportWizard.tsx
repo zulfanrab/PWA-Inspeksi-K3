@@ -18,8 +18,14 @@ import { FormulaEngine } from '../../engines/FormulaEngine';
 import { ImageCompressor } from '../../engines/ImageCompressor';
 import { getApiBaseUrl } from '../../config';
 import { registerBackInterceptor } from '../../utils/navigationGuard';
-import { processPdfOrImagePages } from '../../utils/skpImageHelper';
 import { parseApiJson, formatTanggalHuruf } from '../../utils/reportHelpers';
+import {
+  AttachmentSectionCard,
+  mapInitialAttachments,
+  type AttachmentPageItem,
+} from './AttachmentSectionCard';
+import { ReportWorkspaceLayout } from './preview/ReportWorkspaceLayout';
+import type { ReportPreviewData } from '../../utils/reportTemplatePayload';
 
 interface IlReportWizardProps {
   selectedInspection: any;
@@ -37,13 +43,6 @@ interface PhotoItemState {
   caption: string;
   selectedForGrid: boolean;
   isJointPhoto: boolean;
-}
-
-interface ExtraAttachmentState {
-  id: string;
-  sourceFileName: string;
-  pageNumber: number;
-  dataUrl: string;
 }
 
 const CHECKLIST_QUICK_RESULTS = [
@@ -329,18 +328,13 @@ export function IlReportWizard({
     }));
   });
 
-  const [extraAttachments, setExtraAttachments] = useState<ExtraAttachmentState[]>(() => {
-    if (Array.isArray(initialReportData?.extraAttachments)) {
-      return initialReportData.extraAttachments.map((att: any, idx: number) => ({
-        id: `init-${idx}-${Date.now()}`,
-        sourceFileName: att.sourceFileName || `Lampiran ${idx + 1}`,
-        pageNumber: att.pageNumber || idx + 1,
-        dataUrl: att.image || att.dataUrl || '',
-      }));
-    }
-    return [];
-  });
-  const [attachmentProcessing, setAttachmentProcessing] = useState(false);
+  // --- LAMPIRAN BAP (SEBELUM SKP) & LAMPIRAN TAMBAHAN (SETELAH SKP) ---
+  const [bapAttachments, setBapAttachments] = useState<AttachmentPageItem[]>(() =>
+    mapInitialAttachments(initialReportData?.bapAttachments, 'bap')
+  );
+  const [extraAttachments, setExtraAttachments] = useState<AttachmentPageItem[]>(() =>
+    mapInitialAttachments(initialReportData?.extraAttachments, 'extra')
+  );
 
   // --- AI & EXPORT STATES ---
   const [showOcrModal, setShowOcrModal] = useState(false);
@@ -767,49 +761,6 @@ export function IlReportWizard({
     }
   };
 
-  // --- LAMPIRAN TAMBAHAN (PDF / FOTO MULTI-HALAMAN) ---
-  const handleAddExtraAttachments = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    if (files.length === 0) return;
-    setAttachmentProcessing(true);
-    try {
-      const added: ExtraAttachmentState[] = [];
-      for (const file of files) {
-        const pages = await processPdfOrImagePages(file);
-        pages.forEach((pg) => {
-          added.push({
-            id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            sourceFileName: file.name,
-            pageNumber: pg.pageNumber,
-            dataUrl: pg.dataUrl,
-          });
-        });
-      }
-      setExtraAttachments((prev) => [...prev, ...added]);
-    } catch (err: any) {
-      alert(`Gagal memproses lampiran: ${err.message}`);
-    } finally {
-      setAttachmentProcessing(false);
-      e.target.value = '';
-    }
-  };
-
-  const handleMoveExtraAttachment = (idx: number, direction: -1 | 1) => {
-    setExtraAttachments((prev) => {
-      const target = idx + direction;
-      if (target < 0 || target >= prev.length) return prev;
-      const next = [...prev];
-      const temp = next[idx];
-      next[idx] = next[target];
-      next[target] = temp;
-      return next;
-    });
-  };
-
-  const handleRemoveExtraAttachment = (id: string) => {
-    setExtraAttachments((prev) => prev.filter((item) => item.id !== id));
-  };
-
   // --- PRE-FLIGHT QC ---
   const missingFields = useMemo(() => {
     const keys: Array<{ key: string; label: string }> = [
@@ -1000,6 +951,11 @@ export function IlReportWizard({
           photos: compressedGrid,
           jointPhoto: jointPhotoDataUrl,
         },
+        bapAttachments: bapAttachments.map((att) => ({
+          image: att.dataUrl,
+          sourceFileName: att.sourceFileName,
+          pageNumber: att.pageNumber,
+        })),
         extraAttachments: extraAttachments.map((att) => ({
           image: att.dataUrl,
           sourceFileName: att.sourceFileName,
@@ -1047,68 +1003,249 @@ export function IlReportWizard({
     }
   };
 
-  return (
-    <div className="min-h-screen bg-gray-50 pb-24">
-      {/* Sticky Header + 4-Step Progress */}
-      <div className="sticky top-0 z-20 bg-white border-b border-gray-200 px-4 py-3">
-        <div className="max-w-3xl mx-auto">
-          <div className="flex items-center justify-between gap-2 mb-2.5">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="px-2 py-0.5 rounded-md bg-blue-100 text-blue-800 text-[10px] font-extrabold">
-                  IL
-                </span>
-                <h2 className="text-sm font-extrabold text-gray-900 truncate">
-                  {formData.companyName || 'Laporan Instalasi Listrik'}
-                </h2>
-              </div>
-              {onChangeSource && (
-                <button
-                  type="button"
-                  onClick={onChangeSource}
-                  className="text-[11px] font-semibold text-emerald-600 hover:underline"
-                >
-                  ↻ Ganti Sesi Inspeksi
-                </button>
-              )}
-            </div>
+  const checklistBuilt = useMemo(() => {
+    const checklistSections: any[] = [];
+    const componentsForDb: any[] = [];
+
+    config?.checklists.categories.forEach((cat) => {
+      const sectionItems: any[] = [];
+      let seqNo = 1;
+      cat.components.forEach((comp) => {
+        const compItems: any[] = [];
+        comp.items.forEach((item) => {
+          const hasil = checklistResults[item.itemId] ?? '-';
+          const row = {
+            itemId: item.itemId,
+            no: seqNo++,
+            obyek: item.description,
+            hasil,
+            nilaiRujukan: item.standard || '-',
+            metode: item.method || 'Penilaian',
+            description: item.description,
+            result: hasil,
+          };
+          sectionItems.push(row);
+          compItems.push(row);
+        });
+        componentsForDb.push({
+          componentId: comp.componentId,
+          componentName: comp.componentName,
+          category: cat.categoryName,
+          items: compItems,
+        });
+      });
+      checklistSections.push({
+        sectionTitle: cat.categoryName,
+        items: sectionItems,
+      });
+    });
+
+    return { checklistSections, componentsForDb };
+  }, [config, checklistResults]);
+
+  const previewData = useMemo<ReportPreviewData>(() => {
+    const def = buildDefaultNarratives();
+    const vText = visualSummary || def.visualText;
+    const tText = testingSummary || def.testingText;
+    const cText = conclusion || def.concText;
+    const rText = recommendations || def.recText;
+    const noteText = closingNote || def.noteText;
+    const jointItem = photos.find((p) => p.isJointPhoto);
+
+    return {
+      inspectionTypeCode: 'IL',
+      reportNumber: reportNumber.trim(),
+      generalData: {
+        companyName: formData.companyName || '',
+        companyAddress: formData.companyAddress || '',
+        inspectionDate: formData.inspectionDate || '',
+        reportDate: formData.reportDate || '',
+        inspectorCompany: 'PT. AKSARA RIKSA PERDANA',
+        inspectorName: selectedInspector?.name || '',
+        inspectorField:
+          selectedInspector?.field || 'Ahli Keselamatan dan Kesehatan Kerja Bidang Listrik',
+        inspectorCertNumber: selectedInspector?.regNumber || '',
+        skpAhliImage: selectedInspector?.skpImageDataUrl || '',
+        skpPerusahaanImage: companySkpImage || '',
+      },
+      technicalData: {
+        ...formData,
+        dayaAktifKw: analysis.dayaAktifKw,
+        dayaAktifWatt: analysis.dayaAktifWatt,
+        inDenominatorExpr: analysis.inDenominatorExpr,
+        inDenominatorVal: analysis.inDenominatorVal,
+        arusNominal: analysis.arusNominal,
+        khaHitung: analysis.khaHitung,
+        khaKabel: analysis.khaKabel,
+        khaConclusion: analysis.khaConclusion,
+        ratingCbHitung: analysis.ratingCbHitung,
+        kapasitasProteksi: analysis.kapasitasProteksi,
+        proteksiConclusion: analysis.proteksiConclusion,
+        arusR: analysis.arusR,
+        arusS: analysis.arusS,
+        arusT: analysis.arusT,
+        arusTotal: analysis.arusTotal,
+        arusRataRata: analysis.arusRataRata,
+        rasioA: analysis.rasioA,
+        rasioB: analysis.rasioB,
+        rasioC: analysis.rasioC,
+        devA: analysis.devA,
+        devB: analysis.devB,
+        devC: analysis.devC,
+        devTotal: analysis.devTotal,
+        unbalancePercent: analysis.unbalancePercent,
+        unbalanceConclusion: analysis.unbalanceConclusion,
+      },
+      checklistSections: checklistBuilt.checklistSections,
+      narratives: {
+        visualSummary: vText,
+        testingSummary: tText,
+        conclusion: cText,
+        recommendations: rText,
+        closingNote: noteText,
+        executiveSummary: vText,
+        testResultsNarrative: tText,
+      },
+      gridPhotos: photos
+        .filter((p) => p.selectedForGrid && !p.isJointPhoto)
+        .map((p) => ({
+          id: p.id,
+          caption: p.caption || '',
+          dataUrl: p.dataUrl,
+          driveFileId: p.driveFileId,
+        })),
+      jointPhoto: jointItem
+        ? {
+            id: jointItem.id,
+            caption: jointItem.caption || '',
+            dataUrl: jointItem.dataUrl,
+            driveFileId: jointItem.driveFileId,
+          }
+        : null,
+      bapAttachments: bapAttachments.map((att) => ({
+        sourceFileName: att.sourceFileName,
+        pageNumber: att.pageNumber,
+        dataUrl: att.dataUrl,
+      })),
+      extraAttachments: extraAttachments.map((att) => ({
+        sourceFileName: att.sourceFileName,
+        pageNumber: att.pageNumber,
+        dataUrl: att.dataUrl,
+      })),
+    };
+  }, [
+    formData,
+    analysis,
+    reportNumber,
+    selectedInspector,
+    companySkpImage,
+    checklistBuilt,
+    visualSummary,
+    testingSummary,
+    conclusion,
+    recommendations,
+    closingNote,
+    photos,
+    bapAttachments,
+    extraAttachments,
+  ]);
+
+  const stickyHeaderNode = (
+    <div>
+      <div className="flex items-center justify-between gap-2 mb-2.5">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="px-2 py-0.5 rounded-md bg-blue-100 text-blue-800 text-[10px] font-extrabold">
+              IL
+            </span>
+            <h2 className="text-sm font-extrabold text-gray-900 truncate">
+              {formData.companyName || 'Laporan Instalasi Listrik'}
+            </h2>
+          </div>
+          {onChangeSource && (
             <button
               type="button"
-              onClick={onClose}
-              className="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-600 text-xs font-bold hover:bg-gray-200"
+              onClick={onChangeSource}
+              className="text-[11px] font-semibold text-emerald-600 hover:underline"
             >
-              Tutup
+              ↻ Ganti Sesi Inspeksi
             </button>
-          </div>
-
-          <div className="grid grid-cols-4 gap-1.5">
-            {[
-              { id: 1, label: '1. Data Umum' },
-              { id: 2, label: '2. Analisis & Cek' },
-              { id: 3, label: '3. Narasi & Foto' },
-              { id: 4, label: '4. Ekspor' },
-            ].map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                onClick={() => setStep(s.id as 1 | 2 | 3 | 4)}
-                className={`py-1.5 px-1 rounded-lg text-[11px] font-bold transition-all truncate ${
-                  step === s.id
-                    ? 'bg-emerald-600 text-white shadow-sm'
-                    : step > s.id
-                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                    : 'bg-gray-100 text-gray-500'
-                }`}
-              >
-                {s.label}
-              </button>
-            ))}
-          </div>
+          )}
         </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-600 text-xs font-bold hover:bg-gray-200"
+        >
+          Tutup
+        </button>
       </div>
 
-      {/* Main Content */}
-      <div className="max-w-3xl mx-auto p-4 space-y-4">
+      <div className="grid grid-cols-4 gap-1.5">
+        {[
+          { id: 1, label: '1. Data Umum' },
+          { id: 2, label: '2. Analisis & Cek' },
+          { id: 3, label: '3. Narasi & Foto' },
+          { id: 4, label: '4. Ekspor' },
+        ].map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            onClick={() => setStep(s.id as 1 | 2 | 3 | 4)}
+            className={`py-1.5 px-1 rounded-lg text-[11px] font-bold transition-all truncate ${
+              step === s.id
+                ? 'bg-emerald-600 text-white shadow-sm'
+                : step > s.id
+                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                : 'bg-gray-100 text-gray-500'
+            }`}
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
+  const bottomNavNode = (
+    <div className="flex items-center justify-between gap-3">
+      <button
+        type="button"
+        disabled={step === 1}
+        onClick={() => setStep((s) => (s > 1 ? ((s - 1) as 1 | 2 | 3 | 4) : s))}
+        className="px-4 py-2.5 rounded-xl bg-gray-100 text-gray-700 text-xs font-bold disabled:opacity-40"
+      >
+        ← Sebelumnya
+      </button>
+      <span className="text-[11px] font-bold text-gray-400">Langkah {step} / 4</span>
+      {step < 4 ? (
+        <button
+          type="button"
+          onClick={() => setStep((s) => (s < 4 ? ((s + 1) as 1 | 2 | 3 | 4) : s))}
+          className="px-5 py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-extrabold hover:bg-emerald-700"
+        >
+          Lanjut →
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={() => handleExport('pdf')}
+          disabled={exportingFormat !== null}
+          className="px-5 py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-extrabold hover:bg-emerald-700 disabled:opacity-50"
+        >
+          {exportingFormat ? 'Memproses...' : 'Ekspor PDF'}
+        </button>
+      )}
+    </div>
+  );
+
+  return (
+    <>
+      <ReportWorkspaceLayout
+        previewData={previewData}
+        stickyHeader={stickyHeaderNode}
+        bottomNav={bottomNavNode}
+      >
         {/* ================= STEP 1: IDENTITAS & 12 DATA UMUM ================= */}
         {step === 1 && (
           <div className="space-y-4">
@@ -2083,84 +2220,33 @@ export function IlReportWizard({
               )}
             </div>
 
-            {/* Lampiran Tambahan (PDF / Gambar Multi-Halaman) */}
-            <div className="bg-white rounded-2xl border border-gray-200 p-4 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h3 className="text-xs font-extrabold text-gray-800 uppercase tracking-wider">
-                    Lampiran Tambahan (PDF / Gambar) — ({extraAttachments.length} hal.)
-                  </h3>
-                  <p className="text-[11px] text-gray-500">
-                    Berita Acara Riksa Uji, Surat Permohonan Evaluasi, Single Line Diagram, atau foto multi-halaman.
-                  </p>
-                </div>
-                <label className="px-3 py-2 rounded-xl bg-emerald-600 text-white text-[11px] font-bold hover:bg-emerald-700 cursor-pointer shrink-0">
-                  {attachmentProcessing ? 'Memproses Halaman...' : '+ Tambah Lampiran (PDF / Foto)'}
-                  <input
-                    type="file"
-                    multiple
-                    accept="application/pdf,image/png,image/jpeg,image/webp"
-                    onChange={handleAddExtraAttachments}
-                    disabled={attachmentProcessing}
-                    className="hidden"
-                  />
-                </label>
-              </div>
+            {/* Lampiran BAP (Sebelum Halaman SKP) */}
+            <AttachmentSectionCard
+              title="Lampiran BAP (Berita Acara Pemeriksaan)"
+              badgeText="Sebelum Halaman SKP"
+              subtitle="Unggah scan/foto/PDF Berita Acara Pemeriksaan setelah pemeriksaan selesai. Disisipkan sebelum halaman SKP PJK3 & SKP Ahli."
+              emptyText="Belum ada lampiran BAP (Berita Acara Pemeriksaan)."
+              buttonLabel="+ Unggah BAP (PDF / Foto)"
+              accent="indigo"
+              items={bapAttachments}
+              onChange={setBapAttachments}
+            />
 
-              {extraAttachments.length === 0 ? (
-                <p className="text-xs text-gray-400 text-center py-4 bg-gray-50 rounded-xl border border-dashed border-gray-200">
-                  Belum ada lampiran tambahan (Berita Acara Riksa Uji, SLD, dll.).
-                </p>
-              ) : (
-                <div className="space-y-2">
-                  {extraAttachments.map((att, idx) => (
-                    <div
-                      key={att.id}
-                      className="flex items-center justify-between gap-3 p-2.5 bg-gray-50 border border-gray-200 rounded-xl"
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <img
-                          src={att.dataUrl}
-                          alt={`${att.sourceFileName} Hal ${att.pageNumber}`}
-                          className="w-12 h-16 object-cover rounded-lg border border-gray-300 bg-white shrink-0"
-                        />
-                        <div className="min-w-0">
-                          <p className="text-xs font-bold text-gray-900 truncate">
-                            {idx + 1}. {att.sourceFileName}
-                          </p>
-                          <p className="text-[11px] text-gray-500">Halaman {att.pageNumber}</p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1 shrink-0">
-                        <button
-                          type="button"
-                          disabled={idx === 0}
-                          onClick={() => handleMoveExtraAttachment(idx, -1)}
-                          className="px-2 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-700 text-xs font-bold disabled:opacity-30"
-                        >
-                          ↑
-                        </button>
-                        <button
-                          type="button"
-                          disabled={idx === extraAttachments.length - 1}
-                          onClick={() => handleMoveExtraAttachment(idx, 1)}
-                          className="px-2 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-700 text-xs font-bold disabled:opacity-30"
-                        >
-                          ↓
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveExtraAttachment(att.id)}
-                          className="px-2 py-1.5 rounded-lg bg-red-50 text-red-600 text-xs font-bold hover:bg-red-100"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+            <div className="px-3 py-2 rounded-xl bg-gray-50 border border-dashed border-gray-300 text-[11px] font-semibold text-gray-600 text-center">
+              📄 Halaman SKP PJK3 Perusahaan &amp; SKP Ahli K3 disisipkan otomatis di sini ({companySkpImage ? 'SKP Perusahaan ✓' : 'SKP Perusahaan kosong'} • {selectedInspector?.skpImageDataUrl ? 'SKP Ahli ✓' : 'SKP Ahli kosong'})
             </div>
+
+            {/* Lampiran Tambahan Akhir (Setelah Halaman SKP) */}
+            <AttachmentSectionCard
+              title="Lampiran Tambahan Akhir (PDF / Gambar)"
+              badgeText="Setelah Halaman SKP"
+              subtitle="Surat Permohonan Evaluasi, Single Line Diagram, sertifikat alat ukur, atau dokumen pendukung di halaman akhir."
+              emptyText="Belum ada lampiran tambahan akhir (SLD, sertifikat alat, dll.)."
+              buttonLabel="+ Tambah Lampiran (PDF / Foto)"
+              accent="emerald"
+              items={extraAttachments}
+              onChange={setExtraAttachments}
+            />
           </div>
         )}
 
@@ -2182,7 +2268,7 @@ export function IlReportWizard({
                 </button>
               </div>
 
-              {(missingFields.length > 0 || (photos.length > 0 && !photos.some((p) => p.isJointPhoto))) && (
+              {(missingFields.length > 0 || (photos.length > 0 && !photos.some((p) => p.isJointPhoto)) || bapAttachments.length === 0) && (
                 <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800 space-y-1">
                   {missingFields.length > 0 && (
                     <>
@@ -2206,6 +2292,18 @@ export function IlReportWizard({
                         className="text-[11px] font-bold underline"
                       >
                         Tandai 1 foto di Langkah 3 →
+                      </button>
+                    </div>
+                  )}
+                  {bapAttachments.length === 0 && (
+                    <div className="pt-1">
+                      <p className="font-bold">⚠️ Lampiran BAP (Berita Acara Pemeriksaan) sebelum halaman SKP belum diunggah.</p>
+                      <button
+                        type="button"
+                        onClick={() => setStep(3)}
+                        className="text-[11px] font-bold underline"
+                      >
+                        Unggah BAP di Langkah 3 →
                       </button>
                     </div>
                   )}
@@ -2267,7 +2365,8 @@ export function IlReportWizard({
                   <p className="font-bold text-gray-900">
                     {photos.filter((p) => p.selectedForGrid && !p.isJointPhoto).length} Grid,{' '}
                     {photos.some((p) => p.isJointPhoto) ? '1' : '0'} Bersama,{' '}
-                    {extraAttachments.length} Hal. Tambahan
+                    {bapAttachments.length} BAP,{' '}
+                    {extraAttachments.length} Akhir
                   </p>
                   <p className="text-[10px] text-gray-500 mt-0.5">
                     SKP Perusahaan: {companySkpImage ? '✅ Ada' : '⚠️ Kosong'} • SKP Ahli:{' '}
@@ -2333,40 +2432,7 @@ export function IlReportWizard({
             </div>
           </div>
         )}
-      </div>
-
-      {/* Bottom Sticky Navigation Bar */}
-      <div className="fixed bottom-0 left-0 right-0 z-20 bg-white border-t border-gray-200 px-4 py-3">
-        <div className="max-w-3xl mx-auto flex items-center justify-between gap-3">
-          <button
-            type="button"
-            disabled={step === 1}
-            onClick={() => setStep((s) => (s > 1 ? ((s - 1) as 1 | 2 | 3 | 4) : s))}
-            className="px-4 py-2.5 rounded-xl bg-gray-100 text-gray-700 text-xs font-bold disabled:opacity-40"
-          >
-            ← Sebelumnya
-          </button>
-          <span className="text-[11px] font-bold text-gray-400">Langkah {step} / 4</span>
-          {step < 4 ? (
-            <button
-              type="button"
-              onClick={() => setStep((s) => (s < 4 ? ((s + 1) as 1 | 2 | 3 | 4) : s))}
-              className="px-5 py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-extrabold hover:bg-emerald-700"
-            >
-              Lanjut →
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => handleExport('pdf')}
-              disabled={exportingFormat !== null}
-              className="px-5 py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-extrabold hover:bg-emerald-700 disabled:opacity-50"
-            >
-              {exportingFormat ? 'Memproses...' : 'Ekspor PDF'}
-            </button>
-          )}
-        </div>
-      </div>
+      </ReportWorkspaceLayout>
 
       {/* Modal Pilih Foto untuk AI Vision OCR */}
       {showOcrModal && (
@@ -2466,6 +2532,6 @@ export function IlReportWizard({
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

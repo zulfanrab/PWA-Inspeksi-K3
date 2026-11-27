@@ -378,6 +378,39 @@ async function handleGenerate(req: VercelRequest, res: VercelResponse) {
   const templateBuffer = Buffer.from(templateRes.data as ArrayBuffer);
 
   const zip = new PizZip(templateBuffer);
+
+  // Jika user mengunggah lampiran BAP namun template Word belum memuat tag {#bapAttachments},
+  // sisipkan blok {#bapAttachments}{%image}{/bapAttachments} otomatis tepat sebelum {%skpPerusahaanImage}
+  const hasBapUploads =
+    Array.isArray(reportData.bapAttachments) &&
+    reportData.bapAttachments.some((att: any) => typeof att?.image === 'string' && att.image.includes('base64,'));
+  if (hasBapUploads) {
+    const docXmlFile = zip.file('word/document.xml');
+    if (docXmlFile) {
+      const xml = docXmlFile.asText();
+      const plainText = xml.replace(/<[^>]+>/g, '');
+      if (!plainText.includes('bapAttachments')) {
+        const targetAnchor = plainText.includes('skpPerusahaanImage')
+          ? 'skpPerusahaanImage'
+          : plainText.includes('skpAhliImage')
+          ? 'skpAhliImage'
+          : null;
+        if (targetAnchor) {
+          const pMatches = xml.matchAll(/<w:p(?:\s[^>]*)?>(?:(?!<w:p(?:\s|>))[\s\S])*?<\/w:p>/g);
+          for (const m of pMatches) {
+            if (m.index !== undefined && m[0].replace(/<[^>]+>/g, '').includes(targetAnchor)) {
+              const bapXml =
+                '<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>{#bapAttachments}</w:t></w:r></w:p>' +
+                '<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>{%image}</w:t></w:r></w:p>' +
+                '<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>{/bapAttachments}</w:t></w:r></w:p>';
+              zip.file('word/document.xml', xml.slice(0, m.index) + bapXml + xml.slice(m.index));
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
   
   const imageOptions = {
     centered: false,
@@ -409,8 +442,10 @@ async function handleGenerate(req: VercelRequest, res: VercelResponse) {
         } else if (
           tagName === 'skpAhliImage' ||
           tagName === 'skpPerusahaanImage' ||
-          (tagName === 'image' && ['IPP', 'IL'].includes(String(reportData.inspectionTypeCode).toUpperCase()))
+          tagName === 'bapImage' ||
+          tagName === 'image'
         ) {
+          // Berlaku untuk lampiran halaman penuh (BAP, SKP, & Lampiran Tambahan Akhir) pada semua jenis laporan
           maxWidth = 560;
           maxHeight = 840;
         }
@@ -625,9 +660,14 @@ async function handleGenerate(req: VercelRequest, res: VercelResponse) {
     conclusion: sections.conclusion || '',
     closingNote: sections.closingNote || '',
 
-    // Photos & Extra Attachments
+    // Photos, BAP Attachments (sebelum SKP), & Extra Attachments (setelah SKP)
     photoRows,
     jointPhoto: reportData.photoDocumentation?.jointPhoto || '',
+    bapAttachments: Array.isArray(reportData.bapAttachments)
+      ? reportData.bapAttachments
+          .filter((att: any) => typeof att?.image === 'string' && att.image.includes('base64,'))
+          .map((att: any) => ({ image: att.image, bapImage: att.image }))
+      : [],
     extraAttachments: Array.isArray(reportData.extraAttachments)
       ? reportData.extraAttachments
           .filter((att: any) => typeof att?.image === 'string' && att.image.includes('base64,'))
@@ -830,6 +870,45 @@ async function handleTemplate(req: VercelRequest, res: VercelResponse) {
   const templatesFolderId = await getTemplatesFolderId(drive, rootFolderId);
 
   if (req.method === 'GET') {
+    const downloadFlag = String(req.query.download || '');
+    const typeCodeParam = String(req.query.typeCode || '').trim().toUpperCase();
+
+    if (downloadFlag === '1' && typeCodeParam) {
+      const cleanCode = typeCodeParam.replace(/[^A-Z0-9_-]/g, '');
+      const fileName = `Template_${cleanCode}.docx`;
+      const qFile = `name='${fileName}' and '${templatesFolderId}' in parents and trashed=false`;
+      const searchFileRes = await drive.files.list({
+        q: qFile,
+        fields: 'files(id, modifiedTime)',
+        spaces: 'drive',
+        pageSize: 1,
+        supportsAllDrives: true,
+        includeItemsFromAllDrives: true,
+      });
+      const found = searchFileRes.data.files?.[0];
+      if (!found?.id) {
+        return res.status(404).json({
+          error: `Template file "${fileName}" tidak ditemukan di folder 'Aksara Inspect/Templates'.`,
+        });
+      }
+
+      const fileRes = await drive.files.get(
+        { fileId: found.id, alt: 'media', supportsAllDrives: true },
+        { responseType: 'arraybuffer' }
+      );
+      const buf = Buffer.from(fileRes.data as ArrayBuffer);
+      res.setHeader(
+        'Content-Type',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      );
+      res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
+      if (found.modifiedTime) {
+        res.setHeader('X-Template-Modified', found.modifiedTime);
+      }
+      res.setHeader('Cache-Control', 'private, max-age=300');
+      return res.status(200).send(buf);
+    }
+
     const q = `'${templatesFolderId}' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed=false`;
     const listRes = await drive.files.list({
       q,
