@@ -3,59 +3,35 @@ import { ValidationRule } from '../types';
 
 export const validations: ValidationRule[] = [
   {
-    ruleId: 'tahanan_isolasi_min',
-    fieldId: 'isolasiRN',
-    type: 'range',
-    params: { min: 1.0 }, // PUIL 2011 requires min 1.0 MΩ for 500V systems
-    errorMessage: 'Tahanan Isolasi R-N terlalu rendah. Standar minimum adalah 1.0 MΩ.',
-    severity: 'error'
-  },
-  {
-    ruleId: 'tahanan_isolasi_sn_min',
-    fieldId: 'isolasiSN',
-    type: 'range',
-    params: { min: 1.0 },
-    errorMessage: 'Tahanan Isolasi S-N terlalu rendah. Standar minimum adalah 1.0 MΩ.',
-    severity: 'error'
-  },
-  {
-    ruleId: 'tahanan_isolasi_tn_min',
-    fieldId: 'isolasiTN',
-    type: 'range',
-    params: { min: 1.0 },
-    errorMessage: 'Tahanan Isolasi T-N terlalu rendah. Standar minimum adalah 1.0 MΩ.',
-    severity: 'error'
-  },
-  {
-    ruleId: 'tahanan_isolasi_rg_min',
-    fieldId: 'isolasiRG',
-    type: 'range',
-    params: { min: 1.0 },
-    errorMessage: 'Tahanan Isolasi R-G terlalu rendah. Standar minimum adalah 1.0 MΩ.',
-    severity: 'error'
-  },
-  {
-    ruleId: 'tahanan_isolasi_sg_min',
-    fieldId: 'isolasiSG',
-    type: 'range',
-    params: { min: 1.0 },
-    errorMessage: 'Tahanan Isolasi S-G terlalu rendah. Standar minimum adalah 1.0 MΩ.',
-    severity: 'error'
-  },
-  {
-    ruleId: 'tahanan_isolasi_tg_min',
-    fieldId: 'isolasiTG',
-    type: 'range',
-    params: { min: 1.0 },
-    errorMessage: 'Tahanan Isolasi T-G terlalu rendah. Standar minimum adalah 1.0 MΩ.',
-    severity: 'error'
-  },
-  {
     ruleId: 'grounding_max_5',
     fieldId: 'tahananPentanahan',
     type: 'range',
-    params: { max: 5.0 }, // PUIL/Permenaker requires max 5.0 Ω
-    errorMessage: 'Tahanan Pentanahan (Grounding) terlalu tinggi. Maksimum standar adalah 5.0 Ω.',
-    severity: 'error'
-  }
+    params: { max: 5.0 },
+    errorMessage: 'Tahanan Pentanahan melebihi batas SNI/PUIL 2011 (maksimum 5.0 Ω).',
+    severity: 'error',
+  },
+  {
+    ruleId: 'suhu_r_max_70',
+    fieldId: 'suhuR',
+    type: 'range',
+    params: { max: 70 },
+    errorMessage: 'Suhu penghantar Phasa R melebihi batas maksimum 70 °C.',
+    severity: 'warning',
+  },
+  {
+    ruleId: 'suhu_s_max_70',
+    fieldId: 'suhuS',
+    type: 'range',
+    params: { max: 70 },
+    errorMessage: 'Suhu penghantar Phasa S melebihi batas maksimum 70 °C.',
+    severity: 'warning',
+  },
+  {
+    ruleId: 'suhu_t_max_70',
+    fieldId: 'suhuT',
+    type: 'range',
+    params: { max: 70 },
+    errorMessage: 'Suhu penghantar Phasa T melebihi batas maksimum 70 °C.',
+    severity: 'warning',
+  },
 ];

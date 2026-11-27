@@ -29,6 +29,7 @@ export interface MasterComponentRef {
     itemId: string;
     description: string;
     standard?: string;
+    method?: string;
   }[];
 }
 

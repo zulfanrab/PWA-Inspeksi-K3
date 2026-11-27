@@ -37,7 +37,7 @@ const registry: Record<string, InspectionReportConfig> = {
 // Map 'Listrik' to 'IL' and 'Penyalur Petir' to 'IPP'
 export function mapObjectTypeToCode(objectType: string): string {
   const clean = objectType.trim().toLowerCase();
-  if (clean === 'listrik' || clean === 'instalasi listrik') return 'IL';
+  if (clean === 'listrik' || clean === 'instalasi listrik' || clean === 'il') return 'IL';
   if (clean === 'penyalur petir' || clean === 'instalasi penyalur petir' || clean === 'ipp') return 'IPP';
   return objectType;
 }

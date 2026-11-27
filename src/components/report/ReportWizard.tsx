@@ -9,6 +9,7 @@ import { SequenceGenerator } from '../../engines/SequenceGenerator';
 import { getApiBaseUrl } from '../../config';
 import { registerBackInterceptor } from '../../utils/navigationGuard';
 import { IppReportWizard } from './IppReportWizard';
+import { IlReportWizard } from './IlReportWizard';
 
 interface ReportWizardProps {
   reportId: number | null; // null jika buat baru
@@ -524,6 +525,18 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
   if (typeCode === 'IPP' && selectedInspection && currentStep >= 2) {
     return (
       <IppReportWizard
+        selectedInspection={selectedInspection}
+        reportId={reportId}
+        initialReportData={loadedReportData}
+        onChangeSource={() => setCurrentStep(1)}
+        onClose={onClose}
+      />
+    );
+  }
+
+  if (typeCode === 'IL' && selectedInspection && currentStep >= 2) {
+    return (
+      <IlReportWizard
         selectedInspection={selectedInspection}
         reportId={reportId}
         initialReportData={loadedReportData}

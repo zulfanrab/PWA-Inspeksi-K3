@@ -154,6 +154,14 @@ async function handleSequence(req: VercelRequest, res: VercelResponse) {
   });
 }
 
+function parseGeminiJson(rawText: string): any {
+  const cleaned = String(rawText || '')
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+  return JSON.parse(cleaned);
+}
+
 async function generateContentWithRetry(
   genAI: GoogleGenerativeAI,
   modelCandidates: string[],
@@ -161,32 +169,61 @@ async function generateContentWithRetry(
 ) {
   let lastError: any;
   const startedAt = Date.now();
-  for (const modelName of modelCandidates) {
-    // Jaga agar total waktu tidak melewati batas timeout Vercel 10 detik
-    if (Date.now() - startedAt > 6500) break;
+  const TOTAL_BUDGET_MS = 8500;
+
+  for (let i = 0; i < modelCandidates.length; i++) {
+    const modelName = modelCandidates[i];
+    const hasFallbackNext = i < modelCandidates.length - 1;
+    const budgetLeft = TOTAL_BUDGET_MS - (Date.now() - startedAt);
+    if (budgetLeft <= 1200) break;
+
     const model = genAI.getGenerativeModel({ model: modelName });
     for (let attempt = 0; attempt < 2; attempt++) {
+      const remainingMs = TOTAL_BUDGET_MS - (Date.now() - startedAt);
+      if (remainingMs <= 1200) break;
+      const attemptTimeout = hasFallbackNext ? Math.min(4800, remainingMs) : remainingMs;
       try {
-        return await model.generateContent(requestConfig);
+        return await model.generateContent(requestConfig, { timeout: attemptTimeout });
       } catch (err: any) {
         lastError = err;
-        const msg = String(err?.message || '');
+        const msg = String(err?.message || '').toLowerCase();
         const isNotFound = err?.status === 404 || msg.includes('404') || msg.includes('no longer available');
         if (isNotFound) {
           break;
         }
-        const isTransient = err?.status === 503 || err?.status === 429 || msg.includes('503') || msg.includes('high demand');
-        if (isTransient && attempt === 0 && Date.now() - startedAt < 5000) {
-          await new Promise((r) => setTimeout(r, 450));
+        const isTransient =
+          err?.status === 503 ||
+          err?.status === 429 ||
+          err?.status === 500 ||
+          msg.includes('503') ||
+          msg.includes('429') ||
+          msg.includes('high demand') ||
+          msg.includes('overloaded') ||
+          msg.includes('resource_exhausted') ||
+          msg.includes('unavailable') ||
+          msg.includes('timeout') ||
+          msg.includes('abort');
+
+        const afterErrLeft = TOTAL_BUDGET_MS - (Date.now() - startedAt);
+        // Jika ada fallback model dan waktu mepet, langsung lompat ke model fallback agar cepat
+        if (isTransient && attempt === 0 && afterErrLeft > 4200 && !hasFallbackNext) {
+          await new Promise((r) => setTimeout(r, 400));
+          continue;
+        }
+        if (isTransient && hasFallbackNext) {
+          break;
+        }
+        if (isTransient && attempt === 0 && afterErrLeft > 3000) {
+          await new Promise((r) => setTimeout(r, 350));
           continue;
         }
         break;
       }
     }
   }
-  const lastMsg = String(lastError?.message || '');
-  if (lastError?.status === 503 || lastMsg.includes('503') || lastMsg.includes('high demand')) {
-    throw new Error('Server AI Gemini sedang padat sementara (503). Silakan tunggu beberapa detik lalu coba lagi.');
+  const lastMsg = String(lastError?.message || '').toLowerCase();
+  if (lastError?.status === 503 || lastError?.status === 429 || lastMsg.includes('503') || lastMsg.includes('429') || lastMsg.includes('high demand')) {
+    throw new Error('Server AI Gemini sedang padat sementara (503/429). Silakan tunggu beberapa detik lalu coba lagi.');
   }
   throw lastError;
 }
@@ -215,10 +252,9 @@ async function handleNarrative(req: VercelRequest, res: VercelResponse) {
   }
 
   const genAI = new GoogleGenerativeAI(apiKey);
-  // Gunakan gemini-3.8-flash langsung agar cepat (< 4 detik) dan aman dari timeout 10s Vercel Hobby
   const modelCandidates = modelTier === 'pro'
-    ? ['gemini-3.8-flash', 'gemini-3.8-flash-lite']
-    : ['gemini-3.8-flash'];
+    ? ['gemini-2.5-pro', 'gemini-2.5-flash']
+    : ['gemini-2.5-flash', 'gemini-2.5-pro'];
 
   const promptInstructions = `
 Ikuti instruksi sistem berikut secara ketat:
@@ -267,9 +303,7 @@ Kembalikan respon Anda strictly dalam bentuk JSON sesuai dengan schema yang dite
   };
 
   const result = await generateContentWithRetry(genAI, modelCandidates, requestConfig);
-
-  const responseText = result.response.text().replace(/^```json\s*|\s*```$/g, '').trim();
-  const parsedNarrative = JSON.parse(responseText);
+  const parsedNarrative = parseGeminiJson(result.response.text());
 
   return res.status(200).json({
     success: true,
@@ -280,24 +314,39 @@ Kembalikan respon Anda strictly dalam bentuk JSON sesuai dengan schema yang dite
 function formatIndonesianDayAndDate(dateStr?: string): { day: string; formatted: string } {
   if (!dateStr) return { day: '', formatted: '' };
   const raw = String(dateStr).trim();
-  let parsed: Date;
-
-  // Dukung DD/MM/YYYY atau DD-MM-YYYY (sering berasal dari data inspeksi lapangan)
-  const dmyMatch = raw.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
-  if (dmyMatch) {
-    const [, dd, mm, yyyy] = dmyMatch;
-    parsed = new Date(`${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}T00:00:00+07:00`);
-  } else {
-    parsed = new Date(raw.includes('T') ? raw : `${raw}T00:00:00+07:00`);
-  }
-
-  if (isNaN(parsed.getTime())) return { day: '', formatted: raw };
-
-  const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
   const months = [
     'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
     'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
   ];
+  const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+
+  let parsed: Date | null = null;
+
+  // Dukung DD/MM/YYYY atau DD-MM-YYYY (sering berasal dari data inspeksi lapangan)
+  const dmyMatch = raw.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  // Dukung YYYY-MM-DD
+  const ymdMatch = raw.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+  // Dukung "12 November 2026" (sudah berformat huruf Indonesia)
+  const idTextMatch = raw.match(/^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$/);
+
+  if (dmyMatch) {
+    const [, dd, mm, yyyy] = dmyMatch;
+    parsed = new Date(`${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}T00:00:00+07:00`);
+  } else if (ymdMatch) {
+    const [, yyyy, mm, dd] = ymdMatch;
+    parsed = new Date(`${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}T00:00:00+07:00`);
+  } else if (idTextMatch) {
+    const [, dd, mName, yyyy] = idTextMatch;
+    const mIdx = months.findIndex((m) => m.toLowerCase() === mName.toLowerCase());
+    if (mIdx >= 0) {
+      parsed = new Date(`${yyyy}-${String(mIdx + 1).padStart(2, '0')}-${dd.padStart(2, '0')}T00:00:00+07:00`);
+    }
+  } else {
+    parsed = new Date(raw.includes('T') ? raw : `${raw}T00:00:00+07:00`);
+  }
+
+  if (!parsed || isNaN(parsed.getTime())) return { day: '', formatted: raw };
+
   return {
     day: days[parsed.getDay()] || '',
     formatted: `${parsed.getDate()} ${months[parsed.getMonth()]} ${parsed.getFullYear()}`
@@ -360,7 +409,7 @@ async function handleGenerate(req: VercelRequest, res: VercelResponse) {
         } else if (
           tagName === 'skpAhliImage' ||
           tagName === 'skpPerusahaanImage' ||
-          (tagName === 'image' && String(reportData.inspectionTypeCode).toUpperCase() === 'IPP')
+          (tagName === 'image' && ['IPP', 'IL'].includes(String(reportData.inspectionTypeCode).toUpperCase()))
         ) {
           maxWidth = 560;
           maxHeight = 840;
@@ -426,7 +475,101 @@ async function handleGenerate(req: VercelRequest, res: VercelResponse) {
   const sanitizedTech = Object.fromEntries(
     Object.entries(rawTech).filter(([, v]) => v !== undefined && v !== null)
   );
-  const isIpp = String(reportData.inspectionTypeCode || '').toUpperCase() === 'IPP';
+  const typeCodeUpper = String(reportData.inspectionTypeCode || '').toUpperCase();
+  const isIl = typeCodeUpper === 'IL';
+
+  const strVal = (v: any, fallback: string) =>
+    v !== undefined && v !== null && String(v).trim() !== '' ? String(v) : fallback;
+
+  const ippFields = {
+    // 20 Data Umum + technical fields IPP (pastikan tidak pernah kosong/undefined)
+    jenisAlat: strVal(rawTech.jenisAlat, 'Instalasi Penyalur Petir'),
+    jenisPenyalurPetir: strVal(rawTech.jenisPenyalurPetir, '-'),
+    bentukPenerima: strVal(rawTech.bentukPenerima, '-'),
+    merkType: strVal(rawTech.merkType, '-'),
+    tahunPemasangan: strVal(rawTech.tahunPemasangan, '-'),
+    tinggiTiangPenerima: strVal(rawTech.tinggiTiangPenerima, '-'),
+    tinggiBangunan: strVal(rawTech.tinggiBangunan, '-'),
+    jumlahAirTerminal: strVal(rawTech.jumlahAirTerminal, '-'),
+    jumlahBoxKontrol: strVal(rawTech.jumlahBoxKontrol, '-'),
+    jumlahElektrodaPembumian: strVal(rawTech.jumlahElektrodaPembumian, '-'),
+    radiusPerlindungan: strVal(rawTech.radiusPerlindungan, '-'),
+    jumlahDownConductor: strVal(rawTech.jumlahDownConductor, '-'),
+    jenisDownConductor: strVal(rawTech.jenisDownConductor, '-'),
+    diameterTiangPenerima: strVal(rawTech.diameterTiangPenerima, '-'),
+    luasBangunan: strVal(rawTech.luasBangunan, '-'),
+    jenisKonstruksi: strVal(rawTech.jenisKonstruksi, '-'),
+    atapBangunan: strVal(rawTech.atapBangunan, '-'),
+    dindingBangunan: strVal(rawTech.dindingBangunan, '-'),
+    lantaiBangunan: strVal(rawTech.lantaiBangunan, '-'),
+    lokasiPemasangan: strVal(rawTech.lokasiPemasangan, '-'),
+    measuringTool: strVal(rawTech.measuringTool, 'Earth Tester Merk Kyoritsu'),
+  };
+
+  const ilFields = {
+    // 12 Data Umum IL (seluruh tag dijamin terisi & tidak undefined)
+    instalatirPemasang: strVal(rawTech.instalatirPemasang, '-'),
+    sumberTegangan: strVal(rawTech.sumberTegangan, 'PLN'),
+    sumberDayaListrik: strVal(rawTech.sumberDayaListrik, '-'),
+    dayaPenerangan: strVal(rawTech.dayaPenerangan, '-'),
+    dayaTenaga: strVal(rawTech.dayaTenaga, '-'),
+    jumlahPhasa: strVal(rawTech.jumlahPhasa, '3 Phase'),
+    frekuensi: strVal(rawTech.frekuensi, '50 Hz'),
+    jenisArus: strVal(rawTech.jenisArus, 'AC (Alternating Current)'),
+    teganganKerja: strVal(rawTech.teganganKerja, '220 / 380 Volt'),
+    lokasiPanel: strVal(rawTech.lokasiPanel ?? rawTech.lokasiUnit, '-'),
+
+    // Analisis Perhitungan Arus Nominal, KHA, Rating Proteksi, & Beban RST (PUIL 2011)
+    dayaTerpasangKva: strVal(rawTech.dayaTerpasangKva, '0'),
+    teganganVolt: strVal(rawTech.teganganVolt, '380'),
+    cosPhi: strVal(rawTech.cosPhi, '0.8'),
+    dayaAktifKw: strVal(rawTech.dayaAktifKw, '0'),
+    dayaAktifWatt: strVal(rawTech.dayaAktifWatt, '0'),
+    inDenominatorExpr: strVal(rawTech.inDenominatorExpr, '380 × 0.8 × √3'),
+    inDenominatorVal: strVal(rawTech.inDenominatorVal, '0'),
+    arusNominal: strVal(rawTech.arusNominal, '0'),
+    khaHitung: strVal(rawTech.khaHitung, '0'),
+    jenisKabel: strVal(rawTech.jenisKabel, 'NYY'),
+    ukuranKabel: strVal(rawTech.ukuranKabel, '-'),
+    instalasiKabel: strVal(rawTech.instalasiKabel, 'Di Udara'),
+    khaKabel: strVal(rawTech.khaKabel, '0'),
+    khaConclusion: strVal(rawTech.khaConclusion, '-'),
+    jenisProteksi: strVal(rawTech.jenisProteksi, 'MCCB'),
+    kapasitasProteksi: strVal(rawTech.kapasitasProteksi, '0'),
+    ratingCbHitung: strVal(rawTech.ratingCbHitung, '0'),
+    proteksiConclusion: strVal(rawTech.proteksiConclusion, '-'),
+    arusR: strVal(rawTech.arusR, '0'),
+    arusS: strVal(rawTech.arusS, '0'),
+    arusT: strVal(rawTech.arusT, '0'),
+    arusTotal: strVal(rawTech.arusTotal, '0'),
+    arusRataRata: strVal(rawTech.arusRataRata, '0'),
+    rasioA: strVal(rawTech.rasioA, '0.000'),
+    rasioB: strVal(rawTech.rasioB, '0.000'),
+    rasioC: strVal(rawTech.rasioC, '0.000'),
+    devA: strVal(rawTech.devA, '0.000'),
+    devB: strVal(rawTech.devB, '0.000'),
+    devC: strVal(rawTech.devC, '0.000'),
+    devTotal: strVal(rawTech.devTotal, '0.000'),
+    unbalancePercent: strVal(rawTech.unbalancePercent, '0'),
+    unbalanceConclusion: strVal(rawTech.unbalanceConclusion, '-'),
+  };
+
+  const normalizedChecklistSections = isIl
+    ? (Array.isArray(reportData.checklistData?.checklistSections)
+        ? reportData.checklistData.checklistSections.map((sec: any) => ({
+            sectionTitle: strVal(sec?.sectionTitle, ''),
+            items: Array.isArray(sec?.items)
+              ? sec.items.map((it: any, idx: number) => ({
+                  no: it?.no ?? idx + 1,
+                  obyek: strVal(it?.obyek ?? it?.description, '-'),
+                  hasil: strVal(it?.hasil ?? it?.result, '-'),
+                  nilaiRujukan: strVal(it?.nilaiRujukan ?? it?.standard, '-'),
+                  metode: strVal(it?.metode ?? it?.method, 'Penilaian'),
+                }))
+              : [],
+          }))
+        : [])
+    : (reportData.checklistData?.checklistSections || []);
 
   const templateData = {
     // Spread technicalData lebih dulu agar field terformat (inspectionDate, reportDate, dll.) di bawah tidak tertimpa
@@ -434,12 +577,9 @@ async function handleGenerate(req: VercelRequest, res: VercelResponse) {
 
     companyName: reportData.generalData?.companyName || '',
     companyAddress: reportData.generalData?.companyAddress || '',
-    inspectionDate: isIpp
-      ? (inspDateInfo.formatted || reportData.generalData?.inspectionDate || '')
-      : (reportData.generalData?.inspectionDate || ''),
-    reportDate: isIpp
-      ? (repDateInfo.formatted || reportData.generalData?.reportDate || '')
-      : (reportData.generalData?.reportDate || ''),
+    // Format tanggal huruf Indonesia (contoh: 12 November 2026) berlaku untuk IPP & IL
+    inspectionDate: inspDateInfo.formatted || reportData.generalData?.inspectionDate || '',
+    reportDate: repDateInfo.formatted || reportData.generalData?.reportDate || '',
     inspectionDay: inspDateInfo.day,
     inspectionDateFormatted: inspDateInfo.formatted,
     reportDateFormatted: repDateInfo.formatted,
@@ -452,31 +592,10 @@ async function handleGenerate(req: VercelRequest, res: VercelResponse) {
     skpAhliImage: reportData.generalData?.skpAhliImage || '',
     skpPerusahaanImage: reportData.generalData?.skpPerusahaanImage || '',
 
-    // 20 Data Umum + technical fields (pastikan tidak pernah kosong/undefined jika tidak diisi)
-    jenisAlat: rawTech.jenisAlat || 'Instalasi Penyalur Petir',
-    jenisPenyalurPetir: rawTech.jenisPenyalurPetir || '-',
-    bentukPenerima: rawTech.bentukPenerima || '-',
-    merkType: rawTech.merkType || '-',
-    tahunPemasangan: rawTech.tahunPemasangan || '-',
-    tinggiTiangPenerima: rawTech.tinggiTiangPenerima || '-',
-    tinggiBangunan: rawTech.tinggiBangunan || '-',
-    jumlahAirTerminal: rawTech.jumlahAirTerminal || '-',
-    jumlahBoxKontrol: rawTech.jumlahBoxKontrol || '-',
-    jumlahElektrodaPembumian: rawTech.jumlahElektrodaPembumian || '-',
-    radiusPerlindungan: rawTech.radiusPerlindungan || '-',
-    jumlahDownConductor: rawTech.jumlahDownConductor || '-',
-    jenisDownConductor: rawTech.jenisDownConductor || '-',
-    diameterTiangPenerima: rawTech.diameterTiangPenerima || '-',
-    luasBangunan: rawTech.luasBangunan || '-',
-    jenisKonstruksi: rawTech.jenisKonstruksi || '-',
-    atapBangunan: rawTech.atapBangunan || '-',
-    dindingBangunan: rawTech.dindingBangunan || '-',
-    lantaiBangunan: rawTech.lantaiBangunan || '-',
-    lokasiPemasangan: rawTech.lokasiPemasangan || '-',
-    measuringTool: rawTech.measuringTool || 'Earth Tester Merk Kyoritsu',
+    ...(isIl ? ilFields : ippFields),
 
     // Checklists
-    checklistSections: reportData.checklistData?.checklistSections || [],
+    checklistSections: normalizedChecklistSections,
     continuityItems: reportData.checklistData?.continuityItems || reportData.checklistData?.continuity || [],
     components: reportData.checklistData?.components || [],
     continuity: reportData.checklistData?.continuity || [],
@@ -495,14 +614,16 @@ async function handleGenerate(req: VercelRequest, res: VercelResponse) {
     calculations: reportData.formulaResults?.calculations || [],
     overallSafetyStatus: reportData.formulaResults?.overallSafetyStatus || 'AMAN',
 
-    // Narratives (kontrak IPP + legacy)
+    // Narratives (kontrak IPP + IL + legacy)
     visualSummary: sections.visualSummary || sections.executiveSummary || '',
+    testingSummary: sections.testingSummary || sections.testResultsNarrative || '',
     measurementSummary: sections.measurementSummary || sections.testResultsNarrative || '',
     executiveSummary: sections.executiveSummary || sections.visualSummary || '',
     findingsNarrative: sections.findingsNarrative || sections.visualSummary || '',
-    testResultsNarrative: sections.testResultsNarrative || sections.measurementSummary || '',
+    testResultsNarrative: sections.testResultsNarrative || sections.testingSummary || sections.measurementSummary || '',
     recommendations: sections.recommendations || '',
     conclusion: sections.conclusion || '',
+    closingNote: sections.closingNote || '',
 
     // Photos & Extra Attachments
     photoRows,
@@ -892,7 +1013,7 @@ async function handleInspectors(req: VercelRequest, res: VercelResponse) {
   return res.status(405).json({ error: 'Method not allowed' });
 }
 
-// 7. VISION & PRE-FLIGHT QC (Gemini 3.8 Flash)
+// 7. VISION & PRE-FLIGHT QC (Gemini 2.5 Flash + Fallback Stabil)
 async function handleVision(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   const apiKey = process.env.GEMINI_API_KEY;
@@ -900,14 +1021,16 @@ async function handleVision(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ error: 'GEMINI_API_KEY belum dikonfigurasi di server.' });
   }
 
-  const { mode, imageDataUrl, photos, context, payload } = req.body || {};
+  const { mode, inspectionType, imageDataUrl, photos, context, payload } = req.body || {};
   const genAI = new GoogleGenerativeAI(apiKey);
-  const flashCandidates = ['gemini-3.8-flash', 'gemini-3.8-flash-lite', 'gemini-2.5-flash'];
+  const flashCandidates = ['gemini-2.5-flash', 'gemini-2.5-pro'];
 
   if (mode === 'ocr_meter') {
     if (!imageDataUrl) return res.status(400).json({ error: 'imageDataUrl wajib diisi.' });
     const base64 = String(imageDataUrl).replace(/^data:image\/\w+;base64,/, '');
     const mimeType = String(imageDataUrl).match(/^data:(image\/\w+);base64,/)?.[1] || 'image/jpeg';
+
+    const isIlVision = String(inspectionType || '').toUpperCase() === 'IL';
 
     const result = await generateContentWithRetry(genAI, flashCandidates, {
       contents: [
@@ -916,27 +1039,42 @@ async function handleVision(req: VercelRequest, res: VercelResponse) {
           parts: [
             { inlineData: { data: base64, mimeType } },
             {
-              text: 'Baca layar alat ukur Earth Tester pada foto ini. Ekstrak angka tahanan pembumian dalam Ohm (hanya angka desimal, misal "1.39") dan merk/tipe alat ukur jika terlihat. Kembalikan JSON.'
+              text: isIlVision
+                ? 'Baca layar alat ukur kelistrikan (Clamp Meter, Multimeter, Thermograph, atau Earth Tester) pada foto ini. Ekstrak nilai angka yang terbaca (arus R/S/T dalam Ampere, tegangan dalam Volt, suhu °C, atau tahanan pentanahan dalam Ohm) tanpa satuan, lalu kembalikan JSON. Kosongkan field yang tidak tampak.'
+                : 'Baca layar alat ukur Earth Tester pada foto ini. Ekstrak angka tahanan pembumian dalam Ohm (hanya angka desimal, misal "1.39") dan merk/tipe alat ukur jika terlihat. Kembalikan JSON.'
             }
           ]
         }
       ],
       generationConfig: {
         responseMimeType: 'application/json',
-        responseSchema: {
-          type: SchemaType.OBJECT,
-          properties: {
-            resistanceValue: { type: SchemaType.STRING, description: 'Angka tahanan Ohm saja, misal 1.39' },
-            toolBrand: { type: SchemaType.STRING, description: 'Merk/tipe alat ukur jika terlihat' }
-          }
-        },
+        responseSchema: isIlVision
+          ? {
+              type: SchemaType.OBJECT,
+              properties: {
+                arusR: { type: SchemaType.STRING, description: 'Angka arus Phasa R (A) bila terlihat' },
+                arusS: { type: SchemaType.STRING, description: 'Angka arus Phasa S (A) bila terlihat' },
+                arusT: { type: SchemaType.STRING, description: 'Angka arus Phasa T (A) bila terlihat' },
+                teganganVolt: { type: SchemaType.STRING, description: 'Angka tegangan Volt bila terlihat' },
+                suhuR: { type: SchemaType.STRING, description: 'Angka suhu °C bila terlihat (thermograph)' },
+                tahananPentanahan: { type: SchemaType.STRING, description: 'Angka tahanan pembumian Ohm bila terlihat' },
+                toolBrand: { type: SchemaType.STRING, description: 'Merk/tipe alat ukur jika terlihat' }
+              }
+            }
+          : {
+              type: SchemaType.OBJECT,
+              properties: {
+                resistanceValue: { type: SchemaType.STRING, description: 'Angka tahanan Ohm saja, misal 1.39' },
+                toolBrand: { type: SchemaType.STRING, description: 'Merk/tipe alat ukur jika terlihat' }
+              }
+            },
         temperature: 0.1
       }
     });
 
     return res.status(200).json({
       success: true,
-      data: JSON.parse(result.response.text())
+      data: parseGeminiJson(result.response.text())
     });
   }
 
@@ -954,8 +1092,11 @@ async function handleVision(req: VercelRequest, res: VercelResponse) {
       }
     });
 
+    const isIlPhotos = String(context?.inspectionType || inspectionType || '').toUpperCase() === 'IL';
     parts.push({
-      text: `Identifikasi setiap foto inspeksi penyalur petir ini (misal: Air Terminal / Splitzen, Box Kontrol / Test Joint, Pengukuran Grounding ${context?.tahananPembumian || ''} Ohm dengan ${context?.measuringTool || 'Earth Tester'}, atau Foto Bersama Pihak Perusahaan). Berikan caption Bahasa Indonesia formal yang singkat & konsisten untuk setiap ID, dan tandai isJointPhoto=true maksimal pada 1 foto bersama tim/perusahaan jika ada.`
+      text: isIlPhotos
+        ? `Identifikasi setiap foto pemeriksaan Instalasi Listrik ini (misal: Panel LVMDP/SDP ${context?.lokasiPanel || ''}, Tampak Dalam Panel & Busbar, Pengaman MCCB/ACB, Pengukuran Arus R/S/T ${context?.arusR || ''}/${context?.arusS || ''}/${context?.arusT || ''} A dengan Clamp Meter, Pengukuran Suhu Thermograph, Pengukuran Grounding ${context?.tahananPentanahan || ''} Ohm, atau Foto Bersama Pihak Perusahaan). Berikan caption Bahasa Indonesia formal yang singkat & konsisten untuk setiap ID, dan tandai isJointPhoto=true maksimal pada 1 foto bersama tim/perusahaan jika ada.`
+        : `Identifikasi setiap foto inspeksi penyalur petir ini (misal: Air Terminal / Splitzen, Box Kontrol / Test Joint, Pengukuran Grounding ${context?.tahananPembumian || ''} Ohm dengan ${context?.measuringTool || 'Earth Tester'}, atau Foto Bersama Pihak Perusahaan). Berikan caption Bahasa Indonesia formal yang singkat & konsisten untuk setiap ID, dan tandai isJointPhoto=true maksimal pada 1 foto bersama tim/perusahaan jika ada.`
     });
 
     const result = await generateContentWithRetry(genAI, flashCandidates, {
@@ -986,18 +1127,21 @@ async function handleVision(req: VercelRequest, res: VercelResponse) {
 
     return res.status(200).json({
       success: true,
-      data: JSON.parse(result.response.text())
+      data: parseGeminiJson(result.response.text())
     });
   }
 
   if (mode === 'preflight_qc') {
+    const isIlQc = String(payload?.inspectionType || inspectionType || '').toUpperCase() === 'IL';
     const result = await generateContentWithRetry(genAI, flashCandidates, {
       contents: [
         {
           role: 'user',
           parts: [
             {
-              text: `Periksa konsistensi angka & status hukum K3 pada payload laporan IPP berikut (apakah angka tahanan pembumian di tabel sama dengan di narasi, apakah status memenuhi <= 5 Ohm konsisten dengan kesimpulan). Jawab singkat dalam 2-4 poin Bahasa Indonesia:\n${JSON.stringify(payload)}`
+              text: isIlQc
+                ? `Periksa konsistensi angka perhitungan PUIL 2011 (In, KHA >= 125% In, Rating CB >= 115% In, I unbalance < 20%, Pentanahan <= 5 Ohm) terhadap narasi Pemeriksaan, Pengujian, Kesimpulan, dan Syarat-Syarat pada payload laporan IL berikut. Jawab singkat dalam 2-4 poin Bahasa Indonesia:\n${JSON.stringify(payload)}`
+                : `Periksa konsistensi angka & status hukum K3 pada payload laporan IPP berikut (apakah angka tahanan pembumian di tabel sama dengan di narasi, apakah status memenuhi <= 5 Ohm konsisten dengan kesimpulan). Jawab singkat dalam 2-4 poin Bahasa Indonesia:\n${JSON.stringify(payload)}`
             }
           ]
         }

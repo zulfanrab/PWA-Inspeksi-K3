@@ -2,84 +2,288 @@
 import { ChecklistConfig } from '../types';
 
 export const checklists: ChecklistConfig = {
-  version: '1.0.0',
+  version: '2.0.0',
   categories: [
     {
-      categoryId: 'phb_visual_door',
-      categoryName: 'Pemeriksaan Visual Tampak Dalam / Pintu PHB',
+      categoryId: 'visual_luar_phb',
+      categoryName: '1. Pemeriksaan Visual Tampak Luar PHB',
       components: [
         {
-          componentId: 'door_components',
-          componentName: 'Komponen Pintu Panel',
+          componentId: 'luar_phb',
+          componentName: 'Pemeriksaan Visual Tampak Luar PHB',
           isDefault: true,
           items: [
-            { itemId: 'lampu_indikator', description: 'Lampu indikator phasa (R-S-T) menyala normal', standard: 'PUIL 2011' },
-            { itemId: 'alat_ukur', description: 'Alat ukur/metering (Volt, Ampere, Hz) berfungsi baik', standard: 'PUIL 2011' },
-            { itemId: 'nama_label', description: 'Nama/label pintu panel terpasang jelas', standard: 'PUIL 2011' },
-            { itemId: 'tanda_bahaya_pintu', description: 'Tanda bahaya pada pintu panel luar jelas', standard: 'Permenaker 12/2015' },
-            { itemId: 'selector_switch', description: 'Selector switch & kunci pintu panel berfungsi', standard: 'PUIL 2011' }
-          ]
-        }
-      ]
+            {
+              itemId: '1.1',
+              description: 'Lampu indikator pada Panel',
+              standard: 'Manufacture Std.',
+              method: 'Penilaian',
+            },
+            {
+              itemId: '1.2',
+              description: 'Alat ukur atau metering (Ampere Meter, Volt Meter, dll.)',
+              standard: 'Manufacture Std.',
+              method: 'Penilaian',
+            },
+            {
+              itemId: '1.3',
+              description: 'Nama/label dan nama perusahaan instalatir pada pintu panel',
+              standard: 'Manufacture Std.',
+              method: 'Penilaian',
+            },
+            {
+              itemId: '1.4',
+              description: 'Tanda bahaya pada pintu panel',
+              standard: 'Manufacture Std.',
+              method: 'Penilaian',
+            },
+            {
+              itemId: '1.5',
+              description: 'Selector Switch dan kunci pintu panel',
+              standard: 'Manufacture Std.',
+              method: 'Penilaian',
+            },
+          ],
+        },
+      ],
     },
     {
-      categoryId: 'phb_termination',
-      categoryName: 'Pemeriksaan Visual Pada Sistem Terminasi',
+      categoryId: 'visual_dalam_phb',
+      categoryName: '2. Pemeriksaan Visual Tampak Dalam PHB',
       components: [
         {
-          componentId: 'termination_components',
-          componentName: 'Koneksi dan Kabel',
+          componentId: 'dalam_phb',
+          componentName: 'Pemeriksaan Visual Tampak Dalam PHB',
           isDefault: true,
           items: [
-            { itemId: 'cover_pelindung', description: 'Cover pelindung sentuh langsung terpasang aman', standard: 'PUIL 2011' },
-            { itemId: 'single_line_diagram', description: 'Single line diagram terlampir di dalam panel', standard: 'PUIL 2011' },
-            { itemId: 'bonding_pintu', description: 'Kabel bonding pengaman pintu panel terpasang', standard: 'PUIL 2011' },
-            { itemId: 'labeling_terminasi', description: 'Labeling terminasi kabel jelas dan teratur', standard: 'PUIL 2011' },
-            { itemId: 'kode_warna', description: 'Kode warna kabel sesuai standar (R-Merah, S-Kuning, T-Hitam, N-Biru, G-Kuning/Hijau)', standard: 'PUIL 2011' },
-            { itemId: 'kebersihan_panel', description: 'Kebersihan bagian dalam panel terjaga bebas debu', standard: 'PUIL 2011' },
-            { itemId: 'kerapian_instalasi', description: 'Kerapian instalasi kabel (wiring) tertata rapi', standard: 'PUIL 2011' }
-          ]
-        }
-      ]
+            {
+              itemId: '2.1',
+              description: 'Cover pelindung tegangan sentuh langsung',
+              standard: 'Manufacture Std.',
+              method: 'Penilaian',
+            },
+            {
+              itemId: '2.2',
+              description: 'Gambar single line diagram dan kartu riwayat perawatan',
+              standard: 'Manufacture Std.',
+              method: 'Penilaian',
+            },
+            {
+              itemId: '2.3',
+              description: 'Kabel bonding untuk pengaman sentuh tidak langsung',
+              standard: 'Manufacture Std.',
+              method: 'Penilaian',
+            },
+            {
+              itemId: '2.4',
+              description: 'Labeling',
+              standard: 'Manufacture Std.',
+              method: 'Penilaian',
+            },
+            {
+              itemId: '2.5',
+              description: 'Kode warna kabel',
+              standard: 'Manufacture Std.',
+              method: 'Penilaian',
+            },
+            {
+              itemId: '2.6',
+              description: 'Kebersihan Panel',
+              standard: 'Manufacture Std.',
+              method: 'Penilaian',
+            },
+            {
+              itemId: '2.7',
+              description: 'Kerapian Instalasi',
+              standard: 'Manufacture Std.',
+              method: 'Penilaian',
+            },
+          ],
+        },
+      ],
     },
     {
-      categoryId: 'phb_internal_busbar',
-      categoryName: 'Pemeriksaan Visual Daerah Kerja PHB',
+      categoryId: 'sistem_terminasi',
+      categoryName: '3. Pemeriksaan Visual Pada Sistem Terminasi',
       components: [
         {
-          componentId: 'internal_components',
-          componentName: 'Busbar & Pengaman',
+          componentId: 'terminasi',
+          componentName: 'Pemeriksaan Visual Pada Sistem Terminasi',
           isDefault: true,
           items: [
-            { itemId: 'busbar_conductor', description: 'Kondisi busbar/penghantar utama bersih & kencang', standard: 'PUIL 2011' },
-            { itemId: 'breaker_fuse', description: 'Pengaman (Circuit Breaker/Fuse) bekerja baik', standard: 'PUIL 2011' },
-            { itemId: 'sepatu_kabel', description: 'Sepatu kabel (cable lug) terpasang presisi & kencang', standard: 'PUIL 2011' },
-            { itemId: 'grounding_panel', description: 'Grounding panel terhubung erat ke sistem pembumian', standard: 'PUIL 2011' },
-            { itemId: 'jarak_busbar', description: 'Jarak antar busbar phasa memenuhi standar aman', standard: 'PUIL 2011' }
-          ]
-        }
-      ]
+            {
+              itemId: '3.1',
+              description: 'Busbar / penghantar',
+              standard: 'Manufacture Std.',
+              method: 'Penilaian',
+            },
+            {
+              itemId: '3.2',
+              description: 'Pengaman (CB, FUSE)',
+              standard: 'Manufacture Std.',
+              method: 'Penilaian',
+            },
+            {
+              itemId: '3.3',
+              description: 'Sepatu kabel',
+              standard: 'Manufacture Std.',
+              method: 'Penilaian',
+            },
+            {
+              itemId: '3.4',
+              description: 'Sistem pembumian',
+              standard: 'Manufacture Std.',
+              method: 'Penilaian',
+            },
+            {
+              itemId: '3.5',
+              description: 'Jarak busbar to busbar',
+              standard: 'Manufacture Std.',
+              method: 'Penilaian',
+            },
+          ],
+        },
+      ],
     },
     {
-      categoryId: 'phb_environment',
-      categoryName: 'Penempatan & Lingkungan PHB',
+      categoryId: 'daerah_kerja',
+      categoryName: '4. Pemeriksaan Visual Daerah Kerja',
       components: [
         {
-          componentId: 'env_components',
-          componentName: 'Akses & Ruang Kerja',
+          componentId: 'daerah_kerja_comp',
+          componentName: 'Pemeriksaan Visual Daerah Kerja',
           isDefault: true,
           items: [
-            { itemId: 'jarak_depan', description: 'Jarak bebas depan panel (Ref: >= 75 cm)', standard: 'PUIL 2011' },
-            { itemId: 'jarak_samping', description: 'Jarak bebas samping panel (Ref: >= 150 cm jika ada lorong)', standard: 'PUIL 2011' },
-            { itemId: 'jarak_belakang', description: 'Jarak bebas belakang panel (bila akses belakang diperlukan)', standard: 'PUIL 2011' },
-            { itemId: 'kebebasan_pintu', description: 'Pintu ruang panel dapat dibuka penuh tanpa hambatan', standard: 'PUIL 2011' },
-            { itemId: 'pencahayaan_ruang', description: 'Pencahayaan ruang PHB memadai (Ref: >= 100 Lux)', standard: 'Permenaker 5/2018' },
-            { itemId: 'bebas_barang', description: 'Bebas dari barang yang tidak terpakai / mudah terbakar', standard: 'PUIL 2011' },
-            { itemId: 'ventilasi_ruang', description: 'Ventilasi ruang panel baik dan suhu terjaga', standard: 'PUIL 2011' },
-            { itemId: 'tanda_bahaya_ruang', description: 'Tanda bahaya pintu ruang PHB dipasang jelas', standard: 'Permenaker 12/2015' }
-          ]
-        }
-      ]
-    }
-  ]
+            {
+              itemId: '4.1',
+              description: 'Jarak bagian depan',
+              standard: 'SNI : 75 cm',
+              method: 'Pengukuran',
+            },
+            {
+              itemId: '4.2',
+              description: 'Jarak bagian samping',
+              standard: 'SNI : 150 cm',
+              method: 'Pengukuran',
+            },
+            {
+              itemId: '4.3',
+              description: 'Jarak bagian belakang',
+              standard: '-',
+              method: 'Pengukuran',
+            },
+            {
+              itemId: '4.4',
+              description: 'Bebas buka pintu panel',
+              standard: '-',
+              method: 'Pengukuran',
+            },
+            {
+              itemId: '4.5',
+              description: 'Pencahayaan',
+              standard: '100 Lux',
+              method: 'Pengukuran',
+            },
+            {
+              itemId: '4.6',
+              description: 'Barang-barang yang tidak terpakai',
+              standard: 'SNI',
+              method: 'Penilaian',
+            },
+            {
+              itemId: '4.7',
+              description: 'Ventilasi',
+              standard: 'SNI',
+              method: 'Penilaian',
+            },
+            {
+              itemId: '4.8',
+              description: 'Tanda bahaya pintu ruang panel',
+              standard: 'Manufacture Std.',
+              method: 'Penilaian',
+            },
+          ],
+        },
+      ],
+    },
+    {
+      categoryId: 'pengujian',
+      categoryName: '5. Pengujian',
+      components: [
+        {
+          componentId: 'pengujian_comp',
+          componentName: 'Pengujian',
+          isDefault: true,
+          items: [
+            {
+              itemId: '5.1',
+              description: 'Tegangan Phasa R S T',
+              standard: '-',
+              method: 'Pengukuran',
+            },
+            {
+              itemId: '5.2',
+              description: 'Arus Phasa R, S, T, Netral, PE',
+              standard: '-',
+              method: 'Pengukuran',
+            },
+            {
+              itemId: '5.3',
+              description: 'Sistem pembumian',
+              standard: '-',
+              method: 'Penilaian',
+            },
+            {
+              itemId: '5.4',
+              description: 'Susut tegangan',
+              standard: 'Beban Daya : 3 %, Beban Penerangan : 1,5%',
+              method: 'Pengukuran dan perhitungan',
+            },
+            {
+              itemId: '5.5',
+              description: 'Panas penghantar/Terminasi R, S, T',
+              standard: 'Penghantar : 70 °C, Terminasi : 51 °C',
+              method: 'Pengukuran',
+            },
+            {
+              itemId: '5.6',
+              description: 'Pentanahan',
+              standard: 'SNI : 5 Ω',
+              method: 'Pengukuran',
+            },
+            {
+              itemId: '5.7',
+              description: 'KHA penghantar utama',
+              standard: '125 % x In',
+              method: 'Perhitungan',
+            },
+            {
+              itemId: '5.8',
+              description: 'Rating Proteksi utama',
+              standard: '115 % x In',
+              method: 'Perhitungan',
+            },
+            {
+              itemId: '5.9',
+              description: 'Daya untuk penerangan',
+              standard: '-',
+              method: 'Pengukuran',
+            },
+            {
+              itemId: '5.10',
+              description: 'Daya untuk AC',
+              standard: '-',
+              method: 'Pengukuran',
+            },
+            {
+              itemId: '5.11',
+              description: 'Daya untuk mesin',
+              standard: '-',
+              method: 'Pengukuran',
+            },
+          ],
+        },
+      ],
+    },
+  ],
 };
