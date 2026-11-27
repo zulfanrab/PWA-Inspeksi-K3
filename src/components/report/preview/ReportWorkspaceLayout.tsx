@@ -52,14 +52,20 @@ export function ReportWorkspaceLayout({
     window.addEventListener('pointerup', onUp);
   };
 
-  // Pastikan tombol Back perangkat di Mobile menutup modal preview terlebih dahulu, bukan keluar wizard
+  // Pastikan tombol Back perangkat di Mobile menutup modal preview terlebih dahulu,
+  // serta kunci scroll background agar halaman form di belakang tidak ikut tergeser
   useEffect(() => {
     if (!showMobileModal) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
     const unregister = registerBackInterceptor(() => {
       setShowMobileModal(false);
       return true;
     });
-    return unregister;
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      unregister();
+    };
   }, [showMobileModal]);
 
   if (isDesktop) {
@@ -146,20 +152,24 @@ export function ReportWorkspaceLayout({
       <button
         type="button"
         onClick={() => setShowMobileModal(true)}
-        className="fixed bottom-[72px] right-4 z-30 px-4 py-2.5 rounded-full bg-slate-900 text-white text-xs font-extrabold shadow-lg border border-slate-700 hover:bg-slate-800 active:scale-95 transition-all flex items-center gap-1.5"
+        style={{ bottom: 'calc(76px + env(safe-area-inset-bottom, 0px))' }}
+        className="fixed right-4 z-30 px-4 py-2.5 rounded-full bg-slate-900 text-white text-xs font-extrabold shadow-lg border border-slate-700 hover:bg-slate-800 active:scale-95 transition-all flex items-center gap-1.5"
       >
         <span>👁️</span>
         <span>Intip Halaman</span>
       </button>
 
       {/* Bottom Sticky Bar Mobile */}
-      <div className="fixed bottom-0 left-0 right-0 z-20 bg-white border-t border-gray-200 px-4 py-3">
+      <div
+        className="fixed bottom-0 left-0 right-0 z-20 bg-white border-t border-gray-200 px-4 pt-3"
+        style={{ paddingBottom: 'calc(12px + env(safe-area-inset-bottom, 0px))' }}
+      >
         <div className="max-w-3xl mx-auto">{bottomNav}</div>
       </div>
 
-      {/* Modal Fullscreen Preview Mobile */}
+      {/* Modal Fullscreen Preview Mobile (z-[80] agar di atas App header, aman dari safe-area) */}
       {showMobileModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/70 flex flex-col">
+        <div className="fixed inset-0 z-[80] h-[100dvh] bg-slate-900/75 flex flex-col overflow-hidden">
           <div className="flex-1 min-h-0 flex flex-col bg-slate-200 overflow-hidden">
             <LiveDocumentPreview
               previewData={previewData}

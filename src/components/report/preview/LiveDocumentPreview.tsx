@@ -267,19 +267,15 @@ export function LiveDocumentPreview({
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-200/80 select-text">
-      {/* Toolbar Atas */}
-      <div className="bg-white border-b border-gray-200 px-3 py-2 flex flex-wrap items-center justify-between gap-2 shrink-0">
-        <div className="flex items-center gap-2 min-w-0">
-          {!isDesktop && onCloseMobile && (
-            <button
-              type="button"
-              onClick={onCloseMobile}
-              className="px-2.5 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-800 text-xs font-bold"
-            >
-              ← Tutup
-            </button>
-          )}
+    <div className="flex flex-col h-full w-full bg-slate-200/80 select-text">
+      {/* Toolbar Atas (dengan safe-area inset agar tidak menabrak notch/status bar HP) */}
+      <div
+        className="bg-white border-b border-gray-200 px-3 pb-2.5 flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-2 shrink-0 shadow-sm"
+        style={{
+          paddingTop: !isDesktop ? 'calc(env(safe-area-inset-top, 0px) + 12px)' : '8px',
+        }}
+      >
+        <div className="flex items-center justify-between gap-2 min-w-0">
           <div className="flex items-center gap-1.5 min-w-0">
             <span
               className={`inline-block w-2 h-2 rounded-full shrink-0 ${
@@ -290,16 +286,25 @@ export function LiveDocumentPreview({
                   : 'bg-sky-500'
               }`}
             />
-            <span className="text-[11px] font-bold text-gray-700 truncate">
+            <span className="text-xs sm:text-[11px] font-bold text-gray-700 truncate">
               {engineState === 'loading-template'
                 ? 'Memuat Master .docx...'
                 : isSyncingRender && activeDocxMode
                 ? 'Menyinkronkan preview...'
                 : activeDocxMode
                 ? 'Tersinkron (.docx Asli)'
-                : 'HTML Paper Mirror (Instan)'}
+                : 'Preview Laporan (Instan)'}
             </span>
           </div>
+          {!isDesktop && onCloseMobile && (
+            <button
+              type="button"
+              onClick={onCloseMobile}
+              className="px-3.5 py-2 min-h-[36px] rounded-xl bg-slate-900 hover:bg-slate-800 active:scale-95 text-white text-xs font-extrabold shadow-sm shrink-0 transition-all"
+            >
+              ✕ Tutup
+            </button>
+          )}
         </div>
 
         {/* Kontrol Zoom, Media & Hide */}
@@ -465,6 +470,22 @@ export function LiveDocumentPreview({
           </div>
         </div>
       </div>
+
+      {/* Bottom Quick-Close Bar Mobile (Thumb-Friendly + Safe Area Bottom) */}
+      {!isDesktop && onCloseMobile && (
+        <div
+          className="bg-white border-t border-gray-200 px-4 pt-2.5 shrink-0 shadow-[0_-2px_10px_rgba(0,0,0,0.06)]"
+          style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 10px)' }}
+        >
+          <button
+            type="button"
+            onClick={onCloseMobile}
+            className="w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 active:scale-[0.99] text-white text-xs font-extrabold transition-all"
+          >
+            ← Kembali ke Form Laporan
+          </button>
+        </div>
+      )}
     </div>
   );
 }
