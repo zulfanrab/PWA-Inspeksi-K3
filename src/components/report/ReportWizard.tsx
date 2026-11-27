@@ -17,6 +17,14 @@ import {
 } from './AttachmentSectionCard';
 import { ReportWorkspaceLayout } from './preview/ReportWorkspaceLayout';
 import type { ReportPreviewData } from '../../utils/reportTemplatePayload';
+import {
+  DocumentationPhotoPicker,
+  buildPhotoSelectionMeta,
+  getJointDocPhoto,
+  getOrderedDocPhotos,
+  initDocPhotos,
+  type DocPhotoItemState,
+} from './DocumentationPhotoPicker';
 
 interface ReportWizardProps {
   reportId: number | null; // null jika buat baru
@@ -77,7 +85,7 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
   const [calculations, setCalculations] = useState<any>(null);
   const [aiNarrative, setAiNarrative] = useState<any>(null);
   const [aiLoading, setAiLoading] = useState(false);
-  const [selectedPhotos, setSelectedPhotos] = useState<any[]>([]);
+  const [selectedPhotos, setSelectedPhotos] = useState<DocPhotoItemState[]>([]);
   const [bapAttachments, setBapAttachments] = useState<AttachmentPageItem[]>([]);
   const [extraAttachments, setExtraAttachments] = useState<AttachmentPageItem[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -140,7 +148,7 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
         const sourceInsp = rep.inspectionId ? await SessionRepository.getById(rep.inspectionId) : null;
         if (sourceInsp) {
           setSelectedInspection(sourceInsp);
-          setSelectedPhotos(sourceInsp.photos || []);
+          setSelectedPhotos(initDocPhotos(sourceInsp.photos || [], rep));
         } else {
           // Fallback jika laporan di-sync dari cloud ke device baru yang belum memiliki sesi inspeksi lokal
           setSelectedInspection({
@@ -187,7 +195,7 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
       setChecklistResponses(initialCheck);
     }
 
-    setSelectedPhotos(insp.photos || []);
+    setSelectedPhotos(initDocPhotos(insp.photos || []));
     setCurrentStep(2);
   };
 
@@ -347,20 +355,26 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
       // 2. Rakit Payload Laporan Lengkap
       setGenStatus('Mempersiapkan data dan kompresi foto...');
       
+      const orderedPhotos = getOrderedDocPhotos(selectedPhotos);
       const compressedPhotos: any[] = [];
-      for (let i = 0; i < selectedPhotos.length; i++) {
-        const p = selectedPhotos[i];
-        // Pastikan terkompresi di sisi client
-        const compressedUrl = await ImageCompressor.compress(p.dataUrl, 1200, 0.75);
+      for (let i = 0; i < orderedPhotos.length; i++) {
+        const p = orderedPhotos[i];
+        const rawSrc = p.dataUrl || (p.driveFileId ? `${apiBase}/api/photo-proxy?fileId=${p.driveFileId}` : '');
+        const compressedUrl = rawSrc ? await ImageCompressor.compress(rawSrc, 1200, 0.75) : '';
         compressedPhotos.push({
           sourceId: p.id,
           dataUrl: compressedUrl,
-          caption: p.fileName || `Foto Temuan #${i + 1}`,
+          caption: p.caption || p.fileName || `Foto Dokumentasi #${i + 1}`,
           category: 'Dokumentasi Lapangan',
           orderIndex: i,
           isCompressed: true
         });
       }
+      const jointItem = getJointDocPhoto(selectedPhotos);
+      const jointRawSrc = jointItem
+        ? jointItem.dataUrl || (jointItem.driveFileId ? `${apiBase}/api/photo-proxy?fileId=${jointItem.driveFileId}` : '')
+        : '';
+      const jointPhotoDataUrl = jointRawSrc ? await ImageCompressor.compress(jointRawSrc, 1200, 0.82) : '';
 
       // Bangun struktur data checklist
       const components: any[] = [];
@@ -459,6 +473,8 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
         },
         photoDocumentation: {
           photos: compressedPhotos,
+          jointPhoto: jointPhotoDataUrl,
+          ...buildPhotoSelectionMeta(selectedPhotos),
           compressionQuality: 75,
           maxDimension: 1200
         },
@@ -586,13 +602,23 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
       checklistSections,
       calculations,
       narratives: aiNarrative || {},
-      gridPhotos: selectedPhotos.map((p: any, idx: number) => ({
-        id: p.id || String(idx),
-        caption: p.fileName || `Foto Temuan #${idx + 1}`,
+      gridPhotos: getOrderedDocPhotos(selectedPhotos).map((p) => ({
+        id: p.id,
+        caption: p.caption || p.fileName || '',
         dataUrl: p.dataUrl,
         driveFileId: p.driveFileId,
       })),
-      jointPhoto: null,
+      jointPhoto: (() => {
+        const j = getJointDocPhoto(selectedPhotos);
+        return j
+          ? {
+              id: j.id,
+              caption: j.caption || j.fileName || 'Foto Bersama Pihak Perusahaan',
+              dataUrl: j.dataUrl,
+              driveFileId: j.driveFileId,
+            }
+          : null;
+      })(),
       bapAttachments: bapAttachments.map((att) => ({
         sourceFileName: att.sourceFileName,
         pageNumber: att.pageNumber,
@@ -621,6 +647,7 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
   if (typeCode === 'IPP' && selectedInspection && currentStep >= 2) {
     return (
       <IppReportWizard
+        key={`IPP_${selectedInspection?.id || 'none'}_${reportId || 'new'}`}
         selectedInspection={selectedInspection}
         reportId={reportId}
         initialReportData={loadedReportData}
@@ -633,6 +660,7 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
   if (typeCode === 'IL' && selectedInspection && currentStep >= 2) {
     return (
       <IlReportWizard
+        key={`IL_${selectedInspection?.id || 'none'}_${reportId || 'new'}`}
         selectedInspection={selectedInspection}
         reportId={reportId}
         initialReportData={loadedReportData}
@@ -1053,29 +1081,11 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
         {/* STEP 8: PHOTO DOCUMENTATION */}
         {currentStep === 8 && (
           <div className="space-y-4">
-            <h3 className="text-sm font-black text-gray-900">8. Pilih Foto Dokumentasi Lapangan</h3>
-            <p className="text-xs text-gray-500 font-medium">Foto yang di-check di bawah ini akan di-stitch secara otomatis di lampiran laporan Word.</p>
-            
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              {selectedPhotos.map((photo, i) => (
-                <div key={photo.id || i} className="border border-gray-150 rounded-xl overflow-hidden bg-white flex flex-col justify-between">
-                  <img src={photo.dataUrl} className="w-full h-32 object-cover" />
-                  <div className="p-2.5 space-y-1.5">
-                    <input
-                      type="text"
-                      placeholder="Masukkan Caption..."
-                      value={photo.fileName || ''}
-                      onChange={e => {
-                        const newPhotos = [...selectedPhotos];
-                        newPhotos[i].fileName = e.target.value;
-                        setSelectedPhotos(newPhotos);
-                      }}
-                      className="w-full text-[10px] border border-gray-200 p-1.5 rounded focus:outline-none"
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
+            <DocumentationPhotoPicker
+              photos={selectedPhotos}
+              onChange={setSelectedPhotos}
+              apiBase={getApiBaseUrl()}
+            />
 
             <div className="space-y-3 pt-2">
               <AttachmentSectionCard
@@ -1118,7 +1128,7 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
                 <p>⚡ <span className="font-bold text-gray-800">Alamat:</span> {formData.companyAddress}</p>
                 <p>⚡ <span className="font-bold text-gray-800">Nomor Laporan:</span> {reportNum || 'Dibuat otomatis oleh antrean server'}</p>
                 <p>⚡ <span className="font-bold text-gray-800">Status Proteksi:</span> {calculations?.overallSafetyStatus}</p>
-                <p>⚡ <span className="font-bold text-gray-800">Foto Siap Upload:</span> {selectedPhotos.length} item</p>
+                <p>⚡ <span className="font-bold text-gray-800">Foto Terpilih:</span> {getOrderedDocPhotos(selectedPhotos).length} Foto Dokumentasi • {getJointDocPhoto(selectedPhotos) ? '1' : '0'} Foto Bersama</p>
                 <p>⚡ <span className="font-bold text-gray-800">Lampiran BAP (Sebelum SKP):</span> {bapAttachments.length} halaman</p>
                 <p>⚡ <span className="font-bold text-gray-800">Lampiran Tambahan Akhir:</span> {extraAttachments.length} halaman</p>
               </div>

@@ -20,6 +20,15 @@ import {
 } from './AttachmentSectionCard';
 import { ReportWorkspaceLayout } from './preview/ReportWorkspaceLayout';
 import type { ReportPreviewData } from '../../utils/reportTemplatePayload';
+import {
+  DocumentationPhotoPicker,
+  applyAiPhotoSuggestions,
+  buildPhotoSelectionMeta,
+  getJointDocPhoto,
+  getOrderedDocPhotos,
+  initDocPhotos,
+  type DocPhotoItemState,
+} from './DocumentationPhotoPicker';
 
 interface IppReportWizardProps {
   selectedInspection: any;
@@ -33,16 +42,6 @@ interface GroundingPointInput {
   pointName: string;
   resistanceValue: string;
   pointRemarks: string;
-}
-
-interface PhotoItemState {
-  id: string;
-  dataUrl: string;
-  driveFileId?: string;
-  fileName?: string;
-  caption: string;
-  selectedForGrid: boolean;
-  isJointPhoto: boolean;
 }
 
 function parseGroundingPointsFromStr(str: string): GroundingPointInput[] {
@@ -200,18 +199,9 @@ export function IppReportWizard({
   const [conclusion, setConclusion] = useState<string>(initialReportData?.aiNarrative?.sections?.conclusion || '');
   const [recommendations, setRecommendations] = useState<string>(initialReportData?.aiNarrative?.sections?.recommendations || '');
 
-  const [photos, setPhotos] = useState<PhotoItemState[]>(() => {
-    const sourcePhotos = selectedInspection?.photos || [];
-    return sourcePhotos.map((p: any, idx: number) => ({
-      id: p.id || String(idx),
-      dataUrl: p.dataUrl || '',
-      driveFileId: p.driveFileId,
-      fileName: p.fileName,
-      caption: p.caption || `Dokumentasi Pemeriksaan ${idx + 1}`,
-      selectedForGrid: idx < 6,
-      isJointPhoto: false,
-    }));
-  });
+  const [photos, setPhotos] = useState<DocPhotoItemState[]>(() =>
+    initDocPhotos(selectedInspection?.photos || [], initialReportData)
+  );
 
   // --- LAMPIRAN BAP (SEBELUM SKP) & LAMPIRAN TAMBAHAN (SETELAH SKP) ---
   const [bapAttachments, setBapAttachments] = useState<AttachmentPageItem[]>(() =>
@@ -466,7 +456,7 @@ export function IppReportWizard({
   };
 
   // --- HELPER AMBIL DATAURL FOTO ---
-  const resolvePhotoDataUrl = async (p: PhotoItemState): Promise<string> => {
+  const resolvePhotoDataUrl = async (p: DocPhotoItemState): Promise<string> => {
     if (p.dataUrl && p.dataUrl.startsWith('data:image')) return p.dataUrl;
     if (p.driveFileId) {
       const res = await fetch(`${apiBase}/api/photo-proxy?fileId=${p.driveFileId}`);
@@ -481,7 +471,7 @@ export function IppReportWizard({
   };
 
   // --- AI VISION OCR ALAT UKUR ---
-  const handleRunOcrOnPhoto = async (photo: PhotoItemState) => {
+  const handleRunOcrOnPhoto = async (photo: DocPhotoItemState) => {
     setOcrLoading(true);
     try {
       const rawUrl = await resolvePhotoDataUrl(photo);
@@ -619,18 +609,7 @@ export function IppReportWizard({
       const data = await parseApiJson(res);
       if (!res.ok || !data.success) throw new Error(data.error || 'Gagal menyusun foto otomatis.');
       const items: Array<{ id: string; caption: string; isJointPhoto?: boolean }> = data.data?.items || [];
-      setPhotos((prev) =>
-        prev.map((p) => {
-          const match = items.find((it) => it.id === p.id);
-          if (!match) return p;
-          return {
-            ...p,
-            caption: match.caption || p.caption,
-            isJointPhoto: Boolean(match.isJointPhoto),
-            selectedForGrid: !match.isJointPhoto,
-          };
-        })
-      );
+      setPhotos((prev) => applyAiPhotoSuggestions(prev, items));
     } catch (err: any) {
       alert(`Gagal menyusun foto otomatis: ${err.message}`);
     } finally {
@@ -745,8 +724,8 @@ export function IppReportWizard({
         }
       });
 
-      // Kompresi foto grid & foto bersama
-      const gridSelected = photos.filter((p) => p.selectedForGrid && !p.isJointPhoto);
+      // Kompresi foto dokumentasi berurut (#1, #2, #3...) & foto bersama
+      const gridSelected = getOrderedDocPhotos(photos);
       const compressedGrid = await Promise.all(
         gridSelected.map(async (p) => ({
           caption: p.caption || '',
@@ -754,7 +733,7 @@ export function IppReportWizard({
         }))
       );
 
-      const jointItem = photos.find((p) => p.isJointPhoto);
+      const jointItem = getJointDocPhoto(photos);
       const jointPhotoDataUrl = jointItem
         ? await ImageCompressor.compress(await resolvePhotoDataUrl(jointItem), 1200, 0.82)
         : '';
@@ -815,6 +794,7 @@ export function IppReportWizard({
         photoDocumentation: {
           photos: compressedGrid,
           jointPhoto: jointPhotoDataUrl,
+          ...buildPhotoSelectionMeta(photos),
         },
         bapAttachments: bapAttachments.map((att) => ({
           image: att.dataUrl,
@@ -966,14 +946,12 @@ export function IppReportWizard({
         findingsNarrative: vText,
         testResultsNarrative: mText,
       },
-      gridPhotos: photos
-        .filter((p) => p.selectedForGrid && !p.isJointPhoto)
-        .map((p) => ({
-          id: p.id,
-          caption: p.caption || '',
-          dataUrl: p.dataUrl,
-          driveFileId: p.driveFileId,
-        })),
+      gridPhotos: getOrderedDocPhotos(photos).map((p) => ({
+        id: p.id,
+        caption: p.caption || '',
+        dataUrl: p.dataUrl,
+        driveFileId: p.driveFileId,
+      })),
       jointPhoto: jointItem
         ? {
             id: jointItem.id,
@@ -1786,151 +1764,14 @@ export function IppReportWizard({
               ))}
             </div>
 
-            {/* Pemilih Foto Dokumentasi */}
-            <div className="bg-white rounded-2xl border border-gray-200 p-4 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h3 className="text-xs font-extrabold text-gray-800 uppercase tracking-wider">
-                    Dokumentasi Foto ({photos.filter((p) => p.selectedForGrid && !p.isJointPhoto).length} Grid + {photos.some((p) => p.isJointPhoto) ? '1 Bersama' : '0 Bersama'})
-                  </h3>
-                  <p className="text-[11px] text-gray-500">
-                    Pilih foto untuk grid 3 kolom dan 1 foto khusus dokumentasi bersama pihak perusahaan.
-                  </p>
-                </div>
-                {photos.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={handleAutoCategorizePhotos}
-                    disabled={aiPhotoLoading}
-                    className="px-3 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 text-[11px] font-bold"
-                  >
-                    {aiPhotoLoading ? 'Menyusun...' : '✨ Susun & Caption AI'}
-                  </button>
-                )}
-              </div>
-
-              {photos.length > 0 && !photos.some((p) => p.isJointPhoto) && (
-                <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-800 font-semibold">
-                  ⚠️ Belum ada foto yang ditandai sebagai <strong>Foto Bersama Pihak Perusahaan</strong>. Klik tombol{' '}
-                  <span className="font-bold">☆ Bersama</span> pada salah satu foto agar bagian tersebut tidak kosong di laporan.
-                </div>
-              )}
-
-              {(() => {
-                const gridCount = photos.filter((p) => p.selectedForGrid && !p.isJointPhoto).length;
-                const remainder = gridCount % 3;
-                if (gridCount === 0 || remainder === 0) return null;
-                const targetTrim = gridCount - remainder;
-                return (
-                  <div className="p-2.5 rounded-xl bg-blue-50 border border-blue-200 text-[11px] text-blue-800 flex flex-wrap items-center justify-between gap-2">
-                    <span>
-                      ℹ️ Terpilih <strong>{gridCount} foto grid</strong> (belum kelipatan 3). Tambah{' '}
-                      <strong>{3 - remainder}</strong> atau kurangi <strong>{remainder}</strong> foto agar tabel 3 kolom penuh tanpa sel kosong.
-                    </span>
-                    {targetTrim >= 3 && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          let kept = 0;
-                          setPhotos((prev) =>
-                            prev.map((item) => {
-                              if (item.selectedForGrid && !item.isJointPhoto) {
-                                if (kept < targetTrim) {
-                                  kept++;
-                                  return item;
-                                }
-                                return { ...item, selectedForGrid: false };
-                              }
-                              return item;
-                            })
-                          );
-                        }}
-                        className="px-2.5 py-1 rounded-lg bg-blue-600 text-white font-bold text-[10px] hover:bg-blue-700 shrink-0"
-                      >
-                        Jadikan {targetTrim} Foto
-                      </button>
-                    )}
-                  </div>
-                );
-              })()}
-
-              {photos.length === 0 ? (
-                <p className="text-xs text-gray-400 text-center py-6 bg-gray-50 rounded-xl border border-dashed border-gray-200">
-                  Tidak ada foto pada sesi inspeksi ini.
-                </p>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {photos.map((p) => (
-                    <div
-                      key={p.id}
-                      className={`p-2.5 rounded-xl border space-y-2 ${
-                        p.isJointPhoto
-                          ? 'border-amber-400 bg-amber-50'
-                          : p.selectedForGrid
-                          ? 'border-emerald-400 bg-emerald-50/40'
-                          : 'border-gray-200 bg-gray-50 opacity-70'
-                      }`}
-                    >
-                      <div className="relative">
-                        <img
-                          src={p.dataUrl || `${apiBase}/api/photo-proxy?fileId=${p.driveFileId}`}
-                          alt={p.caption}
-                          className="w-full h-36 object-cover rounded-lg bg-gray-200"
-                        />
-                        <div className="absolute top-2 right-2 flex gap-1">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setPhotos((prev) =>
-                                prev.map((item) =>
-                                  item.id === p.id
-                                    ? { ...item, selectedForGrid: !item.selectedForGrid, isJointPhoto: false }
-                                    : item
-                                )
-                              )
-                            }
-                            className={`px-2 py-1 rounded-md text-[10px] font-bold shadow ${
-                              p.selectedForGrid && !p.isJointPhoto
-                                ? 'bg-emerald-600 text-white'
-                                : 'bg-white/90 text-gray-700'
-                            }`}
-                          >
-                            {p.selectedForGrid && !p.isJointPhoto ? '✓ Grid' : '+ Grid'}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setPhotos((prev) =>
-                                prev.map((item) =>
-                                  item.id === p.id
-                                    ? { ...item, isJointPhoto: !item.isJointPhoto, selectedForGrid: false }
-                                    : { ...item, isJointPhoto: false }
-                                )
-                              )
-                            }
-                            className={`px-2 py-1 rounded-md text-[10px] font-bold shadow ${
-                              p.isJointPhoto ? 'bg-amber-600 text-white' : 'bg-white/90 text-gray-700'
-                            }`}
-                          >
-                            {p.isJointPhoto ? '★ Foto Bersama' : '☆ Bersama'}
-                          </button>
-                        </div>
-                      </div>
-                      <input
-                        type="text"
-                        value={p.caption}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          setPhotos((prev) => prev.map((item) => (item.id === p.id ? { ...item, caption: v } : item)));
-                        }}
-                        placeholder="Caption foto..."
-                        className="w-full px-2.5 py-1.5 text-xs bg-white border border-gray-200 rounded-lg"
-                      />
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+            {/* Pemilih Foto Dokumentasi (Gaya TikTok / Instagram + Foto Bersama) */}
+            <DocumentationPhotoPicker
+              photos={photos}
+              onChange={setPhotos}
+              apiBase={apiBase}
+              onAutoCategorize={handleAutoCategorizePhotos}
+              aiLoading={aiPhotoLoading}
+            />
 
             {/* Lampiran BAP (Sebelum Halaman SKP) */}
             <AttachmentSectionCard
@@ -1980,7 +1821,9 @@ export function IppReportWizard({
                 </button>
               </div>
 
-              {(missingFields.length > 0 || (photos.length > 0 && !photos.some((p) => p.isJointPhoto)) || bapAttachments.length === 0) && (
+              {(missingFields.length > 0 ||
+                (photos.length > 0 && (getOrderedDocPhotos(photos).length === 0 || !getJointDocPhoto(photos))) ||
+                bapAttachments.length === 0) && (
                 <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800 space-y-1">
                   {missingFields.length > 0 && (
                     <>
@@ -1995,7 +1838,19 @@ export function IppReportWizard({
                       </button>
                     </>
                   )}
-                  {photos.length > 0 && !photos.some((p) => p.isJointPhoto) && (
+                  {photos.length > 0 && getOrderedDocPhotos(photos).length === 0 && (
+                    <div className="pt-1">
+                      <p className="font-bold">⚠️ Belum ada Foto Dokumentasi yang dipilih.</p>
+                      <button
+                        type="button"
+                        onClick={() => setStep(3)}
+                        className="text-[11px] font-bold underline"
+                      >
+                        Ketuk foto secara berurutan di Langkah 3 →
+                      </button>
+                    </div>
+                  )}
+                  {photos.length > 0 && !getJointDocPhoto(photos) && (
                     <div className="pt-1">
                       <p className="font-bold">⚠️ Foto Bersama Pihak Perusahaan belum dipilih.</p>
                       <button
@@ -2003,7 +1858,7 @@ export function IppReportWizard({
                         onClick={() => setStep(3)}
                         className="text-[11px] font-bold underline"
                       >
-                        Tandai 1 foto di Langkah 3 →
+                        Pilih 1 Foto Bersama di Langkah 3 →
                       </button>
                     </div>
                   )}
@@ -2050,8 +1905,8 @@ export function IppReportWizard({
                 <div className="p-3 bg-gray-50 rounded-xl">
                   <p className="text-[10px] text-gray-500">Dokumentasi & Lampiran</p>
                   <p className="font-bold text-gray-900">
-                    {photos.filter((p) => p.selectedForGrid && !p.isJointPhoto).length} Grid,{' '}
-                    {photos.some((p) => p.isJointPhoto) ? '1' : '0'} Bersama,{' '}
+                    {getOrderedDocPhotos(photos).length} Foto,{' '}
+                    {getJointDocPhoto(photos) ? '1' : '0'} Bersama,{' '}
                     {bapAttachments.length} BAP,{' '}
                     {extraAttachments.length} Akhir
                   </p>

@@ -17,6 +17,7 @@ import {
 import { pushTemplatesToDrive, pullTemplatesFromDrive } from '../services/syncService';
 import { UNIT_NAME_SUGGESTIONS } from '../config/suggestions';
 import { getApiBaseUrl } from '../config';
+import { invalidateDocxTemplateCache } from '../utils/docxTemplateCache';
 import { processSkpFileToImageDataUrl } from '../utils/skpImageHelper';
 
 // ==========================================
@@ -285,7 +286,9 @@ function TemplateManager() {
     setLoading(true);
     try {
       const apiBase = getApiBaseUrl();
-      const res = await fetch(`${apiBase}/api/report?action=template`);
+      const res = await fetch(`${apiBase}/api/report?action=template&t=${Date.now()}`, {
+        cache: 'no-store',
+      });
       if (res.ok) {
         const data = await res.json();
         setTemplates(data.templates || []);
@@ -359,7 +362,8 @@ function TemplateManager() {
       }
 
       if (uploadedDirect) {
-        alert(`✅ Template ${typeCode} berhasil diunggah ke Google Drive!`);
+        await invalidateDocxTemplateCache(typeCode);
+        alert(`✅ Template ${typeCode} berhasil diunggah ke Google Drive & preview otomatis diperbarui!`);
         await loadTemplates();
       }
     } catch (err: any) {
@@ -395,7 +399,7 @@ function TemplateManager() {
                   <h4 className="text-xs font-bold text-gray-800">{t.name} ({t.code})</h4>
                   {info ? (
                     <p className="text-[10px] text-emerald-600 font-bold mt-0.5">
-                      ✓ Aktif di Drive (Diperbarui: {dateStr ? new Date(dateStr).toLocaleDateString('id-ID') : '-'})
+                      ✓ Aktif di Drive (Diperbarui: {dateStr ? new Date(dateStr).toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'})
                     </p>
                   ) : (
                     <p className="text-[10px] text-rose-500 font-bold mt-0.5">

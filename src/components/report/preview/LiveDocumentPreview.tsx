@@ -1,7 +1,10 @@
 // src/components/report/preview/LiveDocumentPreview.tsx
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { getApiBaseUrl } from '../../../config';
-import { loadCachedDocxTemplate } from '../../../utils/docxTemplateCache';
+import {
+  loadCachedDocxTemplate,
+  subscribeDocxTemplateUpdate,
+} from '../../../utils/docxTemplateCache';
 import {
   buildTemplateRenderData,
   type ReportPreviewData,
@@ -42,6 +45,7 @@ export function LiveDocumentPreview({
   );
   const [fallbackReason, setFallbackReason] = useState<string | null>(null);
   const [isSyncingRender, setIsSyncingRender] = useState<boolean>(false);
+  const [isRefreshingTemplate, setIsRefreshingTemplate] = useState<boolean>(false);
 
   // Cache dataUrl untuk foto Drive (hanya bila showMedia=true di mode .docx)
   const [resolvedMediaMap, setResolvedMediaMap] = useState<Record<string, string>>({});
@@ -66,12 +70,19 @@ export function LiveDocumentPreview({
     return () => ro.disconnect();
   }, []);
 
-  // Unduh & cache Master .docx sekali per jenis alat
+  // Unduh & cache Master .docx + pantau pembaruan otomatis jika ada revisi baru di Google Drive
   useEffect(() => {
     if (!shouldUseDocxEngine) return;
     let cancelled = false;
     setEngineState('loading-template');
     setFallbackReason(null);
+
+    const unsubscribe = subscribeDocxTemplateUpdate(typeCode, (updated) => {
+      if (cancelled || !updated.buffer) return;
+      setTemplateBuffer(updated.buffer);
+      setEngineState('docx-ready');
+      setFallbackReason(null);
+    });
 
     loadCachedDocxTemplate(typeCode, apiBase).then((res) => {
       if (cancelled) return;
@@ -87,8 +98,26 @@ export function LiveDocumentPreview({
 
     return () => {
       cancelled = true;
+      unsubscribe();
     };
   }, [typeCode, apiBase, shouldUseDocxEngine]);
+
+  const handleForceReloadTemplate = async () => {
+    setIsRefreshingTemplate(true);
+    setFallbackReason(null);
+    try {
+      const res = await loadCachedDocxTemplate(typeCode, apiBase, true);
+      if (res.buffer) {
+        setTemplateBuffer(res.buffer);
+        setEngineState('docx-ready');
+      } else {
+        setEngineState('fallback-html');
+        setFallbackReason(res.error || 'Template belum tersedia.');
+      }
+    } finally {
+      setIsRefreshingTemplate(false);
+    }
+  };
 
   // Lazy resolve foto Drive (jika foto inspeksi belum memiliki base64 dataUrl lokal)
   useEffect(() => {
@@ -344,6 +373,18 @@ export function LiveDocumentPreview({
             📷 {showMedia ? 'Foto & SKP: ON' : 'Foto & SKP: OFF'}
           </button>
 
+          {isDesktop && shouldUseDocxEngine && (
+            <button
+              type="button"
+              onClick={handleForceReloadTemplate}
+              disabled={isRefreshingTemplate}
+              className="px-2 py-1 rounded-lg text-[10px] font-bold bg-sky-50 text-sky-700 border border-sky-200 hover:bg-sky-100 disabled:opacity-50"
+              title="Ambil versi Template .docx terbaru langsung dari Google Drive"
+            >
+              {isRefreshingTemplate ? '↻ Memuat...' : '↻ Sync .docx'}
+            </button>
+          )}
+
           {isDesktop && templateBuffer && (
             <button
               type="button"
@@ -375,22 +416,11 @@ export function LiveDocumentPreview({
           </span>
           <button
             type="button"
-            onClick={() => {
-              setEngineState('loading-template');
-              setFallbackReason(null);
-              loadCachedDocxTemplate(typeCode, apiBase, true).then((res) => {
-                if (res.buffer) {
-                  setTemplateBuffer(res.buffer);
-                  setEngineState('docx-ready');
-                } else {
-                  setEngineState('fallback-html');
-                  setFallbackReason(res.error || 'Template belum tersedia.');
-                }
-              });
-            }}
-            className="font-bold underline shrink-0"
+            onClick={handleForceReloadTemplate}
+            disabled={isRefreshingTemplate}
+            className="font-bold underline shrink-0 disabled:opacity-50"
           >
-            Coba Muat Ulang
+            {isRefreshingTemplate ? 'Memuat...' : 'Coba Muat Ulang'}
           </button>
         </div>
       )}

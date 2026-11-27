@@ -33,7 +33,15 @@ async function getTemplatesFolderId(drive: any, rootFolderId: string): Promise<s
 async function findTemplateFileId(drive: any, templatesFolderId: string, typeCode: string): Promise<string> {
   const fileName = `Template_${typeCode.toUpperCase()}.docx`;
   const q = `name='${fileName}' and '${templatesFolderId}' in parents and trashed=false`;
-  const res = await drive.files.list({ q, fields: 'files(id)', spaces: 'drive' });
+  const res = await drive.files.list({
+    q,
+    fields: 'files(id, modifiedTime)',
+    orderBy: 'modifiedTime desc',
+    spaces: 'drive',
+    pageSize: 1,
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
+  });
   const fileId = res.data.files?.[0]?.id;
   if (!fileId) {
     throw new Error(`Template file "${fileName}" tidak ditemukan di folder 'Aksara Inspect/Templates'. Silakan unggah terlebih dahulu.`);
@@ -831,7 +839,8 @@ async function handleStatus(req: VercelRequest, res: VercelResponse) {
   const q = `name='${fileName}' and '${rootFolderId}' in parents and trashed=false`;
   const searchRes = await drive.files.list({
     q,
-    fields: 'files(id)',
+    fields: 'files(id, modifiedTime)',
+    orderBy: 'modifiedTime desc',
     spaces: 'drive',
     pageSize: 1,
     supportsAllDrives: true,
@@ -880,6 +889,7 @@ async function handleTemplate(req: VercelRequest, res: VercelResponse) {
       const searchFileRes = await drive.files.list({
         q: qFile,
         fields: 'files(id, modifiedTime)',
+        orderBy: 'modifiedTime desc',
         spaces: 'drive',
         pageSize: 1,
         supportsAllDrives: true,
@@ -905,7 +915,8 @@ async function handleTemplate(req: VercelRequest, res: VercelResponse) {
       if (found.modifiedTime) {
         res.setHeader('X-Template-Modified', found.modifiedTime);
       }
-      res.setHeader('Cache-Control', 'private, max-age=300');
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.setHeader('Pragma', 'no-cache');
       return res.status(200).send(buf);
     }
 
@@ -913,11 +924,13 @@ async function handleTemplate(req: VercelRequest, res: VercelResponse) {
     const listRes = await drive.files.list({
       q,
       fields: 'files(id, name, createdTime, modifiedTime, size)',
+      orderBy: 'modifiedTime desc',
       spaces: 'drive',
       supportsAllDrives: true,
       includeItemsFromAllDrives: true,
     });
 
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     return res.status(200).json({
       success: true,
       templatesFolderId,
@@ -938,7 +951,8 @@ async function handleTemplate(req: VercelRequest, res: VercelResponse) {
     const q = `name='${targetFileName}' and '${templatesFolderId}' in parents and trashed=false`;
     const searchRes = await drive.files.list({
       q,
-      fields: 'files(id)',
+      fields: 'files(id, modifiedTime)',
+      orderBy: 'modifiedTime desc',
       spaces: 'drive',
       pageSize: 1,
       supportsAllDrives: true,
@@ -996,7 +1010,8 @@ async function handleInspectors(req: VercelRequest, res: VercelResponse) {
   const q = `name='${fileName}' and '${rootFolderId}' in parents and trashed=false`;
   const searchRes = await drive.files.list({
     q,
-    fields: 'files(id)',
+    fields: 'files(id, modifiedTime)',
+    orderBy: 'modifiedTime desc',
     spaces: 'drive',
     pageSize: 1,
     supportsAllDrives: true,
@@ -1255,7 +1270,8 @@ async function handleTemplateUploadSession(req: VercelRequest, res: VercelRespon
   const q = `name='${targetFileName}' and '${templatesFolderId}' in parents and trashed=false`;
   const searchRes = await drive.files.list({
     q,
-    fields: 'files(id)',
+    fields: 'files(id, modifiedTime)',
+    orderBy: 'modifiedTime desc',
     spaces: 'drive',
     pageSize: 1,
     supportsAllDrives: true,
