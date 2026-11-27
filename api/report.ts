@@ -425,6 +425,9 @@ async function handleGenerate(req: VercelRequest, res: VercelResponse) {
   const isIpp = String(reportData.inspectionTypeCode || '').toUpperCase() === 'IPP';
 
   const templateData = {
+    // Spread technicalData lebih dulu agar field terformat (inspectionDate, reportDate, dll.) di bawah tidak tertimpa
+    ...sanitizedTech,
+
     companyName: reportData.generalData?.companyName || '',
     companyAddress: reportData.generalData?.companyAddress || '',
     inspectionDate: isIpp
@@ -444,8 +447,6 @@ async function handleGenerate(req: VercelRequest, res: VercelResponse) {
     inspectorCertNumber: reportData.generalData?.inspectorCertNumber || reportData.generalData?.inspectorRegNumber || '',
     skpAhliImage: reportData.generalData?.skpAhliImage || '',
     skpPerusahaanImage: reportData.generalData?.skpPerusahaanImage || '',
-
-    ...sanitizedTech,
 
     // 20 Data Umum + technical fields (pastikan tidak pernah kosong/undefined jika tidak diisi)
     jenisAlat: rawTech.jenisAlat || 'Instalasi Penyalur Petir',
