@@ -18,7 +18,11 @@ import { FormulaEngine } from '../../engines/FormulaEngine';
 import { ImageCompressor } from '../../engines/ImageCompressor';
 import { getApiBaseUrl } from '../../config';
 import { registerBackInterceptor } from '../../utils/navigationGuard';
-import { parseApiJson, formatTanggalHuruf } from '../../utils/reportHelpers';
+import {
+  parseApiJson,
+  formatTanggalHuruf,
+  estimateJsonPayloadBytes,
+} from '../../utils/reportHelpers';
 import {
   AttachmentSectionCard,
   mapInitialAttachments,
@@ -33,6 +37,7 @@ import {
   getJointDocPhoto,
   getOrderedDocPhotos,
   initDocPhotos,
+  resolveDocPhotoDataUrl,
   type DocPhotoItemState,
 } from './DocumentationPhotoPicker';
 
@@ -113,11 +118,21 @@ export function IlReportWizard({
   onClose,
 }: IlReportWizardProps) {
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+  const [showOcrModal, setShowOcrModal] = useState(false);
+  const [showPuilTableModal, setShowPuilTableModal] = useState(false);
   const config = getConfigByCode('IL');
   const apiBase = getApiBaseUrl();
 
   useEffect(() => {
     const unregister = registerBackInterceptor(() => {
+      if (showOcrModal) {
+        setShowOcrModal(false);
+        return true;
+      }
+      if (showPuilTableModal) {
+        setShowPuilTableModal(false);
+        return true;
+      }
       if (step > 1) {
         setStep((prev) => (prev > 1 ? ((prev - 1) as 1 | 2 | 3 | 4) : prev));
         return true;
@@ -128,7 +143,24 @@ export function IlReportWizard({
       return true;
     });
     return unregister;
-  }, [step, onClose]);
+  }, [step, showOcrModal, showPuilTableModal, onClose]);
+
+  useEffect(() => {
+    if (!showOcrModal && !showPuilTableModal) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowOcrModal(false);
+        setShowPuilTableModal(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [showOcrModal, showPuilTableModal]);
 
   // --- INSPECTORS & COMPANY SKP ---
   const [inspectors, setInspectors] = useState<InspectorProfile[]>([]);
@@ -160,7 +192,7 @@ export function IlReportWizard({
     const base: Record<string, any> = {
       companyName: selectedInspection?.clientName || '',
       companyAddress: unitData.alamatPerusahaan || unitData.lokasiUnit || '',
-      inspectionDate: todayIso,
+      inspectionDate: unitData.tanggal_inspeksi || selectedInspection?.tanggal_inspeksi || todayIso,
       reportDate: todayIso,
 
       // 12 Data Umum resmi Template_IL-v1.docx
@@ -223,7 +255,6 @@ export function IlReportWizard({
   const analysis = useMemo(() => computeIlAnalysis(formData), [formData]);
 
   // --- STEP 2: CHECKLIST 5 KATEGORI + TABEL 2.5 MODAL ---
-  const [showPuilTableModal, setShowPuilTableModal] = useState(false);
   const [editedTestingRows, setEditedTestingRows] = useState<Record<string, boolean>>(() => {
     const edited: Record<string, boolean> = {};
     if (initialReportData?.checklistData?.checklistSections) {
@@ -277,6 +308,14 @@ export function IlReportWizard({
           }
         });
       });
+    } else if (Array.isArray(initialReportData?.checklistData?.components)) {
+      initialReportData.checklistData.components.forEach((comp: any) => {
+        (comp.items || []).forEach((it: any) => {
+          if (it.itemId && (it.hasil !== undefined || it.result !== undefined)) {
+            map[it.itemId] = String(it.hasil ?? it.result);
+          }
+        });
+      });
     }
     return map;
   });
@@ -327,7 +366,6 @@ export function IlReportWizard({
   );
 
   // --- AI & EXPORT STATES ---
-  const [showOcrModal, setShowOcrModal] = useState(false);
   const [ocrLoading, setOcrLoading] = useState(false);
   const [aiNarrativeLoading, setAiNarrativeLoading] = useState(false);
   const [aiPhotoLoading, setAiPhotoLoading] = useState(false);
@@ -344,15 +382,18 @@ export function IlReportWizard({
 
   // --- LOAD INSPECTORS & COMPANY SKP ---
   useEffect(() => {
+    let cancelled = false;
     const initInspectors = async () => {
       let [list, localSkp] = await Promise.all([
         InspectorRepository.getAll(),
         CompanySkpRepository.getSkpImage(),
       ]);
+      if (cancelled) return;
       if (list.length === 0 || !localSkp) {
         try {
           const res = await fetch(`${apiBase}/api/report?action=inspectors`);
-          const data = await res.json();
+          const data = await parseApiJson(res);
+          if (cancelled) return;
           if (data.success) {
             if (Array.isArray(data.inspectors) && data.inspectors.length > 0 && list.length === 0) {
               await InspectorRepository.replaceAllFromSync(data.inspectors);
@@ -367,19 +408,26 @@ export function IlReportWizard({
           // ignore offline
         }
       }
-      if (localSkp && !companySkpImage) {
-        setCompanySkpImage(localSkp);
+      if (cancelled) return;
+      if (localSkp) {
+        setCompanySkpImage((prev) => prev || localSkp);
       }
       setInspectors(list);
-      if (list.length > 0 && !selectedInspectorId) {
-        const matched = initialReportData?.generalData?.inspectorName
-          ? list.find((i) => i.name === initialReportData.generalData.inspectorName)
-          : list[0];
-        if (matched) setSelectedInspectorId(matched.id);
+      if (list.length > 0) {
+        setSelectedInspectorId((prev) => {
+          if (prev) return prev;
+          const matched = initialReportData?.generalData?.inspectorName
+            ? list.find((i) => i.name === initialReportData.generalData.inspectorName)
+            : list[0];
+          return matched ? matched.id : '';
+        });
       }
     };
     initInspectors();
-  }, [apiBase, initialReportData, selectedInspectorId, companySkpImage]);
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBase, initialReportData]);
 
   const handleSyncInspectors = async () => {
     setSyncingInspectors(true);
@@ -466,9 +514,7 @@ export function IlReportWizard({
           next.jumlahIntiKabel || '3-4',
           next.instalasiKabel || 'Di Udara'
         );
-        if (lookedUp !== null) {
-          next.khaKabel = lookedUp;
-        }
+        next.khaKabel = lookedUp !== null ? lookedUp : '';
       }
 
       return next;
@@ -588,19 +634,8 @@ export function IlReportWizard({
   };
 
   // --- HELPER FOTO ---
-  const resolvePhotoDataUrl = async (p: DocPhotoItemState): Promise<string> => {
-    if (p.dataUrl && p.dataUrl.startsWith('data:image')) return p.dataUrl;
-    if (p.driveFileId) {
-      const res = await fetch(`${apiBase}/api/photo-proxy?fileId=${p.driveFileId}`);
-      const blob = await res.blob();
-      return await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.readAsDataURL(blob);
-      });
-    }
-    return '';
-  };
+  const resolvePhotoDataUrl = async (p: DocPhotoItemState): Promise<string> =>
+    resolveDocPhotoDataUrl(p, apiBase);
 
   // --- AI VISION OCR CLAMP METER / THERMOGRAF ---
   const handleRunOcrOnPhoto = async (photo: DocPhotoItemState) => {
@@ -837,22 +872,41 @@ export function IlReportWizard({
       });
 
       const gridSelected = getOrderedDocPhotos(photos);
-      const compressedGrid = await Promise.all(
-        gridSelected.map(async (p) => ({
-          caption: p.caption || '',
-          dataUrl: await ImageCompressor.compress(await resolvePhotoDataUrl(p), 900, 0.78),
-        }))
-      );
+      const compressedGrid: Array<{ caption: string; dataUrl: string }> = [];
+      for (const p of gridSelected) {
+        try {
+          const rawUrl = await resolveDocPhotoDataUrl(p, apiBase);
+          if (rawUrl) {
+            compressedGrid.push({
+              caption: p.caption || '',
+              dataUrl: await ImageCompressor.compress(rawUrl, 900, 0.78),
+            });
+          }
+        } catch (photoErr: any) {
+          console.warn('[IlReportWizard] Lewati 1 foto bermasalah:', photoErr?.message);
+        }
+      }
 
       const jointItem = getJointDocPhoto(photos);
-      const jointPhotoDataUrl = jointItem
-        ? await ImageCompressor.compress(await resolvePhotoDataUrl(jointItem), 1200, 0.82)
-        : '';
+      let jointPhotoDataUrl = '';
+      if (jointItem) {
+        try {
+          const rawJoint = await resolveDocPhotoDataUrl(jointItem, apiBase);
+          if (rawJoint) {
+            jointPhotoDataUrl = await ImageCompressor.compress(rawJoint, 1200, 0.82);
+          }
+        } catch (jointErr: any) {
+          console.warn('[IlReportWizard] Foto bersama gagal dimuat:', jointErr?.message);
+        }
+      }
 
-      const cloudId = initialReportData?.cloudId || `IL_${selectedInspection?.id || Date.now()}`;
+      const cloudId =
+        initialReportData?.cloudId ||
+        `IL_${selectedInspection?.id || 'manual'}_${Date.now().toString(36)}`;
+      const nowIso = new Date().toISOString();
       const allSafe =
         analysis.khaPass &&
-        analysis.proteksiPass &&
+        (analysis.kapasitasProteksiNum <= 0 || analysis.proteksiPass) &&
         analysis.unbalancePass &&
         analysis.groundingPass &&
         checklistFaults.length === 0;
@@ -864,7 +918,11 @@ export function IlReportWizard({
         inspectionTypeCode: 'IL',
         exportFormat: format,
         configVersion: '2.0.0',
-        status: 'generating',
+        status: initialReportData?.status || 'draft',
+        docxDriveFileId: initialReportData?.docxDriveFileId || '',
+        pdfDriveFileId: initialReportData?.pdfDriveFileId || '',
+        driveFileId: initialReportData?.driveFileId || '',
+        createdAt: initialReportData?.createdAt || nowIso,
         generalData: {
           companyName: formData.companyName || '',
           companyAddress: formData.companyAddress || '',
@@ -941,7 +999,7 @@ export function IlReportWizard({
           sourceFileName: att.sourceFileName,
           pageNumber: att.pageNumber,
         })),
-        updatedAt: new Date().toISOString(),
+        updatedAt: nowIso,
       };
 
       let localId: number;
@@ -949,13 +1007,22 @@ export function IlReportWizard({
         await db.reports.put({ ...reportPayload, id: reportId });
         localId = reportId;
       } else {
-        localId = await db.reports.add({ ...reportPayload, createdAt: new Date().toISOString() });
+        localId = await db.reports.add(reportPayload);
+      }
+
+      const requestBody = { reportId: localId, reportData: reportPayload };
+      const payloadBytes = estimateJsonPayloadBytes(requestBody);
+      if (payloadBytes > 4.2 * 1024 * 1024) {
+        const mb = (payloadBytes / (1024 * 1024)).toFixed(2);
+        throw new Error(
+          `Ukuran payload laporan (${mb} MB) mendekati batas 4.5 MB server. Kurangi beberapa foto atau halaman lampiran PDF lalu coba lagi.`
+        );
       }
 
       const res = await fetch(`${apiBase}/api/report?action=generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reportId: localId, reportData: reportPayload }),
+        body: JSON.stringify(requestBody),
       });
 
       const data = await parseApiJson(res);
@@ -1143,7 +1210,11 @@ export function IlReportWizard({
           {onChangeSource && (
             <button
               type="button"
-              onClick={onChangeSource}
+              onClick={() => {
+                if (confirm('Ganti sesi inspeksi? Isian yang belum diekspor pada form ini akan di-reset.')) {
+                  onChangeSource();
+                }
+              }}
               className="text-[11px] font-semibold text-emerald-600 hover:underline"
             >
               ↻ Ganti Sesi Inspeksi
@@ -1152,7 +1223,11 @@ export function IlReportWizard({
         </div>
         <button
           type="button"
-          onClick={onClose}
+          onClick={() => {
+            if (confirm('Tutup wizard laporan Instalasi Listrik? Perubahan yang belum disimpan akan hilang.')) {
+              onClose();
+            }
+          }}
           className="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-600 text-xs font-bold hover:bg-gray-200"
         >
           Tutup
@@ -1255,7 +1330,7 @@ export function IlReportWizard({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[11px] font-bold text-gray-600 mb-1">Tanggal Periksa</label>
                   <input
@@ -1755,16 +1830,16 @@ export function IlReportWizard({
                     {analysis.kapasitasProteksiNum <= 0 ? 'BELUM DIISI' : analysis.proteksiPass ? 'ACC' : 'TIDAK ACC'}
                   </span>
                 </div>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div>
                     <label className="block text-[10px] font-bold text-gray-600 mb-1">Jenis Proteksi</label>
-                    <div className="flex gap-1">
+                    <div className="grid grid-cols-4 gap-1">
                       {['MCCB', 'MCB', 'ACB', 'Fuse'].map((p) => (
                         <button
                           key={p}
                           type="button"
                           onClick={() => handleFieldChange('jenisProteksi', p)}
-                          className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold border ${
+                          className={`py-2 rounded-lg text-[10px] font-bold border ${
                             formData.jenisProteksi === p
                               ? 'bg-emerald-600 text-white border-emerald-600'
                               : 'bg-white text-gray-700 border-gray-200'
@@ -1782,7 +1857,7 @@ export function IlReportWizard({
                       value={formData.kapasitasProteksi}
                       onChange={(e) => handleFieldChange('kapasitasProteksi', e.target.value)}
                       placeholder="Contoh: 200"
-                      className="w-full px-2.5 py-1.5 text-xs font-bold bg-white border border-gray-200 rounded-lg"
+                      className="w-full px-2.5 py-2 text-xs font-bold bg-white border border-gray-200 rounded-lg"
                     />
                   </div>
                 </div>
@@ -1814,7 +1889,7 @@ export function IlReportWizard({
                 )}
               </div>
 
-              <div className="grid grid-cols-5 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                 {[
                   { key: 'arusR', label: 'IR (A)' },
                   { key: 'arusS', label: 'IS (A)' },
@@ -2291,16 +2366,22 @@ export function IlReportWizard({
 
       {/* Modal Pilih Foto untuk AI Vision OCR */}
       {showOcrModal && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-4 space-y-3 max-h-[80vh] overflow-y-auto">
-            <div className="flex items-center justify-between">
+        <div
+          className="fixed inset-0 z-[70] bg-black/60 flex items-center justify-center p-4"
+          onClick={() => setShowOcrModal(false)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-lg w-full p-4 space-y-3 max-h-[80vh] overflow-y-auto shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-2">
               <h4 className="text-xs font-extrabold text-gray-800">
                 Pilih Foto Layar Clamp Meter / Thermograf / Earth Tester
               </h4>
               <button
                 type="button"
                 onClick={() => setShowOcrModal(false)}
-                className="text-xs font-bold text-gray-500"
+                className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg bg-gray-100 hover:bg-gray-200 text-xs font-bold text-gray-600"
               >
                 ✕
               </button>
@@ -2319,9 +2400,12 @@ export function IlReportWizard({
                     className="border border-gray-200 rounded-xl overflow-hidden hover:border-indigo-500 text-left"
                   >
                     <img
-                      src={p.dataUrl || `${apiBase}/api/photo-proxy?fileId=${p.driveFileId}`}
+                      src={p.dataUrl || (p.driveFileId ? `${apiBase}/api/photo-proxy?fileId=${p.driveFileId}` : '')}
                       alt={p.caption}
-                      className="w-full h-28 object-cover"
+                      onError={(e) => {
+                        e.currentTarget.style.opacity = '0.25';
+                      }}
+                      className="w-full h-28 object-cover bg-gray-100"
                     />
                     <p className="p-1.5 text-[10px] font-semibold text-gray-600 truncate">{p.caption}</p>
                   </button>
@@ -2334,16 +2418,22 @@ export function IlReportWizard({
 
       {/* Modal Referensi Tabel 2.5 PUIL 2011 */}
       {showPuilTableModal && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-xl w-full p-4 space-y-3 max-h-[85vh] overflow-y-auto">
-            <div className="flex items-center justify-between">
+        <div
+          className="fixed inset-0 z-[70] bg-black/60 flex items-center justify-center p-4"
+          onClick={() => setShowPuilTableModal(false)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-xl w-full p-4 space-y-3 max-h-[85vh] overflow-y-auto shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-2">
               <h4 className="text-xs font-extrabold text-gray-800">
                 Tabel 2.5 Daftar KHA Kabel PUIL 2011 Hal. 524
               </h4>
               <button
                 type="button"
                 onClick={() => setShowPuilTableModal(false)}
-                className="text-xs font-bold text-gray-500"
+                className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg bg-gray-100 hover:bg-gray-200 text-xs font-bold text-gray-600"
               >
                 ✕
               </button>

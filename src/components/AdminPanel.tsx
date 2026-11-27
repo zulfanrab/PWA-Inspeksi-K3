@@ -280,25 +280,28 @@ export function AdminPanel({ currentUserEmail, onClose }: AdminPanelProps) {
 function TemplateManager() {
   const [templates, setTemplates] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [uploading, setUploading] = useState<string | null>(null);
 
   const loadTemplates = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const apiBase = getApiBaseUrl();
       const res = await fetch(`${apiBase}/api/report?action=template&t=${Date.now()}`, {
         cache: 'no-store',
       });
-      if (res.ok) {
-        const data = await res.json();
-        setTemplates(data.templates || []);
-        // Save folder ID to state if returned
-        if (data.templatesFolderId) {
-          (window as any)._templatesFolderId = data.templatesFolderId;
-        }
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
       }
-    } catch (e) {
+      const data = await res.json();
+      setTemplates(data.templates || []);
+      if (data.templatesFolderId) {
+        (window as any)._templatesFolderId = data.templatesFolderId;
+      }
+    } catch (e: any) {
       console.error(e);
+      setLoadError('Gagal memeriksa status template di Google Drive. Pastikan perangkat terhubung internet.');
     } finally {
       setLoading(false);
     }
@@ -313,6 +316,18 @@ function TemplateManager() {
     const apiBase = getApiBaseUrl();
     const docxMime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
     try {
+      if (!file || !file.name.toLowerCase().endsWith('.docx')) {
+        throw new Error('File wajib berformat .docx (Microsoft Word).');
+      }
+      if (file.size > 15 * 1024 * 1024) {
+        throw new Error('Ukuran file .docx melebihi batas maksimal 15 MB.');
+      }
+      // Verifikasi magic bytes ZIP (.docx diawali PK\x03\x04)
+      const headerBuf = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+      if (headerBuf.length < 4 || headerBuf[0] !== 0x50 || headerBuf[1] !== 0x4b || headerBuf[2] !== 0x03 || headerBuf[3] !== 0x04) {
+        throw new Error('Isi file bukan dokumen Word (.docx) yang valid.');
+      }
+
       // 1. Minta Resumable Upload Session URI dari server (pakai OAuth Refresh Token perusahaan, bukan token user browser)
       const sessionRes = await fetch(`${apiBase}/api/report?action=template-upload-session`, {
         method: 'POST',
@@ -338,8 +353,8 @@ function TemplateManager() {
         }
         uploadedDirect = true;
       } catch (directErr: any) {
-        // Fallback hanya jika file < 3.5MB dan direct PUT terkendala CORS/network
-        if (file.size <= 3.5 * 1024 * 1024) {
+        // Fallback hanya jika file <= 2.5MB agar base64+JSON tetap di bawah batas 4.5MB Vercel
+        if (file.size <= 2.5 * 1024 * 1024) {
           const base64 = await new Promise<string>((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = () => resolve(String(reader.result || ''));
@@ -385,6 +400,17 @@ function TemplateManager() {
       
       {loading ? (
         <div className="text-center py-4 text-xs font-bold text-gray-400">Memeriksa status template di Google Drive...</div>
+      ) : loadError ? (
+        <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-center justify-between gap-2">
+          <span>⚠️ {loadError}</span>
+          <button
+            type="button"
+            onClick={loadTemplates}
+            className="px-2.5 py-1 rounded-lg bg-white border border-amber-300 font-bold text-[11px] shrink-0"
+          >
+            Coba Lagi
+          </button>
+        </div>
       ) : (
         <div className="space-y-3">
           {[
@@ -627,7 +653,11 @@ function ClientManager({ currentUserEmail }: { currentUserEmail: string }) {
       }
       await loadUnits();
       setSubView('units');
-      pushTemplatesToDrive().catch(console.warn);
+      if (navigator.onLine) {
+        await pushTemplatesToDrive().catch((err) =>
+          console.warn('[AdminPanel] Sinkron unit ke Drive gagal:', err)
+        );
+      }
     } catch (err: any) {
       alert('Gagal menyimpan unit: ' + err.message);
     } finally {

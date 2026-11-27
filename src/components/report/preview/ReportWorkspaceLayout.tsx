@@ -28,9 +28,18 @@ export function ReportWorkspaceLayout({
   const [splitRatio, setSplitRatio] = useState<number>(44);
   const [isDraggingSplit, setIsDraggingSplit] = useState(false);
   const workspaceRef = useRef<HTMLDivElement>(null);
+  const dragCleanupRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    return () => {
+      dragCleanupRef.current?.();
+      dragCleanupRef.current = null;
+    };
+  }, []);
 
   const handleStartDragSplit = (e: React.PointerEvent) => {
     e.preventDefault();
+    dragCleanupRef.current?.();
     setIsDraggingSplit(true);
 
     const onMove = (ev: PointerEvent) => {
@@ -42,14 +51,18 @@ export function ReportWorkspaceLayout({
       setSplitRatio(Math.max(28, Math.min(68, Math.round(pct * 10) / 10)));
     };
 
-    const onUp = () => {
+    const stopDrag = () => {
       setIsDraggingSplit(false);
       window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointerup', stopDrag);
+      window.removeEventListener('pointercancel', stopDrag);
+      dragCleanupRef.current = null;
     };
 
+    dragCleanupRef.current = stopDrag;
     window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointerup', stopDrag);
+    window.addEventListener('pointercancel', stopDrag);
   };
 
   // Pastikan tombol Back perangkat di Mobile menutup modal preview terlebih dahulu,
@@ -73,14 +86,14 @@ export function ReportWorkspaceLayout({
       <div
         ref={workspaceRef}
         className={`flex bg-gray-50 border border-gray-200 rounded-2xl overflow-hidden shadow-sm ${
-          showDesktopPreview ? 'h-[calc(100vh-100px)] min-h-[580px]' : 'min-h-[600px]'
+          showDesktopPreview ? 'h-[calc(100vh-92px)] min-h-[480px]' : 'h-[calc(100vh-92px)] min-h-[480px]'
         } ${isDraggingSplit ? 'select-none' : ''}`}
       >
         {/* KIRI: Form Input Wizard (bisa digeser lebarnya lewat garis tengah) */}
         <div
           style={showDesktopPreview ? { width: `${splitRatio}%` } : undefined}
-          className={`flex flex-col min-w-0 bg-gray-50 ${
-            showDesktopPreview ? 'h-full shrink-0' : 'w-full'
+          className={`flex flex-col min-w-0 bg-gray-50 h-full ${
+            showDesktopPreview ? 'shrink-0' : 'w-full'
           }`}
         >
           <div className="shrink-0 bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between gap-2">
@@ -96,12 +109,10 @@ export function ReportWorkspaceLayout({
             )}
           </div>
 
-          <div
-            className={`flex-1 ${
-              showDesktopPreview ? 'overflow-y-auto p-4' : 'p-4 max-w-3xl mx-auto w-full'
-            }`}
-          >
-            <div className="space-y-4">{children}</div>
+          <div className="flex-1 overflow-y-auto p-4">
+            <div className={showDesktopPreview ? 'space-y-4' : 'space-y-4 max-w-3xl mx-auto w-full'}>
+              {children}
+            </div>
           </div>
 
           <div className="shrink-0 bg-white border-t border-gray-200 px-4 py-3">
@@ -142,7 +153,10 @@ export function ReportWorkspaceLayout({
   // MOBILE / TABLET LAYOUT (< 1024px)
   return (
     <div className="min-h-screen bg-gray-50 pb-28">
-      <div className="sticky top-0 z-20 bg-white border-b border-gray-200 px-4 py-3">
+      <div
+        className="sticky z-20 bg-white border-b border-gray-200 px-4 py-3"
+        style={{ top: 'calc(52px + env(safe-area-inset-top, 0px))' }}
+      >
         <div className="max-w-3xl mx-auto">{stickyHeader}</div>
       </div>
 

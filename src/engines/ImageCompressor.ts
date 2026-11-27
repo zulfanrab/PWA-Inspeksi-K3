@@ -42,6 +42,8 @@ export const ImageCompressor = {
 
         // Ekspor ke JPEG berkualitas rendah
         const compressedBase64 = canvas.toDataURL('image/jpeg', quality);
+        canvas.width = 0;
+        canvas.height = 0;
         resolve(compressedBase64);
       };
 

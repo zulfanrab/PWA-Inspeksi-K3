@@ -1,5 +1,6 @@
 // src/report-configs/instalasi-listrik/formulas.ts
 import { FormulaConfig } from '../types';
+import { parseGroundingResistanceList } from '../../utils/reportHelpers';
 
 export interface FormulaConfigWithCalc extends FormulaConfig {
   calculate: (inputs: Record<string, any>) => {
@@ -67,7 +68,7 @@ function toNum(val: unknown, fallback = 0): number {
   if (typeof val === 'number') return isNaN(val) ? fallback : val;
   const cleaned = String(val ?? '')
     .replace(/,/g, '.')
-    .replace(/[^0-9.\-]/g, '');
+    .replace(/[^0-9.-]/g, '');
   const n = parseFloat(cleaned);
   return isNaN(n) ? fallback : n;
 }
@@ -231,10 +232,7 @@ export function computeIlAnalysis(inputs: Record<string, any>): IlAnalysisResult
       : `Berdasarkan hasil perhitungan di atas I unbalance = ${unbalanceStr} % >= 20% (Batas Maksimal Unbalance 20%), Maka TIDAK ACC / Perlu penyeimbangan beban`;
 
   // Grounding check
-  const gRaw = String(inputs.tahananPentanahan || '').trim();
-  const gVals = gRaw
-    ? gRaw.split(',').map((v) => toNum(v, NaN)).filter((v) => !isNaN(v))
-    : [];
+  const gVals = parseGroundingResistanceList(inputs.tahananPentanahan);
   const groundingMaxNum = gVals.length > 0 ? Math.max(...gVals) : 0;
   const groundingPass = gVals.length === 0 ? true : groundingMaxNum <= 5.0;
 

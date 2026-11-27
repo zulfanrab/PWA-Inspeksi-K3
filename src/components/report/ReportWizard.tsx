@@ -23,6 +23,7 @@ import {
   getJointDocPhoto,
   getOrderedDocPhotos,
   initDocPhotos,
+  resolveDocPhotoDataUrl,
   type DocPhotoItemState,
 } from './DocumentationPhotoPicker';
 
@@ -33,21 +34,6 @@ interface ReportWizardProps {
 
 export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
   const [currentStep, setCurrentStep] = useState(1);
-
-  // Prevent accidental swipe or back gesture from destroying wizard progress
-  useEffect(() => {
-    const unregister = registerBackInterceptor(() => {
-      if (currentStep > 1) {
-        setCurrentStep(prev => prev - 1);
-        return true;
-      }
-      if (confirm('Tutup wizard laporan? Data yang belum di-generate akan dibatalkan.')) {
-        onClose();
-      }
-      return true;
-    });
-    return unregister;
-  }, [currentStep, onClose]);
   const [inspectionsList, setInspectionsList] = useState<any[]>([]);
   const [selectedInspection, setSelectedInspection] = useState<any>(null);
   
@@ -98,6 +84,24 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
   const [typeCode, setTypeCode] = useState<string>('IL');
   const [loadedReportData, setLoadedReportData] = useState<any>(null);
 
+  const isDelegatedToSpecialist =
+    (typeCode === 'IPP' || typeCode === 'IL') && Boolean(selectedInspection) && currentStep >= 2;
+
+  useEffect(() => {
+    if (isDelegatedToSpecialist) return;
+    const unregister = registerBackInterceptor(() => {
+      if (currentStep > 1) {
+        setCurrentStep(prev => prev - 1);
+        return true;
+      }
+      if (confirm('Tutup wizard laporan? Data yang belum di-generate akan dibatalkan.')) {
+        onClose();
+      }
+      return true;
+    });
+    return unregister;
+  }, [currentStep, onClose, isDelegatedToSpecialist]);
+
   useEffect(() => {
     loadSourceInspections();
     if (reportId) {
@@ -127,7 +131,7 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
         setTypeCode(rep.inspectionTypeCode);
         setReportNum(rep.reportNumber);
         
-        // Checklist
+        // Checklist (komponen utama + continuity)
         const checkMap: Record<string, any> = {};
         const remarkMap: Record<string, string> = {};
         rep.checklistData?.components?.forEach((c: any) => {
@@ -135,6 +139,10 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
             checkMap[item.itemId] = item.result;
             remarkMap[item.itemId] = item.remarks || '';
           });
+        });
+        rep.checklistData?.continuity?.forEach((item: any) => {
+          checkMap[item.itemId] = item.result;
+          remarkMap[item.itemId] = item.remarks || '';
         });
         setChecklistResponses(checkMap);
         setChecklistRemarks(remarkMap);
@@ -158,7 +166,7 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
             unitData: rep.technicalData || {},
             photos: [],
           });
-          setSelectedPhotos([]);
+          setSelectedPhotos(initDocPhotos([], rep));
         }
         
         setCurrentStep(2); // langsung ke data umum jika edit
@@ -173,19 +181,40 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
     const resolvedCode = mapObjectTypeToCode(insp.objectType);
     setTypeCode(resolvedCode);
 
-    // Prefill data dari data-inspeksi existing
-    setFormData(prev => ({
-      ...prev,
-      companyName: insp.clientName,
-      companyAddress: insp.unitData?.lokasiUnit || '',
-      ...insp.unitData // prefill matching fields
-    }));
+    const todayIso = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Jakarta' });
+    const inspDate = insp.unitData?.tanggal_inspeksi || insp.tanggal_inspeksi || todayIso;
+
+    // Reset state wizard agar tidak ada sisa laporan sebelumnya
+    setReportNum('');
+    setCalculations(null);
+    setAiNarrative(null);
+    setBapAttachments([]);
+    setExtraAttachments([]);
+    setGenLink('');
+    setGenStatus('');
+    setErrors([]);
+    setChecklistRemarks({});
+
+    // Prefill data dari config defaults & data inspeksi
+    const nextConfig = getConfigByCode(resolvedCode);
+    const configDefaults: Record<string, any> = {};
+    nextConfig?.forms.forEach((f) => {
+      if (f.defaultValue !== undefined) configDefaults[f.fieldId] = f.defaultValue;
+    });
+
+    setFormData({
+      ...configDefaults,
+      companyName: insp.clientName || '',
+      companyAddress: insp.unitData?.alamatPerusahaan || insp.unitData?.lokasiUnit || '',
+      inspectionDate: inspDate,
+      reportDate: todayIso,
+      ...insp.unitData,
+    });
 
     // Reset checklist & photos
-    const config = getConfigByCode(resolvedCode);
-    if (config) {
+    if (nextConfig) {
       const initialCheck: Record<string, any> = {};
-      config.checklists.categories.forEach(cat => {
+      nextConfig.checklists.categories.forEach(cat => {
         cat.components.forEach(comp => {
           comp.items.forEach(item => {
             initialCheck[item.itemId] = 'BAIK';
@@ -328,12 +357,14 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
 
   const skipToManualNarrative = () => {
     const safety = calculations?.overallSafetyStatus || 'AMAN';
+    const company = formData.companyName || 'Perusahaan';
+    const equipLabel = config?.meta?.name || typeCode || 'Instalasi K3';
     setAiNarrative({
-      executiveSummary: `Pemeriksaan dan pengujian berkala K3 dilakukan pada tanggal ${formData.inspectionDate} untuk instalasi ${typeCode === 'IL' ? 'Listrik' : 'Penyalur Petir'} CV Cahya Karunia Jaya yang berlokasi di ${formData.companyAddress || 'Bandung'}.`,
+      executiveSummary: `Pemeriksaan dan pengujian berkala K3 dilakukan pada tanggal ${formData.inspectionDate} untuk ${equipLabel} ${company} yang berlokasi di ${formData.companyAddress || '-'}.`,
       findingsNarrative: `Berdasarkan pemeriksaan visual secara detail, secara umum kondisi fisik peralatan terpasang dalam kondisi layak, namun ada beberapa temuan minor yang dicatat untuk perbaikan lebih lanjut.`,
-      testResultsNarrative: `Hasil pengujian teknis lapangan menunjukkan bahwa semua parameter yang diukur (termasuk nilai pembumian/isolasi) berada dalam batas aman yang diperbolehkan undang-undang dengan status safety: ${safety}.`,
-      recommendations: `1. Lakukan perawatan kebersihan secara berkala.\n2. Lakukan pengecekan rutin terminal kabel dan pengencangan baut.\n3. Pertahankan sistem pembumian agar tetap di bawah batas aman.`,
-      conclusion: `Instalasi ${typeCode === 'IL' ? 'Listrik' : 'Penyalur Petir'} CV Cahya Karunia Jaya dinyatakan MEMENUHI persyaratan keselamatan dan kesehatan kerja (K3) serta LAYAK untuk dioperasikan.`
+      testResultsNarrative: `Hasil pengujian teknis lapangan menunjukkan bahwa semua parameter yang diukur berada dalam batas aman yang diperbolehkan undang-undang dengan status safety: ${safety}.`,
+      recommendations: `1. Lakukan perawatan kebersihan secara berkala.\n2. Lakukan pengecekan rutin terminal/komponen dan pengencangan baut.\n3. Pertahankan sistem pengaman sesuai regulasi K3 yang berlaku.`,
+      conclusion: `${equipLabel} pada ${company} dinyatakan MEMENUHI persyaratan keselamatan dan kesehatan kerja (K3) serta LAYAK untuk dioperasikan.`
     });
     setCurrentStep(7);
   };
@@ -347,7 +378,7 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
       const apiBase = getApiBaseUrl();
 
       // 1. Validasi Nomor Laporan Manual
-      let currentReportNum = reportNum;
+      const currentReportNum = reportNum;
       if (!currentReportNum) {
         throw new Error('Nomor Laporan wajib diisi secara manual pada tahap Data Umum.');
       }
@@ -359,22 +390,33 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
       const compressedPhotos: any[] = [];
       for (let i = 0; i < orderedPhotos.length; i++) {
         const p = orderedPhotos[i];
-        const rawSrc = p.dataUrl || (p.driveFileId ? `${apiBase}/api/photo-proxy?fileId=${p.driveFileId}` : '');
-        const compressedUrl = rawSrc ? await ImageCompressor.compress(rawSrc, 1200, 0.75) : '';
-        compressedPhotos.push({
-          sourceId: p.id,
-          dataUrl: compressedUrl,
-          caption: p.caption || p.fileName || `Foto Dokumentasi #${i + 1}`,
-          category: 'Dokumentasi Lapangan',
-          orderIndex: i,
-          isCompressed: true
-        });
+        try {
+          const rawSrc = await resolveDocPhotoDataUrl(p, apiBase);
+          const compressedUrl = rawSrc ? await ImageCompressor.compress(rawSrc, 1200, 0.75) : '';
+          if (compressedUrl) {
+            compressedPhotos.push({
+              sourceId: p.id,
+              dataUrl: compressedUrl,
+              caption: p.caption || p.fileName || `Foto Dokumentasi #${i + 1}`,
+              category: 'Dokumentasi Lapangan',
+              orderIndex: i,
+              isCompressed: true
+            });
+          }
+        } catch {
+          // Lewati foto rusak agar ekspor tetap berjalan
+        }
       }
       const jointItem = getJointDocPhoto(selectedPhotos);
-      const jointRawSrc = jointItem
-        ? jointItem.dataUrl || (jointItem.driveFileId ? `${apiBase}/api/photo-proxy?fileId=${jointItem.driveFileId}` : '')
-        : '';
-      const jointPhotoDataUrl = jointRawSrc ? await ImageCompressor.compress(jointRawSrc, 1200, 0.82) : '';
+      let jointPhotoDataUrl = '';
+      if (jointItem) {
+        try {
+          const jointRawSrc = await resolveDocPhotoDataUrl(jointItem, apiBase);
+          jointPhotoDataUrl = jointRawSrc ? await ImageCompressor.compress(jointRawSrc, 1200, 0.82) : '';
+        } catch {
+          // ignore
+        }
+      }
 
       // Bangun struktur data checklist
       const components: any[] = [];
@@ -437,8 +479,8 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
           inspectionDate: formData.inspectionDate,
           reportDate: formData.reportDate,
           inspectorCompany: 'PT. Aksara Riksa Perdana',
-          inspectorName: 'Rio Dewantara',
-          inspectorCertNumber: 'AK3-ELEK-2024-99'
+          inspectorName: localStorage.getItem('aksara_user_name') || '',
+          inspectorCertNumber: ''
         },
         technicalData: {
           ...formData, // include all fields
@@ -453,13 +495,17 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
         testingData: {
           measurements: config?.forms
             .filter(f => f.section === 'testing')
-            .map(f => ({
-              measurementId: f.fieldId,
-              parameter: f.label,
-              value: Number(formData[f.fieldId] || 0),
-              unit: f.unit || '',
-              result: 'MEMENUHI' // diisi manual / automatic
-            })) || [],
+            .map(f => {
+              const rawVal = String(formData[f.fieldId] || '').trim();
+              const numVal = Number(rawVal.replace(',', '.'));
+              return {
+                measurementId: f.fieldId,
+                parameter: f.label,
+                value: !isNaN(numVal) && rawVal !== '' ? numVal : rawVal,
+                unit: f.unit || '',
+                result: 'MEMENUHI'
+              };
+            }) || [],
           instruments: [
             { name: 'Kyoritsu Leakage Clamp Meter', brand: 'Kyoritsu', model: '2433R' }
           ]
@@ -488,7 +534,7 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
           sourceFileName: att.sourceFileName,
           pageNumber: att.pageNumber,
         })),
-        createdBy: 'zulfanrafly03@gmail.com',
+        createdBy: localStorage.getItem('aksara_user_email') || 'system',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
@@ -511,45 +557,24 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
         body: JSON.stringify({ reportId: localId, reportData: reportPayload })
       });
 
-      if (!genResponse.ok) {
-        throw new Error('Kesalahan server saat memicu generation.');
+      const genData = await genResponse.json().catch(() => ({}));
+      if (!genResponse.ok || !genData.success) {
+        throw new Error(genData.error || `Kesalahan server saat membuat dokumen (HTTP ${genResponse.status}).`);
       }
 
-      const genData = await genResponse.json();
-      const jobId = genData.jobId;
-
-      // 5. Polling status generate
-      setGenStatus('Menunggu antrean generator...');
-      let completed = false;
-      let attempts = 0;
-
-      while (!completed && attempts < 40) {
-        await new Promise(r => setTimeout(r, 2000));
-        attempts++;
-        
-        const statusRes = await fetch(`${apiBase}/api/report?action=status&jobId=${jobId}`);
-        if (!statusRes.ok) continue;
-
-        const statusData = await statusRes.json();
-        setGenStatus(`Memproses dokumen: ${statusData.progress}% (${statusData.status})`);
-
-        if (statusData.status === 'completed') {
-          completed = true;
-          setGenLink(`https://docs.google.com/document/d/${statusData.outputDriveFileId}/edit`);
-          
-          // Update status laporan di IndexedDB
-          await db.reports.update(localId, {
-            status: 'preview',
-            generatedFileId: statusData.outputDriveFileId
-          });
-        } else if (statusData.status === 'failed') {
-          throw new Error(statusData.error || 'Generasi laporan gagal.');
-        }
+      const targetDriveId = genData.pdfDriveFileId || genData.outputDriveFileId || '';
+      if (targetDriveId) {
+        setGenLink(`https://drive.google.com/file/d/${targetDriveId}/view`);
       }
+      setGenStatus('Dokumen laporan selesai dibuat dan tersimpan di Google Drive.');
 
-      if (!completed) {
-        throw new Error('Waktu tunggu habis (Timeout). Silakan cek tab laporan di Drive Anda.');
-      }
+      await db.reports.update(localId, {
+        cloudId: genData.cloudId || reportPayload.inspectionId,
+        status: 'completed',
+        docxDriveFileId: genData.outputDriveFileId || '',
+        pdfDriveFileId: genData.pdfDriveFileId || '',
+        driveFileId: targetDriveId,
+      });
 
     } catch (err: any) {
       alert(`Gagal generate dokumen: ${err.message}`);
@@ -758,21 +783,35 @@ export function ReportWizard({ reportId, onClose }: ReportWizardProps) {
             Laporan akan dibuat dengan mengambil data dasar dari riwayat inspeksi lapangan yang sudah tersinkronisasi di bawah ini.
           </p>
           <div className="space-y-2.5">
-            {inspectionsList.map((insp) => (
-              <div
-                key={insp.id}
-                onClick={() => handleSelectInspection(insp)}
-                className="border border-gray-150 p-4 rounded-xl hover:border-emerald-500 hover:bg-emerald-50/10 cursor-pointer flex justify-between items-center transition-all"
-              >
-                <div>
-                  <p className="text-xs font-bold text-gray-800">{insp.clientName}</p>
-                  <p className="text-[10px] text-gray-400 font-bold mt-0.5">
-                    Tipe: {insp.objectType} | {new Date(insp.createdAt).toLocaleDateString('id-ID')}
-                  </p>
-                </div>
-                <span className="text-xs font-bold text-emerald-600">Pilih ➔</span>
-              </div>
-            ))}
+            {inspectionsList.length === 0 ? (
+              <p className="text-xs text-gray-500 text-center py-8 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+                Belum ada riwayat inspeksi yang tersimpan. Lakukan inspeksi lapangan atau tarik data dari Google Drive di menu Sinkronisasi terlebih dahulu.
+              </p>
+            ) : (
+              inspectionsList.map((insp) => {
+                const parsedDate = insp.createdAt ? new Date(insp.createdAt) : null;
+                const dateLabel =
+                  parsedDate && !isNaN(parsedDate.getTime())
+                    ? parsedDate.toLocaleDateString('id-ID')
+                    : insp.unitData?.tanggal_inspeksi || '-';
+                return (
+                  <button
+                    key={insp.id}
+                    type="button"
+                    onClick={() => handleSelectInspection(insp)}
+                    className="w-full text-left border border-gray-200 p-4 rounded-xl hover:border-emerald-500 hover:bg-emerald-50/10 flex justify-between items-center transition-all"
+                  >
+                    <div className="min-w-0 pr-3">
+                      <p className="text-xs font-bold text-gray-800 truncate">{insp.clientName}</p>
+                      <p className="text-[10px] text-gray-500 font-semibold mt-0.5 truncate">
+                        Tipe: {insp.objectType} | {dateLabel}
+                      </p>
+                    </div>
+                    <span className="text-xs font-bold text-emerald-600 shrink-0">Pilih →</span>
+                  </button>
+                );
+              })
+            )}
           </div>
         </div>
       </div>

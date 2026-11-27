@@ -12,7 +12,12 @@ import { FormulaEngine } from '../../engines/FormulaEngine';
 import { ImageCompressor } from '../../engines/ImageCompressor';
 import { getApiBaseUrl } from '../../config';
 import { registerBackInterceptor } from '../../utils/navigationGuard';
-import { parseApiJson, formatTanggalHuruf } from '../../utils/reportHelpers';
+import {
+  parseApiJson,
+  formatTanggalHuruf,
+  parseGroundingResistanceList,
+  estimateJsonPayloadBytes,
+} from '../../utils/reportHelpers';
 import {
   AttachmentSectionCard,
   mapInitialAttachments,
@@ -27,6 +32,7 @@ import {
   getJointDocPhoto,
   getOrderedDocPhotos,
   initDocPhotos,
+  resolveDocPhotoDataUrl,
   type DocPhotoItemState,
 } from './DocumentationPhotoPicker';
 
@@ -72,11 +78,16 @@ export function IppReportWizard({
   onClose,
 }: IppReportWizardProps) {
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+  const [showOcrModal, setShowOcrModal] = useState(false);
   const config = getConfigByCode('IPP');
   const apiBase = getApiBaseUrl();
 
   useEffect(() => {
     const unregister = registerBackInterceptor(() => {
+      if (showOcrModal) {
+        setShowOcrModal(false);
+        return true;
+      }
       if (step > 1) {
         setStep((prev) => (prev > 1 ? ((prev - 1) as 1 | 2 | 3 | 4) : prev));
         return true;
@@ -87,7 +98,21 @@ export function IppReportWizard({
       return true;
     });
     return unregister;
-  }, [step, onClose]);
+  }, [step, showOcrModal, onClose]);
+
+  useEffect(() => {
+    if (!showOcrModal) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowOcrModal(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [showOcrModal]);
 
   // --- INSPECTORS & COMPANY SKP ---
   const [inspectors, setInspectors] = useState<InspectorProfile[]>([]);
@@ -106,11 +131,13 @@ export function IppReportWizard({
 
   const unitData = selectedInspection?.unitData || {};
   const [formData, setFormData] = useState<Record<string, any>>(() => {
+    const todayIso = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Jakarta' });
+    const inspDate = unitData.tanggal_inspeksi || selectedInspection?.tanggal_inspeksi || todayIso;
     const base: Record<string, any> = {
       companyName: selectedInspection?.clientName || '',
-      companyAddress: unitData.lokasiUnit || unitData.alamatPerusahaan || '',
-      inspectionDate: new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Jakarta' }),
-      reportDate: new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Jakarta' }),
+      companyAddress: unitData.alamatPerusahaan || unitData.lokasiUnit || '',
+      inspectionDate: inspDate,
+      reportDate: todayIso,
       jenisAlat: 'Instalasi Penyalur Petir',
       jenisPenyalurPetir: unitData.jenisPenyalurPetir || 'Elektrostatis',
       bentukPenerima: unitData.bentukPenerima || 'Bulat Runcing',
@@ -147,11 +174,23 @@ export function IppReportWizard({
   });
 
   // --- STEP 2: GROUNDING POINTS & CHECKLIST ---
-  const [groundingPoints, setGroundingPoints] = useState<GroundingPointInput[]>(() =>
-    initialReportData?.technicalData?.groundingPoints?.length
-      ? initialReportData.technicalData.groundingPoints
-      : parseGroundingPointsFromStr(formData.tahananPembumian)
-  );
+  const [groundingPoints, setGroundingPoints] = useState<GroundingPointInput[]>(() => {
+    const rawPts = initialReportData?.technicalData?.groundingPoints;
+    if (Array.isArray(rawPts) && rawPts.length > 0) {
+      return rawPts.map((g: any, idx: number) => {
+        const resVal = String(g?.resistanceValue ?? g?.value ?? '').trim();
+        const num = Number(resVal.replace(',', '.'));
+        return {
+          pointName: g?.pointName || `Titik ${g?.no ?? idx + 1}`,
+          resistanceValue: resVal,
+          pointRemarks:
+            g?.pointRemarks ||
+            (resVal && !isNaN(num) ? (num <= 5.0 ? 'Memenuhi (<= 5 Ω)' : 'Tidak Memenuhi (> 5 Ω)') : ''),
+        };
+      });
+    }
+    return parseGroundingPointsFromStr(formData.tahananPembumian);
+  });
 
   const [checklistResults, setChecklistResults] = useState<Record<string, 'BAIK' | 'TIDAK_BAIK' | 'NA'>>(() => {
     const map: Record<string, 'BAIK' | 'TIDAK_BAIK' | 'NA'> = {};
@@ -191,7 +230,20 @@ export function IppReportWizard({
     }
     return map;
   });
-  const [editedRemarks, setEditedRemarks] = useState<Record<string, boolean>>({});
+  const [editedRemarks, setEditedRemarks] = useState<Record<string, boolean>>(() => {
+    const edited: Record<string, boolean> = {};
+    if (initialReportData?.checklistData) {
+      initialReportData.checklistData.components?.forEach((c: any) =>
+        c.items?.forEach((it: any) => {
+          if (it.itemId && it.remarks) edited[it.itemId] = true;
+        })
+      );
+      initialReportData.checklistData.continuity?.forEach((it: any) => {
+        if (it.itemId && it.remarks) edited[it.itemId] = true;
+      });
+    }
+    return edited;
+  });
 
   // --- STEP 3: NARASI & FOTO ---
   const [visualSummary, setVisualSummary] = useState<string>(initialReportData?.aiNarrative?.sections?.visualSummary || '');
@@ -212,7 +264,6 @@ export function IppReportWizard({
   );
 
   // --- AI & EXPORT STATES ---
-  const [showOcrModal, setShowOcrModal] = useState(false);
   const [ocrLoading, setOcrLoading] = useState(false);
   const [aiNarrativeLoading, setAiNarrativeLoading] = useState(false);
   const [aiPhotoLoading, setAiPhotoLoading] = useState(false);
@@ -225,15 +276,18 @@ export function IppReportWizard({
 
   // --- LOAD INSPECTORS & COMPANY SKP ---
   useEffect(() => {
+    let cancelled = false;
     const initInspectors = async () => {
       let [list, localSkp] = await Promise.all([
         InspectorRepository.getAll(),
         CompanySkpRepository.getSkpImage(),
       ]);
+      if (cancelled) return;
       if (list.length === 0 || !localSkp) {
         try {
           const res = await fetch(`${apiBase}/api/report?action=inspectors`);
-          const data = await res.json();
+          const data = await parseApiJson(res);
+          if (cancelled) return;
           if (data.success) {
             if (Array.isArray(data.inspectors) && data.inspectors.length > 0 && list.length === 0) {
               await InspectorRepository.replaceAllFromSync(data.inspectors);
@@ -248,19 +302,26 @@ export function IppReportWizard({
           // ignore offline
         }
       }
-      if (localSkp && !companySkpImage) {
-        setCompanySkpImage(localSkp);
+      if (cancelled) return;
+      if (localSkp) {
+        setCompanySkpImage((prev) => prev || localSkp);
       }
       setInspectors(list);
-      if (list.length > 0 && !selectedInspectorId) {
-        const matched = initialReportData?.generalData?.inspectorName
-          ? list.find((i) => i.name === initialReportData.generalData.inspectorName)
-          : list[0];
-        if (matched) setSelectedInspectorId(matched.id);
+      if (list.length > 0) {
+        setSelectedInspectorId((prev) => {
+          if (prev) return prev;
+          const matched = initialReportData?.generalData?.inspectorName
+            ? list.find((i) => i.name === initialReportData.generalData.inspectorName)
+            : list[0];
+          return matched ? matched.id : '';
+        });
       }
     };
     initInspectors();
-  }, [apiBase, initialReportData, selectedInspectorId, companySkpImage]);
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBase, initialReportData]);
 
   const handleSyncInspectors = async () => {
     setSyncingInspectors(true);
@@ -328,11 +389,12 @@ export function IppReportWizard({
     setFormData((prev) => (prev.tahananPembumian === joined ? prev : { ...prev, tahananPembumian: joined }));
   }, [groundingPoints]);
 
-  // Evaluasi status Grounding real-time
+  // Evaluasi status Grounding real-time (kosong tidak dianggap 0 Ohm memenuhi)
   const groundingEval = useMemo(() => {
     const nums = groundingPoints
-      .map((g) => Number(String(g.resistanceValue).replace(',', '.')))
-      .filter((n) => !isNaN(n) && String(n) !== '');
+      .map((g) => String(g.resistanceValue ?? '').trim())
+      .filter((s) => s !== '')
+      .flatMap((s) => parseGroundingResistanceList(s));
     if (nums.length === 0) return { hasValue: false, pass: false, maxVal: 0 };
     const maxVal = Math.max(...nums);
     return { hasValue: true, pass: maxVal <= 5.0, maxVal };
@@ -432,8 +494,11 @@ export function IppReportWizard({
     setFormData((prev) => {
       const next = { ...prev, [fieldId]: value };
       if (fieldId === 'hasilUkurSigmat') {
-        const d = Number(value);
-        if (!isNaN(d) && d > 0) {
+        const trimmed = String(value ?? '').trim();
+        const d = Number(trimmed);
+        if (!trimmed) {
+          next.luasPenampangHitung = '';
+        } else if (!isNaN(d) && d > 0) {
           next.luasPenampangHitung = calculateCrossSectionFromSigmat(d);
         }
       }
@@ -456,19 +521,8 @@ export function IppReportWizard({
   };
 
   // --- HELPER AMBIL DATAURL FOTO ---
-  const resolvePhotoDataUrl = async (p: DocPhotoItemState): Promise<string> => {
-    if (p.dataUrl && p.dataUrl.startsWith('data:image')) return p.dataUrl;
-    if (p.driveFileId) {
-      const res = await fetch(`${apiBase}/api/photo-proxy?fileId=${p.driveFileId}`);
-      const blob = await res.blob();
-      return await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.readAsDataURL(blob);
-      });
-    }
-    return '';
-  };
+  const resolvePhotoDataUrl = async (p: DocPhotoItemState): Promise<string> =>
+    resolveDocPhotoDataUrl(p, apiBase);
 
   // --- AI VISION OCR ALAT UKUR ---
   const handleRunOcrOnPhoto = async (photo: DocPhotoItemState) => {
@@ -724,21 +778,40 @@ export function IppReportWizard({
         }
       });
 
-      // Kompresi foto dokumentasi berurut (#1, #2, #3...) & foto bersama
+      // Kompresi foto dokumentasi berurut (#1, #2, #3...) & foto bersama (resilient per foto)
       const gridSelected = getOrderedDocPhotos(photos);
-      const compressedGrid = await Promise.all(
-        gridSelected.map(async (p) => ({
-          caption: p.caption || '',
-          dataUrl: await ImageCompressor.compress(await resolvePhotoDataUrl(p), 900, 0.78),
-        }))
-      );
+      const compressedGrid: Array<{ caption: string; dataUrl: string }> = [];
+      for (const p of gridSelected) {
+        try {
+          const rawUrl = await resolvePhotoDataUrl(p);
+          if (rawUrl) {
+            compressedGrid.push({
+              caption: p.caption || '',
+              dataUrl: await ImageCompressor.compress(rawUrl, 900, 0.78),
+            });
+          }
+        } catch (photoErr: any) {
+          console.warn('[IppReportWizard] Lewati 1 foto bermasalah:', photoErr?.message);
+        }
+      }
 
       const jointItem = getJointDocPhoto(photos);
-      const jointPhotoDataUrl = jointItem
-        ? await ImageCompressor.compress(await resolvePhotoDataUrl(jointItem), 1200, 0.82)
-        : '';
+      let jointPhotoDataUrl = '';
+      if (jointItem) {
+        try {
+          const rawJoint = await resolvePhotoDataUrl(jointItem);
+          if (rawJoint) {
+            jointPhotoDataUrl = await ImageCompressor.compress(rawJoint, 1200, 0.82);
+          }
+        } catch (jointErr: any) {
+          console.warn('[IppReportWizard] Foto bersama gagal dimuat:', jointErr?.message);
+        }
+      }
 
-      const cloudId = initialReportData?.cloudId || `IPP_${selectedInspection?.id || Date.now()}`;
+      const cloudId =
+        initialReportData?.cloudId ||
+        `IPP_${selectedInspection?.id || 'manual'}_${Date.now().toString(36)}`;
+      const nowIso = new Date().toISOString();
 
       const reportPayload = {
         cloudId,
@@ -747,7 +820,11 @@ export function IppReportWizard({
         inspectionTypeCode: 'IPP',
         exportFormat: format,
         configVersion: '2.0.0',
-        status: 'generating',
+        status: initialReportData?.status || 'draft',
+        docxDriveFileId: initialReportData?.docxDriveFileId || '',
+        pdfDriveFileId: initialReportData?.pdfDriveFileId || '',
+        driveFileId: initialReportData?.driveFileId || '',
+        createdAt: initialReportData?.createdAt || nowIso,
         generalData: {
           companyName: formData.companyName || '',
           companyAddress: formData.companyAddress || '',
@@ -806,7 +883,7 @@ export function IppReportWizard({
           sourceFileName: att.sourceFileName,
           pageNumber: att.pageNumber,
         })),
-        updatedAt: new Date().toISOString(),
+        updatedAt: nowIso,
       };
 
       let localId: number;
@@ -814,13 +891,22 @@ export function IppReportWizard({
         await db.reports.put({ ...reportPayload, id: reportId });
         localId = reportId;
       } else {
-        localId = await db.reports.add({ ...reportPayload, createdAt: new Date().toISOString() });
+        localId = await db.reports.add(reportPayload);
+      }
+
+      const requestBody = { reportId: localId, reportData: reportPayload };
+      const payloadBytes = estimateJsonPayloadBytes(requestBody);
+      if (payloadBytes > 4.2 * 1024 * 1024) {
+        const mb = (payloadBytes / (1024 * 1024)).toFixed(2);
+        throw new Error(
+          `Ukuran payload laporan (${mb} MB) mendekati batas 4.5 MB server. Kurangi beberapa foto atau halaman lampiran PDF lalu coba lagi.`
+        );
       }
 
       const res = await fetch(`${apiBase}/api/report?action=generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reportId: localId, reportData: reportPayload }),
+        body: JSON.stringify(requestBody),
       });
 
       const data = await parseApiJson(res);
@@ -1002,7 +1088,11 @@ export function IppReportWizard({
           {onChangeSource && (
             <button
               type="button"
-              onClick={onChangeSource}
+              onClick={() => {
+                if (confirm('Ganti sesi inspeksi? Isian yang belum diekspor pada form ini akan di-reset.')) {
+                  onChangeSource();
+                }
+              }}
               className="text-[11px] font-semibold text-emerald-600 hover:underline"
             >
               ↻ Ganti Sesi Inspeksi
@@ -1011,7 +1101,11 @@ export function IppReportWizard({
         </div>
         <button
           type="button"
-          onClick={onClose}
+          onClick={() => {
+            if (confirm('Tutup wizard laporan IPP? Perubahan yang belum disimpan akan hilang.')) {
+              onClose();
+            }
+          }}
           className="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-600 text-xs font-bold hover:bg-gray-200"
         >
           Tutup
@@ -1115,7 +1209,7 @@ export function IppReportWizard({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[11px] font-bold text-gray-600 mb-1">Tanggal Periksa</label>
                   <input
@@ -1557,8 +1651,8 @@ export function IppReportWizard({
 
               <div className="space-y-2">
                 {groundingPoints.map((pt, idx) => (
-                  <div key={idx} className="grid grid-cols-12 gap-2 items-center bg-gray-50 p-2 rounded-xl border border-gray-200">
-                    <div className="col-span-4">
+                  <div key={idx} className="grid grid-cols-12 gap-2 items-center bg-gray-50 p-2.5 rounded-xl border border-gray-200">
+                    <div className="col-span-7 sm:col-span-4">
                       <input
                         type="text"
                         value={pt.pointName}
@@ -1567,10 +1661,10 @@ export function IppReportWizard({
                           setGroundingPoints((prev) => prev.map((p, i) => (i === idx ? { ...p, pointName: val } : p)));
                         }}
                         placeholder="Titik 1"
-                        className="w-full px-2.5 py-1.5 text-xs bg-white border border-gray-200 rounded-lg"
+                        className="w-full px-2.5 py-2 text-xs bg-white border border-gray-200 rounded-lg"
                       />
                     </div>
-                    <div className="col-span-3">
+                    <div className="col-span-5 sm:col-span-3">
                       <input
                         type="text"
                         value={pt.resistanceValue}
@@ -1594,10 +1688,10 @@ export function IppReportWizard({
                           );
                         }}
                         placeholder="1.39"
-                        className="w-full px-2.5 py-1.5 text-xs font-bold bg-white border border-gray-200 rounded-lg"
+                        className="w-full px-2.5 py-2 text-xs font-bold bg-white border border-gray-200 rounded-lg"
                       />
                     </div>
-                    <div className="col-span-4">
+                    <div className="col-span-10 sm:col-span-4">
                       <input
                         type="text"
                         value={pt.pointRemarks}
@@ -1606,15 +1700,17 @@ export function IppReportWizard({
                           setGroundingPoints((prev) => prev.map((p, i) => (i === idx ? { ...p, pointRemarks: val } : p)));
                         }}
                         placeholder="Keterangan"
-                        className="w-full px-2.5 py-1.5 text-xs bg-white border border-gray-200 rounded-lg"
+                        className="w-full px-2.5 py-2 text-xs bg-white border border-gray-200 rounded-lg"
                       />
                     </div>
-                    <div className="col-span-1 flex justify-end">
+                    <div className="col-span-2 sm:col-span-1 flex justify-end">
                       {groundingPoints.length > 1 && (
                         <button
                           type="button"
                           onClick={() => setGroundingPoints((prev) => prev.filter((_, i) => i !== idx))}
-                          className="text-red-500 text-xs font-bold px-1.5 py-1"
+                          title="Hapus titik pengukuran"
+                          aria-label="Hapus titik pengukuran"
+                          className="min-w-[34px] min-h-[34px] flex items-center justify-center rounded-lg bg-red-50 text-red-600 hover:bg-red-100 text-xs font-bold"
                         >
                           ✕
                         </button>
@@ -1978,16 +2074,22 @@ export function IppReportWizard({
 
       {/* Modal Pilih Foto untuk AI Vision OCR */}
       {showOcrModal && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-4 space-y-3 max-h-[80vh] overflow-y-auto">
-            <div className="flex items-center justify-between">
+        <div
+          className="fixed inset-0 z-[70] bg-black/60 flex items-center justify-center p-4"
+          onClick={() => setShowOcrModal(false)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-lg w-full p-4 space-y-3 max-h-[80vh] overflow-y-auto shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-2">
               <h4 className="text-xs font-extrabold text-gray-800">
                 Pilih Foto Layar Earth Tester untuk Dibaca AI
               </h4>
               <button
                 type="button"
                 onClick={() => setShowOcrModal(false)}
-                className="text-xs font-bold text-gray-500"
+                className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg bg-gray-100 hover:bg-gray-200 text-xs font-bold text-gray-600"
               >
                 ✕
               </button>
@@ -2006,9 +2108,12 @@ export function IppReportWizard({
                     className="border border-gray-200 rounded-xl overflow-hidden hover:border-indigo-500 text-left"
                   >
                     <img
-                      src={p.dataUrl || `${apiBase}/api/photo-proxy?fileId=${p.driveFileId}`}
+                      src={p.dataUrl || (p.driveFileId ? `${apiBase}/api/photo-proxy?fileId=${p.driveFileId}` : '')}
                       alt={p.caption}
-                      className="w-full h-28 object-cover"
+                      onError={(e) => {
+                        e.currentTarget.style.opacity = '0.25';
+                      }}
+                      className="w-full h-28 object-cover bg-gray-100"
                     />
                     <p className="p-1.5 text-[10px] font-semibold text-gray-600 truncate">{p.caption}</p>
                   </button>

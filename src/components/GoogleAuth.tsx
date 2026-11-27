@@ -2,19 +2,32 @@
 import { GOOGLE_CONFIG, getGoogleRedirectUri } from '../config';
 
 export default function GoogleAuth() {
-  
   const handleLogin = () => {
     const redirectUri = getGoogleRedirectUri();
-    console.debug('[OAuth] redirect_uri:', redirectUri);
-    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CONFIG.clientId}&redirect_uri=${redirectUri}&response_type=token&scope=${GOOGLE_CONFIG.scope}`;
-    window.location.href = authUrl;
+    const state =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    try {
+      sessionStorage.setItem('aksara_oauth_state', state);
+    } catch {
+      // ignore storage failure
+    }
+    const params = new URLSearchParams({
+      client_id: GOOGLE_CONFIG.clientId,
+      redirect_uri: redirectUri,
+      response_type: 'token',
+      scope: GOOGLE_CONFIG.scope,
+      state,
+    });
+    window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
   };
 
   return (
     <div className="bg-white border-2 border-[#10B981]/20 p-6 rounded-2xl shadow-sm text-center">
       <h3 className="font-black text-[#064E3B] text-lg mb-2">Cloud Drive Perusahaan</h3>
       <p className="text-xs font-semibold text-gray-500 mb-6">Hubungkan akun Google perusahaan untuk sinkronisasi laporan otomatis.</p>
-      <button 
+      <button
         onClick={handleLogin}
         className="w-full flex items-center justify-center gap-3 bg-[#1F2937] hover:bg-black text-white py-3 rounded-xl font-bold text-sm transition-all"
       >

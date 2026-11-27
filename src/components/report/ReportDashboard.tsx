@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { db } from '../../db/db';
 import { getApiBaseUrl } from '../../config';
+import { parseApiJson } from '../../utils/reportHelpers';
 
 interface ReportDashboardProps {
   onNewReport: () => void;
@@ -18,7 +19,10 @@ function resolveReportDate(report: any): Date {
   const raw = report.generalData?.reportDate || report.updatedAt || report.createdAt;
   if (raw) {
     const str = String(raw).trim();
-    const d = new Date(str.includes('T') ? str : `${str}T00:00:00+07:00`);
+    const ymd = str.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/);
+    const d = ymd
+      ? new Date(Number(ymd[1]), Number(ymd[2]) - 1, Number(ymd[3]), 12, 0, 0)
+      : new Date(str.includes('T') ? str : `${str}T12:00:00Z`);
     if (!isNaN(d.getTime())) return d;
   }
   return new Date(report.createdAt || Date.now());
@@ -63,15 +67,23 @@ export function ReportDashboard({ onNewReport, onEditReport }: ReportDashboardPr
     setIsSyncing(true);
     if (manual) setSyncMessage(null);
     try {
-      const res = await fetch(`${apiBase}/api/report?action=reports`);
-      const data = await res.json();
+      const res = await fetch(`${apiBase}/api/report?action=reports`, { cache: 'no-store' });
+      const data = await parseApiJson(res);
       if (!res.ok || !data.success || !Array.isArray(data.reports)) {
         throw new Error(data.error || `HTTP ${res.status}`);
       }
 
+      const deletedCloudSet = new Set<string>(
+        Array.isArray(data.deletedCloudIds) ? data.deletedCloudIds.map(String) : []
+      );
+
       const localAll = await db.reports.toArray();
       const byCloudId = new Map<string, any>();
       for (const loc of localAll) {
+        if (loc.cloudId && deletedCloudSet.has(loc.cloudId)) {
+          await db.reports.delete(loc.id);
+          continue;
+        }
         if (loc.cloudId) byCloudId.set(loc.cloudId, loc);
       }
 
@@ -79,7 +91,7 @@ export function ReportDashboard({ onNewReport, onEditReport }: ReportDashboardPr
       let pulledCount = 0;
 
       for (const remote of data.reports) {
-        if (!remote?.cloudId) continue;
+        if (!remote?.cloudId || deletedCloudSet.has(remote.cloudId)) continue;
         remoteCloudIds.add(remote.cloudId);
         const existing = byCloudId.get(remote.cloudId);
         if (existing) {
@@ -90,6 +102,21 @@ export function ReportDashboard({ onNewReport, onEditReport }: ReportDashboardPr
               ...existing,
               ...remote,
               id: existing.id,
+              generalData: {
+                ...(remote.generalData || {}),
+                skpAhliImage: remote.generalData?.skpAhliImage || existing.generalData?.skpAhliImage || '',
+                skpPerusahaanImage:
+                  remote.generalData?.skpPerusahaanImage || existing.generalData?.skpPerusahaanImage || '',
+              },
+              photoDocumentation: remote.photoDocumentation || existing.photoDocumentation,
+              bapAttachments:
+                Array.isArray(remote.bapAttachments) && remote.bapAttachments.length > 0
+                  ? remote.bapAttachments
+                  : existing.bapAttachments,
+              extraAttachments:
+                Array.isArray(remote.extraAttachments) && remote.extraAttachments.length > 0
+                  ? remote.extraAttachments
+                  : existing.extraAttachments,
             });
           }
         } else {
@@ -102,8 +129,10 @@ export function ReportDashboard({ onNewReport, onEditReport }: ReportDashboardPr
       }
 
       let pushedCount = 0;
-      for (const loc of localAll) {
+      const freshLocal = await db.reports.toArray();
+      for (const loc of freshLocal) {
         const cid = loc.cloudId || `${loc.inspectionTypeCode || 'IPP'}_${loc.inspectionId || loc.id}`;
+        if (deletedCloudSet.has(cid)) continue;
         if (!remoteCloudIds.has(cid)) {
           if (!loc.cloudId) {
             await db.reports.update(loc.id, { cloudId: cid });
@@ -174,11 +203,14 @@ export function ReportDashboard({ onNewReport, onEditReport }: ReportDashboardPr
     await db.reports.delete(report.id);
     if (report.cloudId && navigator.onLine) {
       try {
-        await fetch(`${apiBase}/api/report?action=reports&cloudId=${encodeURIComponent(report.cloudId)}`, {
+        const res = await fetch(`${apiBase}/api/report?action=reports&cloudId=${encodeURIComponent(report.cloudId)}`, {
           method: 'DELETE',
         });
-      } catch (err) {
-        console.warn('[ReportDashboard] Gagal hapus laporan di cloud:', err);
+        if (!res.ok) {
+          setSyncMessage({ type: 'error', text: `Laporan dihapus lokal, tetapi gagal sinkron hapus ke Drive (HTTP ${res.status}).` });
+        }
+      } catch (err: any) {
+        setSyncMessage({ type: 'error', text: `Laporan dihapus lokal, namun gagal terhubung ke cloud: ${err?.message || 'offline'}.` });
       }
     }
     await loadLocalReports();
@@ -418,8 +450,9 @@ export function ReportDashboard({ onNewReport, onEditReport }: ReportDashboardPr
           <button
             type="button"
             onClick={() => deleteReport(report)}
-            className="text-xs font-bold text-rose-600 bg-rose-50 border border-rose-100 px-2 py-1.5 rounded-lg hover:bg-rose-100 transition-all"
+            className="min-w-[36px] min-h-[36px] flex items-center justify-center text-xs font-bold text-rose-600 bg-rose-50 border border-rose-100 px-2.5 py-1.5 rounded-lg hover:bg-rose-100 transition-all"
             title="Hapus Laporan"
+            aria-label="Hapus Laporan"
           >
             🗑️
           </button>
@@ -567,6 +600,8 @@ export function ReportDashboard({ onNewReport, onEditReport }: ReportDashboardPr
             <option value="all">Semua Status</option>
             <option value="completed">Selesai</option>
             <option value="draft">Draf</option>
+            <option value="generating">Proses</option>
+            <option value="approved">Approved</option>
           </select>
         </div>
 
@@ -594,7 +629,11 @@ export function ReportDashboard({ onNewReport, onEditReport }: ReportDashboardPr
           </div>
 
           <div className="flex items-center gap-2 text-[11px] text-gray-500 font-semibold">
-            <span>Menampilkan {filteredReports.length} laporan</span>
+            <span>
+              {viewMode === 'byMonth' && filteredReports.length > pagedReports.length
+                ? `Menampilkan ${pagedReports.length} dari ${filteredReports.length} laporan`
+                : `Menampilkan ${filteredReports.length} laporan`}
+            </span>
             {hasActiveFilter && (
               <button
                 type="button"

@@ -60,33 +60,53 @@ export function formatIndonesianDayAndDate(dateStr?: string): { day: string; for
   ];
   const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
 
-  let parsed: Date | null = null;
-  const dmyMatch = raw.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
-  const ymdMatch = raw.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+  const buildFromParts = (yyyy: number, mm: number, dd: number) => {
+    const utcNoon = new Date(Date.UTC(yyyy, mm - 1, dd, 12, 0, 0));
+    if (
+      isNaN(utcNoon.getTime()) ||
+      utcNoon.getUTCFullYear() !== yyyy ||
+      utcNoon.getUTCMonth() !== mm - 1 ||
+      utcNoon.getUTCDate() !== dd
+    ) {
+      return { day: '', formatted: raw };
+    }
+    return {
+      day: days[utcNoon.getUTCDay()] || '',
+      formatted: `${dd} ${months[mm - 1]} ${yyyy}`,
+    };
+  };
+
+  const dmyMatch = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  const ymdMatch = raw.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/);
   const idTextMatch = raw.match(/^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$/);
 
   if (dmyMatch) {
-    const [, dd, mm, yyyy] = dmyMatch;
-    parsed = new Date(`${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}T00:00:00+07:00`);
-  } else if (ymdMatch) {
-    const [, yyyy, mm, dd] = ymdMatch;
-    parsed = new Date(`${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}T00:00:00+07:00`);
-  } else if (idTextMatch) {
-    const [, dd, mName, yyyy] = idTextMatch;
-    const mIdx = months.findIndex((m) => m.toLowerCase() === mName.toLowerCase());
+    return buildFromParts(Number(dmyMatch[3]), Number(dmyMatch[2]), Number(dmyMatch[1]));
+  }
+  if (ymdMatch) {
+    return buildFromParts(Number(ymdMatch[1]), Number(ymdMatch[2]), Number(ymdMatch[3]));
+  }
+  if (idTextMatch) {
+    const mIdx = months.findIndex((m) => m.toLowerCase() === idTextMatch[2].toLowerCase());
     if (mIdx >= 0) {
-      parsed = new Date(`${yyyy}-${String(mIdx + 1).padStart(2, '0')}-${dd.padStart(2, '0')}T00:00:00+07:00`);
+      return buildFromParts(Number(idTextMatch[3]), mIdx + 1, Number(idTextMatch[1]));
     }
-  } else {
-    parsed = new Date(raw.includes('T') ? raw : `${raw}T00:00:00+07:00`);
   }
 
-  if (!parsed || isNaN(parsed.getTime())) return { day: '', formatted: raw };
+  const parsed = new Date(raw.includes('T') ? raw : `${raw}T12:00:00Z`);
+  if (isNaN(parsed.getTime())) return { day: '', formatted: raw };
 
-  return {
-    day: days[parsed.getDay()] || '',
-    formatted: `${parsed.getDate()} ${months[parsed.getMonth()]} ${parsed.getFullYear()}`,
-  };
+  const jkt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jakarta',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(parsed);
+  const parts = jkt.split('-').map(Number);
+  if (parts.length === 3 && !parts.some(isNaN)) {
+    return buildFromParts(parts[0], parts[1], parts[2]);
+  }
+  return { day: '', formatted: raw };
 }
 
 export function injectBapLoopIntoDocumentXml(zip: PizZip, hasBapUploads: boolean): void {

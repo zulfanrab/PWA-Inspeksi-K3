@@ -1,5 +1,6 @@
 // src/report-configs/penyalur-petir/formulas.ts
 import { FormulaConfig } from '../types';
+import { parseGroundingResistanceList } from '../../utils/reportHelpers';
 
 export interface FormulaConfigWithCalc extends FormulaConfig {
   calculate: (inputs: Record<string, any>) => {
@@ -26,11 +27,15 @@ export const formulas: FormulaConfigWithCalc[] = [
     thresholdType: 'MAX',
     standardRef: 'Permenaker No.02/1989 Pasal 54',
     calculate: (inputs) => {
-      const R_str = String(inputs.tahananPembumian || '0');
-      const R_values = R_str.split(',')
-        .map((v) => Number(v.trim().replace(',', '.')))
-        .filter((v) => !isNaN(v));
-      const R_max = R_values.length > 0 ? Math.max(...R_values) : 0;
+      const R_values = parseGroundingResistanceList(inputs.tahananPembumian);
+      if (R_values.length === 0) {
+        return {
+          result: 0,
+          pass: false,
+          details: 'Nilai tahanan pembumian belum diisi (batas standar <= 5.0 Ω).',
+        };
+      }
+      const R_max = Math.max(...R_values);
       const pass = R_max <= 5.0;
 
       return {

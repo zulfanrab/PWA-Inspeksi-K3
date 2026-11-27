@@ -216,7 +216,7 @@ export function IppPaperMirror({
                 <td style={{ border: '1px solid #374151', padding: '4px', textAlign: 'center' }}>{pt.no}</td>
                 <td style={{ border: '1px solid #374151', padding: '4px 6px' }}>{pt.pointName}</td>
                 <td style={{ border: '1px solid #374151', padding: '4px', textAlign: 'center', fontWeight: 'bold' }}>
-                  {pt.resistanceValue} Ω
+                  {pt.resistanceValue && pt.resistanceValue !== '-' ? `${pt.resistanceValue} Ω` : '-'}
                 </td>
                 <td style={{ border: '1px solid #374151', padding: '4px 6px' }}>{pt.pointRemarks}</td>
               </tr>

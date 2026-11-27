@@ -4,8 +4,10 @@
 // SAFETY: Tidak mengganggu sistem inspeksi yang sudah berjalan
 
 const STORAGE_KEY_PREFIX = 'profile_photo_';
-const MAX_PHOTO_SIZE = 500 * 1024; // 500KB max
+const MAX_INPUT_FILE_SIZE = 15 * 1024 * 1024; // 15 MB kamera/galeri
+const MAX_PHOTO_SIZE = 500 * 1024; // 500KB max setelah kompresi
 const COMPRESSION_QUALITY = 0.7;
+const ALLOWED_RASTER_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp']);
 
 export interface ProfilePhoto {
   email: string;
@@ -71,27 +73,27 @@ export async function uploadProfilePhoto(
   file: File
 ): Promise<{ success: boolean; message: string; dataUrl?: string }> {
   try {
-    // Validasi file type
-    if (!file.type.startsWith('image/')) {
-      return { success: false, message: 'File harus berupa gambar (JPG, PNG, etc)' };
+    // Validasi file type raster (JPG/PNG/WebP — tolak SVG aktif)
+    if (!ALLOWED_RASTER_TYPES.has(file.type.toLowerCase())) {
+      return { success: false, message: 'Format file harus JPG, PNG, atau WebP.' };
     }
 
-    // Validasi ukuran file
-    if (file.size > MAX_PHOTO_SIZE) {
+    // Batasi ukuran mentah input agar aman di memori browser (maks 15 MB) sebelum kompresi
+    if (file.size > MAX_INPUT_FILE_SIZE) {
       return {
         success: false,
-        message: `Ukuran file terlalu besar. Max ${MAX_PHOTO_SIZE / 1024}KB`
+        message: 'Ukuran file terlalu besar (maks 15 MB).',
       };
     }
 
-    // Compress image
+    // Compress image lebih dulu sebelum memeriksa batas simpan localStorage (500 KB)
     const compressedDataUrl = await compressImage(file);
 
     // Validasi ukuran setelah compress
     if (compressedDataUrl.length > MAX_PHOTO_SIZE * 2) {
       return {
         success: false,
-        message: 'Gambar terlalu kompleks, coba dengan gambar lebih sederhana'
+        message: 'Ukuran hasil kompresi foto masih terlalu besar.',
       };
     }
 

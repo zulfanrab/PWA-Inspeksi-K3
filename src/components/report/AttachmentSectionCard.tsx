@@ -1,5 +1,5 @@
 // src/components/report/AttachmentSectionCard.tsx
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { processPdfOrImagePages } from '../../utils/skpImageHelper';
 
 export interface AttachmentPageItem {
@@ -43,6 +43,8 @@ export function AttachmentSectionCard({
   onChange,
 }: AttachmentSectionCardProps) {
   const [processing, setProcessing] = useState(false);
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
 
   const handleFilesSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
@@ -61,7 +63,7 @@ export function AttachmentSectionCard({
           });
         });
       }
-      onChange([...items, ...added]);
+      onChange([...itemsRef.current, ...added]);
     } catch (err: any) {
       alert(`Gagal memproses lampiran: ${err.message}`);
     } finally {

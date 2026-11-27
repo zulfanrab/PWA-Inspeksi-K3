@@ -1,5 +1,6 @@
 // src/engines/ValidationEngine.ts
 import { getConfigByCode } from '../report-configs/registry';
+import { parseGroundingResistanceList } from '../utils/reportHelpers';
 
 export interface ValidationError {
   fieldId: string;
@@ -46,8 +47,8 @@ export const ValidationEngine = {
         const min = rule.params.min !== undefined ? Number(rule.params.min) : -Infinity;
         const max = rule.params.max !== undefined ? Number(rule.params.max) : Infinity;
 
-        const vals = String(valStr).split(',').map(v => Number(v.trim()));
-        const hasInvalid = vals.some(v => isNaN(v) || v < min || v > max);
+        const vals = parseGroundingResistanceList(valStr);
+        const hasInvalid = vals.length === 0 || vals.some(v => isNaN(v) || v < min || v > max);
 
         if (hasInvalid) {
           errors.push({

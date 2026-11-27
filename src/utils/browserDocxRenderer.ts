@@ -6,6 +6,7 @@ import { injectBapLoopIntoDocumentXml } from './reportTemplatePayload';
 
 const MODULE_NAME = 'open-xml-templating/docxtemplater-image-module';
 const dimensionCache = new Map<string, [number, number]>();
+const MAX_DIM_CACHE = 200;
 
 function dataUrlCacheKey(dataUrl: string): string {
   return `${dataUrl.length}:${dataUrl.slice(0, 64)}:${dataUrl.slice(-32)}`;
@@ -16,21 +17,26 @@ function decodeBase64ToUint8Array(dataUrl: string): Uint8Array | null {
   if (idx === -1) return null;
   const b64 = dataUrl.slice(idx + 7).trim();
   if (!b64) return null;
-  const binary = atob(b64);
-  const len = binary.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    bytes[i] = binary.charCodeAt(i);
+  try {
+    const binary = atob(b64);
+    const len = binary.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  } catch {
+    return null;
   }
-  return bytes;
 }
 
-function getExtensionFromDataUrl(dataUrl: string): { ext: string; mime: string } {
+function getExtensionFromDataUrl(dataUrl: string): { ext: string; mime: string } | null {
   const match = dataUrl.match(/^data:(image\/[a-z0-9+.-]+);base64,/i);
-  const mime = (match?.[1] || 'image/jpeg').toLowerCase();
-  if (mime.includes('png')) return { ext: 'png', mime: 'image/png' };
-  if (mime.includes('webp')) return { ext: 'webp', mime: 'image/webp' };
-  return { ext: 'jpg', mime: 'image/jpeg' };
+  const mime = (match?.[1] || '').toLowerCase();
+  if (mime === 'image/png') return { ext: 'png', mime: 'image/png' };
+  if (mime === 'image/webp') return { ext: 'webp', mime: 'image/webp' };
+  if (mime === 'image/jpeg' || mime === 'image/jpg') return { ext: 'jpg', mime: 'image/jpeg' };
+  return null;
 }
 
 function collectBase64Strings(obj: any, out = new Set<string>()): Set<string> {
@@ -52,8 +58,13 @@ function collectBase64Strings(obj: any, out = new Set<string>()): Set<string> {
 async function preloadImageDimensions(dataUrls: Iterable<string>): Promise<void> {
   const tasks: Promise<void>[] = [];
   for (const url of dataUrls) {
+    if (!getExtensionFromDataUrl(url)) continue;
     const key = dataUrlCacheKey(url);
     if (dimensionCache.has(key)) continue;
+    if (dimensionCache.size >= MAX_DIM_CACHE) {
+      const oldestKey = dimensionCache.keys().next().value;
+      if (oldestKey) dimensionCache.delete(oldestKey);
+    }
     tasks.push(
       new Promise<void>((resolve) => {
         const img = new Image();
@@ -185,15 +196,19 @@ class BrowserDocxImageModule {
       return { value: this.fileTypeConfig?.tagTextXml || '<w:t></w:t>' };
     }
 
-    const { ext, mime } = getExtensionFromDataUrl(tagValue);
-    const rId = this.addImageToZip(options.filePath, bytes, ext, mime);
+    const extInfo = getExtensionFromDataUrl(tagValue);
+    if (!extInfo) {
+      return { value: this.fileTypeConfig?.tagTextXml || '<w:t></w:t>' };
+    }
+
+    const rId = this.addImageToZip(options.filePath, bytes, extInfo.ext, extInfo.mime);
     const [wPx, hPx] = computeFittedImageSize(tagValue, part.value);
     const emu: [number, number] = [Math.round(wPx * 9525), Math.round(hPx * 9525)];
     return { value: buildImageXml(rId, emu, Boolean(part.centered)) };
   }
 
   private addImageToZip(filePath: string, bytes: Uint8Array, ext: string, mime: string): number {
-    const baseName = filePath.replace(/^.*?([a-zA-Z0-9]+)\.xml$/, '$1');
+    const baseName = filePath.split('/').pop()?.replace(/\.xml$/i, '') || 'document';
     const relsPath = `word/_rels/${baseName}.xml.rels`;
     const relsDoc =
       this.xmlDocuments?.[relsPath] || this.xmlDocuments?.['word/_rels/document.xml.rels'];

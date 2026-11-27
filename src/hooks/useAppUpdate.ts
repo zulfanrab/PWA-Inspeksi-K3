@@ -24,6 +24,7 @@ export function useAppUpdate() {
   const [liveBannerDismissed, setLiveBannerDismissed] = useState(false);
   const [controllerUpdated, setControllerUpdated] = useState(false);
   const swRegistrationRef = useRef<ServiceWorkerRegistration | null>(null);
+  const pollTimerRef = useRef<number | null>(null);
   const hadControllerRef = useRef<boolean>(
     typeof navigator !== 'undefined' && 'serviceWorker' in navigator && Boolean(navigator.serviceWorker.controller)
   );
@@ -58,8 +59,11 @@ export function useAppUpdate() {
         if (navigator.onLine) {
           registration.update().catch(() => {});
         }
+        if (pollTimerRef.current !== null) {
+          window.clearInterval(pollTimerRef.current);
+        }
         // Cek update berkala setiap 2 menit saat aplikasi terbuka di Desktop maupun HP
-        setInterval(() => {
+        pollTimerRef.current = window.setInterval(() => {
           if (navigator.onLine) {
             registration.update().catch(() => {});
           }
@@ -100,6 +104,10 @@ export function useAppUpdate() {
       navigator.serviceWorker.addEventListener('controllerchange', handleControllerChange);
     }
     return () => {
+      if (pollTimerRef.current !== null) {
+        window.clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
       window.removeEventListener('online', checkForUpdate);
       window.removeEventListener('focus', checkForUpdate);
       document.removeEventListener('visibilitychange', handleVisibility);

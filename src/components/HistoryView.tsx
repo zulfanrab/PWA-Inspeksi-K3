@@ -316,8 +316,15 @@ function HistoryCard({
       const fileName = `Laporan_${item.objectType}_${unitName}_${clientSlug}_${dateSlug}`.replace(/\s+/g, '_');
       const pdfUrl = await exportToPDF(item, fileName);
       if (pdfWindow) {
+        pdfWindow.opener = null;
         pdfWindow.location.href = pdfUrl;
+      } else {
+        const a = document.createElement('a');
+        a.href = pdfUrl;
+        a.download = `${fileName}.pdf`;
+        a.click();
       }
+      window.setTimeout(() => URL.revokeObjectURL(pdfUrl), 60_000);
     } catch (err: any) {
       if (pdfWindow) pdfWindow.close();
       alert('Gagal export PDF: ' + err.message);

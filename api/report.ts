@@ -15,6 +15,18 @@ function getRomanMonth(month: number): string {
   return ROMAN_MONTHS[month] || String(month);
 }
 
+const TYPE_CODE_RE = /^[A-Z0-9_-]{1,20}$/;
+const JOB_ID_RE = /^[A-Za-z0-9_-]{4,80}$/;
+const DRIVE_ID_RE = /^[a-zA-Z0-9_-]{8,128}$/;
+
+function sanitizeTypeCode(raw: unknown): string {
+  const code = String(raw || '').trim().toUpperCase();
+  if (!TYPE_CODE_RE.test(code)) {
+    throw new Error('Kode jenis laporan tidak valid.');
+  }
+  return code;
+}
+
 // --- HELPER FOR GENERATE ACTIONS ---
 async function getTemplatesFolderId(drive: any, rootFolderId: string): Promise<string> {
   const q = `name='Templates' and mimeType='application/vnd.google-apps.folder' and '${rootFolderId}' in parents and trashed=false`;
@@ -31,7 +43,8 @@ async function getTemplatesFolderId(drive: any, rootFolderId: string): Promise<s
 }
 
 async function findTemplateFileId(drive: any, templatesFolderId: string, typeCode: string): Promise<string> {
-  const fileName = `Template_${typeCode.toUpperCase()}.docx`;
+  const cleanCode = sanitizeTypeCode(typeCode);
+  const fileName = `Template_${cleanCode}.docx`;
   const q = `name='${fileName}' and '${templatesFolderId}' in parents and trashed=false`;
   const res = await drive.files.list({
     q,
@@ -125,15 +138,17 @@ async function handleSequence(req: VercelRequest, res: VercelResponse) {
     data.counters[typeKey][yearKey] = nextNum;
 
     try {
-      await drive.files.update({
-        fileId: fileId!,
-        media: {
-          mimeType: 'application/json',
-          body: Readable.from(JSON.stringify(data, null, 2))
-        }
-      }, {
-        headers: { 'If-Match': etag || '' }
-      });
+      await drive.files.update(
+        {
+          fileId: fileId!,
+          supportsAllDrives: true,
+          media: {
+            mimeType: 'application/json',
+            body: Readable.from(JSON.stringify(data, null, 2))
+          }
+        },
+        etag ? { headers: { 'If-Match': etag } } : undefined
+      );
 
       success = true;
     } catch (err: any) {
@@ -328,37 +343,56 @@ function formatIndonesianDayAndDate(dateStr?: string): { day: string; formatted:
   ];
   const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
 
-  let parsed: Date | null = null;
+  const buildFromParts = (yyyy: number, mm: number, dd: number) => {
+    const utcNoon = new Date(Date.UTC(yyyy, mm - 1, dd, 12, 0, 0));
+    if (
+      isNaN(utcNoon.getTime()) ||
+      utcNoon.getUTCFullYear() !== yyyy ||
+      utcNoon.getUTCMonth() !== mm - 1 ||
+      utcNoon.getUTCDate() !== dd
+    ) {
+      return { day: '', formatted: raw };
+    }
+    return {
+      day: days[utcNoon.getUTCDay()] || '',
+      formatted: `${dd} ${months[mm - 1]} ${yyyy}`
+    };
+  };
 
-  // Dukung DD/MM/YYYY atau DD-MM-YYYY (sering berasal dari data inspeksi lapangan)
-  const dmyMatch = raw.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  // Dukung DD/MM/YYYY atau DD-MM-YYYY
+  const dmyMatch = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
   // Dukung YYYY-MM-DD
-  const ymdMatch = raw.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
-  // Dukung "12 November 2026" (sudah berformat huruf Indonesia)
+  const ymdMatch = raw.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/);
+  // Dukung "12 November 2026"
   const idTextMatch = raw.match(/^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$/);
 
   if (dmyMatch) {
-    const [, dd, mm, yyyy] = dmyMatch;
-    parsed = new Date(`${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}T00:00:00+07:00`);
-  } else if (ymdMatch) {
-    const [, yyyy, mm, dd] = ymdMatch;
-    parsed = new Date(`${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}T00:00:00+07:00`);
-  } else if (idTextMatch) {
-    const [, dd, mName, yyyy] = idTextMatch;
-    const mIdx = months.findIndex((m) => m.toLowerCase() === mName.toLowerCase());
+    return buildFromParts(Number(dmyMatch[3]), Number(dmyMatch[2]), Number(dmyMatch[1]));
+  }
+  if (ymdMatch) {
+    return buildFromParts(Number(ymdMatch[1]), Number(ymdMatch[2]), Number(ymdMatch[3]));
+  }
+  if (idTextMatch) {
+    const mIdx = months.findIndex((m) => m.toLowerCase() === idTextMatch[2].toLowerCase());
     if (mIdx >= 0) {
-      parsed = new Date(`${yyyy}-${String(mIdx + 1).padStart(2, '0')}-${dd.padStart(2, '0')}T00:00:00+07:00`);
+      return buildFromParts(Number(idTextMatch[3]), mIdx + 1, Number(idTextMatch[1]));
     }
-  } else {
-    parsed = new Date(raw.includes('T') ? raw : `${raw}T00:00:00+07:00`);
   }
 
-  if (!parsed || isNaN(parsed.getTime())) return { day: '', formatted: raw };
+  const parsed = new Date(raw.includes('T') ? raw : `${raw}T12:00:00Z`);
+  if (isNaN(parsed.getTime())) return { day: '', formatted: raw };
 
-  return {
-    day: days[parsed.getDay()] || '',
-    formatted: `${parsed.getDate()} ${months[parsed.getMonth()]} ${parsed.getFullYear()}`
-  };
+  const jkt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jakarta',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(parsed);
+  const parts = jkt.split('-').map(Number);
+  if (parts.length === 3 && !parts.some(isNaN)) {
+    return buildFromParts(parts[0], parts[1], parts[2]);
+  }
+  return { day: '', formatted: raw };
 }
 
 // 3. GENERATE
@@ -694,8 +728,9 @@ async function handleGenerate(req: VercelRequest, res: VercelResponse) {
     compression: 'DEFLATE'
   });
 
-  const clientFolderId = reportData.technicalData?.driveFolderId || rootFolderId;
-  const safeReportNum = String(reportData.reportNumber || 'REPORT').replace(/[\/\s]+/g, '_');
+  const rawFolderId = String(reportData.technicalData?.driveFolderId || '').trim();
+  const clientFolderId = DRIVE_ID_RE.test(rawFolderId) ? rawFolderId : rootFolderId;
+  const safeReportNum = String(reportData.reportNumber || 'REPORT').replace(/[/\s]+/g, '_');
   const reportFileName = `Laporan_${reportData.inspectionTypeCode}_${safeReportNum}.docx`;
   
   const uploadRes = await drive.files.create({
@@ -828,8 +863,8 @@ async function handleStatus(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
   const { jobId } = req.query;
 
-  if (!jobId) {
-    return res.status(400).json({ error: 'Parameter query "jobId" wajib disertakan.' });
+  if (!jobId || typeof jobId !== 'string' || !JOB_ID_RE.test(jobId)) {
+    return res.status(400).json({ error: 'Parameter query "jobId" tidak valid.' });
   }
 
   const drive = getDriveClient();
@@ -883,7 +918,7 @@ async function handleTemplate(req: VercelRequest, res: VercelResponse) {
     const typeCodeParam = String(req.query.typeCode || '').trim().toUpperCase();
 
     if (downloadFlag === '1' && typeCodeParam) {
-      const cleanCode = typeCodeParam.replace(/[^A-Z0-9_-]/g, '');
+      const cleanCode = sanitizeTypeCode(typeCodeParam);
       const fileName = `Template_${cleanCode}.docx`;
       const qFile = `name='${fileName}' and '${templatesFolderId}' in parents and trashed=false`;
       const searchFileRes = await drive.files.list({
@@ -939,14 +974,23 @@ async function handleTemplate(req: VercelRequest, res: VercelResponse) {
   }
 
   if (req.method === 'POST') {
-    const { typeCode, fileBase64, fileName } = req.body;
+    const { typeCode, fileBase64 } = req.body || {};
 
     if (!typeCode || !fileBase64) {
       return res.status(400).json({ error: 'Payload tidak lengkap: typeCode dan fileBase64 wajib ada.' });
     }
 
-    const cleanTypeCode = String(typeCode).toUpperCase();
+    const cleanTypeCode = sanitizeTypeCode(typeCode);
     const targetFileName = `Template_${cleanTypeCode}.docx`;
+
+    const fileBuffer = Buffer.from(String(fileBase64).replace(/^data:.*?;base64,/, ''), 'base64');
+    if (fileBuffer.length < 4 || fileBuffer.length > 3 * 1024 * 1024) {
+      return res.status(400).json({ error: 'Ukuran file template fallback tidak valid (maks 3 MB).' });
+    }
+    // Verifikasi magic bytes ZIP (.docx adalah arsip OOXML yang diawali PK\x03\x04)
+    if (fileBuffer[0] !== 0x50 || fileBuffer[1] !== 0x4b || fileBuffer[2] !== 0x03 || fileBuffer[3] !== 0x04) {
+      return res.status(400).json({ error: 'File yang diunggah bukan format dokumen .docx yang valid.' });
+    }
 
     const q = `name='${targetFileName}' and '${templatesFolderId}' in parents and trashed=false`;
     const searchRes = await drive.files.list({
@@ -961,7 +1005,6 @@ async function handleTemplate(req: VercelRequest, res: VercelResponse) {
 
     const existingFileId = searchRes.data.files?.[0]?.id;
 
-    const fileBuffer = Buffer.from(fileBase64.replace(/^data:.*?;base64,/, ''), 'base64');
     const media = {
       mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       body: Readable.from(fileBuffer)
@@ -1121,8 +1164,12 @@ async function handleVision(req: VercelRequest, res: VercelResponse) {
 
   if (mode === 'ocr_meter') {
     if (!imageDataUrl) return res.status(400).json({ error: 'imageDataUrl wajib diisi.' });
-    const base64 = String(imageDataUrl).replace(/^data:image\/\w+;base64,/, '');
-    const mimeType = String(imageDataUrl).match(/^data:(image\/\w+);base64,/)?.[1] || 'image/jpeg';
+    const mimeMatch = String(imageDataUrl).match(/^data:(image\/(?:jpeg|jpg|png|webp));base64,(.+)$/i);
+    if (!mimeMatch) {
+      return res.status(400).json({ error: 'Format gambar OCR tidak didukung (gunakan JPEG, PNG, atau WebP).' });
+    }
+    const mimeType = mimeMatch[1].toLowerCase() === 'image/jpg' ? 'image/jpeg' : mimeMatch[1].toLowerCase();
+    const base64 = mimeMatch[2];
 
     const isIlVision = String(inspectionType || '').toUpperCase() === 'IL';
 
@@ -1177,12 +1224,12 @@ async function handleVision(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'photos wajib diisi.' });
     }
     const parts: any[] = [];
-    photos.forEach((p: any, idx: number) => {
-      const base64 = String(p.dataUrl || '').replace(/^data:image\/\w+;base64,/, '');
-      const mimeType = String(p.dataUrl || '').match(/^data:(image\/\w+);base64,/)?.[1] || 'image/jpeg';
-      if (base64) {
+    photos.slice(0, 12).forEach((p: any, idx: number) => {
+      const m = String(p.dataUrl || '').match(/^data:(image\/(?:jpeg|jpg|png|webp));base64,(.+)$/i);
+      if (m) {
+        const mimeType = m[1].toLowerCase() === 'image/jpg' ? 'image/jpeg' : m[1].toLowerCase();
         parts.push({ text: `Foto ID: ${p.id} (Urutan ${idx + 1})` });
-        parts.push({ inlineData: { data: base64, mimeType } });
+        parts.push({ inlineData: { data: m[2], mimeType } });
       }
     });
 
@@ -1263,7 +1310,7 @@ async function handleTemplateUploadSession(req: VercelRequest, res: VercelRespon
   const rootFolderId = process.env.ROOT_FOLDER_ID?.trim() || 'root';
   const templatesFolderId = await getTemplatesFolderId(drive, rootFolderId);
 
-  const cleanTypeCode = String(typeCode).toUpperCase();
+  const cleanTypeCode = sanitizeTypeCode(typeCode);
   const targetFileName = `Template_${cleanTypeCode}.docx`;
   const docxMime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
@@ -1306,8 +1353,9 @@ async function handleTemplateUploadSession(req: VercelRequest, res: VercelRespon
   });
 
   if (!initRes.ok) {
-    const errText = await initRes.text();
-    throw new Error(`Gagal menginisiasi sesi upload Drive (${initRes.status}): ${errText}`);
+    const errText = await initRes.text().catch(() => '');
+    console.error('[api/report] Template upload session init failed:', initRes.status, errText);
+    throw new Error(`Gagal menginisiasi sesi upload Drive (HTTP ${initRes.status}).`);
   }
 
   const uploadUrl = initRes.headers.get('location');
@@ -1326,7 +1374,7 @@ async function handleTemplateUploadSession(req: VercelRequest, res: VercelRespon
 // 8. CLOUD REPORTS INDEX (_reports_index.json untuk sinkronisasi Desktop <-> Mobile)
 const REPORTS_INDEX_FILENAME = '_reports_index.json';
 
-async function readReportsIndex(drive: any, rootFolderId: string): Promise<{ fileId: string | null; reports: any[]; deletedCloudIds: string[] }> {
+async function readReportsIndex(drive: any, rootFolderId: string): Promise<{ fileId: string | null; reports: any[]; deletedCloudIds: string[]; deletedFileIds: string[] }> {
   let q = `name='${REPORTS_INDEX_FILENAME}' and '${rootFolderId}' in parents and trashed=false`;
   let searchRes = await drive.files.list({
     q,
@@ -1352,7 +1400,7 @@ async function readReportsIndex(drive: any, rootFolderId: string): Promise<{ fil
     fileId = searchRes.data.files?.[0]?.id || null;
   }
 
-  if (!fileId) return { fileId: null, reports: [], deletedCloudIds: [] };
+  if (!fileId) return { fileId: null, reports: [], deletedCloudIds: [], deletedFileIds: [] };
 
   try {
     const dl = await drive.files.get(
@@ -1364,9 +1412,10 @@ async function readReportsIndex(drive: any, rootFolderId: string): Promise<{ fil
       fileId,
       reports: Array.isArray(parsed.reports) ? parsed.reports : [],
       deletedCloudIds: Array.isArray(parsed.deletedCloudIds) ? parsed.deletedCloudIds : [],
+      deletedFileIds: Array.isArray(parsed.deletedFileIds) ? parsed.deletedFileIds : [],
     };
   } catch {
-    return { fileId, reports: [], deletedCloudIds: [] };
+    return { fileId, reports: [], deletedCloudIds: [], deletedFileIds: [] };
   }
 }
 
@@ -1375,9 +1424,14 @@ async function writeReportsIndex(
   rootFolderId: string,
   existingFileId: string | null,
   reports: any[],
-  deletedCloudIds: string[] = []
+  deletedCloudIds: string[] = [],
+  deletedFileIds: string[] = []
 ) {
-  const payload = JSON.stringify({ reports, deletedCloudIds, updatedAt: new Date().toISOString() }, null, 2);
+  const payload = JSON.stringify(
+    { reports, deletedCloudIds, deletedFileIds, updatedAt: new Date().toISOString() },
+    null,
+    2
+  );
   const media = { mimeType: 'application/json', body: Readable.from(payload) };
   if (existingFileId) {
     await drive.files.update({
@@ -1397,7 +1451,7 @@ async function writeReportsIndex(
 }
 
 async function upsertReportToCloudIndex(drive: any, rootFolderId: string, summary: any) {
-  const { fileId, reports, deletedCloudIds } = await readReportsIndex(drive, rootFolderId);
+  const { fileId, reports, deletedCloudIds, deletedFileIds } = await readReportsIndex(drive, rootFolderId);
   const idx = reports.findIndex((r: any) => r.cloudId === summary.cloudId);
   const next = [...reports];
   if (idx >= 0) {
@@ -1411,13 +1465,16 @@ async function upsertReportToCloudIndex(drive: any, rootFolderId: string, summar
     next.unshift(summary);
   }
   const filteredDeleted = deletedCloudIds.filter((id) => id !== summary.cloudId);
-  await writeReportsIndex(drive, rootFolderId, fileId, next, filteredDeleted);
+  const restoredFileIds = new Set([summary.docxDriveFileId, summary.pdfDriveFileId, summary.driveFileId].filter(Boolean));
+  const filteredDeletedFiles = deletedFileIds.filter((fid) => !restoredFileIds.has(fid));
+  await writeReportsIndex(drive, rootFolderId, fileId, next, filteredDeleted, filteredDeletedFiles);
 }
 
 async function discoverExistingDriveReports(
   drive: any,
   existingReports: any[],
-  deletedCloudIds: string[]
+  deletedCloudIds: string[],
+  deletedFileIds: string[] = []
 ): Promise<{ discovered: any[]; changed: boolean }> {
   const knownFileIds = new Set<string>();
   for (const r of existingReports) {
@@ -1425,6 +1482,7 @@ async function discoverExistingDriveReports(
     if (r.pdfDriveFileId) knownFileIds.add(r.pdfDriveFileId);
     if (r.driveFileId) knownFileIds.add(r.driveFileId);
   }
+  const deletedFileSet = new Set(deletedFileIds);
 
   const res = await drive.files.list({
     q: `(name contains 'Laporan_IPP_' or name contains 'Laporan_IL_') and trashed=false`,
@@ -1452,7 +1510,7 @@ async function discoverExistingDriveReports(
   for (const f of files) {
     const fname = String(f.name || '');
     if (!/\.(docx|pdf)$/i.test(fname)) continue;
-    if (knownFileIds.has(f.id)) continue;
+    if (knownFileIds.has(f.id) || deletedFileSet.has(f.id)) continue;
 
     const baseName = fname.replace(/\.(docx|pdf)$/i, '');
     const parentId = f.parents?.[0] || 'root';
@@ -1515,6 +1573,10 @@ async function discoverExistingDriveReports(
       parentMetaCache.set(grp.parentId, inspMeta);
     }
 
+    const reportDateJakarta = new Date(grp.updatedAt).toLocaleDateString('en-CA', {
+      timeZone: 'Asia/Jakarta',
+    });
+
     discovered.push({
       cloudId,
       inspectionId: inspMeta?.id || '',
@@ -1526,7 +1588,7 @@ async function discoverExistingDriveReports(
         companyName: inspMeta?.clientName || 'Laporan di Google Drive',
         companyAddress: inspMeta?.unitData?.lokasiUnit || '',
         inspectionDate: inspMeta?.tanggal_inspeksi || inspMeta?.unitData?.tanggal_inspeksi || '',
-        reportDate: grp.updatedAt.slice(0, 10),
+        reportDate: reportDateJakarta,
       },
       technicalData: {
         ...(inspMeta?.unitData || {}),
@@ -1548,18 +1610,23 @@ async function handleReports(req: VercelRequest, res: VercelResponse) {
   const rootFolderId = process.env.ROOT_FOLDER_ID?.trim() || 'root';
 
   if (req.method === 'GET') {
-    const { fileId, reports, deletedCloudIds } = await readReportsIndex(drive, rootFolderId);
+    const { fileId, reports, deletedCloudIds, deletedFileIds } = await readReportsIndex(drive, rootFolderId);
     try {
-      const { discovered, changed } = await discoverExistingDriveReports(drive, reports, deletedCloudIds);
+      const { discovered, changed } = await discoverExistingDriveReports(
+        drive,
+        reports,
+        deletedCloudIds,
+        deletedFileIds
+      );
       if (changed) {
         const merged = [...discovered, ...reports];
-        await writeReportsIndex(drive, rootFolderId, fileId, merged, deletedCloudIds).catch(() => {});
-        return res.status(200).json({ success: true, reports: merged });
+        await writeReportsIndex(drive, rootFolderId, fileId, merged, deletedCloudIds, deletedFileIds).catch(() => {});
+        return res.status(200).json({ success: true, reports: merged, deletedCloudIds });
       }
     } catch (discErr: any) {
       console.warn('[api/report] Gagal auto-discover laporan Drive:', discErr?.message);
     }
-    return res.status(200).json({ success: true, reports });
+    return res.status(200).json({ success: true, reports, deletedCloudIds });
   }
 
   if (req.method === 'POST') {
@@ -1576,10 +1643,15 @@ async function handleReports(req: VercelRequest, res: VercelResponse) {
     if (!cloudId) {
       return res.status(400).json({ error: 'Parameter cloudId wajib disertakan.' });
     }
-    const { fileId, reports, deletedCloudIds } = await readReportsIndex(drive, rootFolderId);
+    const { fileId, reports, deletedCloudIds, deletedFileIds } = await readReportsIndex(drive, rootFolderId);
+    const removed = reports.filter((r: any) => r.cloudId === cloudId);
     const filtered = reports.filter((r: any) => r.cloudId !== cloudId);
+    const newlyDeletedFiles = removed
+      .flatMap((r: any) => [r.docxDriveFileId, r.pdfDriveFileId, r.driveFileId])
+      .filter(Boolean);
     const nextDeleted = Array.from(new Set([...deletedCloudIds, cloudId]));
-    await writeReportsIndex(drive, rootFolderId, fileId, filtered, nextDeleted);
+    const nextDeletedFiles = Array.from(new Set([...deletedFileIds, ...newlyDeletedFiles]));
+    await writeReportsIndex(drive, rootFolderId, fileId, filtered, nextDeleted, nextDeletedFiles);
     return res.status(200).json({ success: true });
   }
 
@@ -1620,6 +1692,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   } catch (error: any) {
     console.error(`[api/report] Error in action ${action}:`, error);
-    return res.status(500).json({ error: error.message || 'Terjadi kesalahan sistem internal.' });
+    const msg = String(error?.message || '');
+    const isClientValidation =
+      msg.includes('tidak valid') || msg.includes('wajib') || msg.includes('tidak ditemukan');
+    return res
+      .status(isClientValidation ? 400 : 500)
+      .json({ error: isClientValidation ? msg : 'Terjadi kesalahan saat memproses laporan.' });
   }
 }

@@ -116,6 +116,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   } catch (err: any) {
     console.error('[api/sync-templates] Error:', err);
-    return res.status(500).json({ error: err.message || 'Gagal sync templates' });
+    return res.status(500).json({ error: 'Gagal sinkronisasi template.' });
   }
 }

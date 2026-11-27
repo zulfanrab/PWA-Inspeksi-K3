@@ -202,12 +202,22 @@ const OWNER_EMAIL = import.meta.env.VITE_OWNER_EMAIL || 'zulfanrafly03@gmail.com
 
 function buildOAuthUrl() {
   const redirectUri = getGoogleRedirectUri();
+  const state =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  try {
+    sessionStorage.setItem('aksara_oauth_state', state);
+  } catch {
+    // ignore storage failure
+  }
   const params = new URLSearchParams({
     client_id: GOOGLE_CONFIG.clientId,
     redirect_uri: redirectUri,
     response_type: 'token',
     scope: GOOGLE_CONFIG.scope,
     prompt: 'select_account',
+    state,
   });
   return `https://accounts.google.com/o/oauth2/auth?${params.toString()}`;
 }
@@ -593,7 +603,9 @@ export default function App() {
           e.returnValue = 'Ada foto survey yang belum disimpan! Yakin ingin meninggalkan halaman?';
           return e.returnValue;
         }
-      } catch {}
+      } catch {
+        // Ignore sessionStorage read failure
+      }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
@@ -707,7 +719,8 @@ const doPullInspections = useCallback(async () => {
     }
 
     // 🔥 BERSIHKAN DELETED ITEMS MENGGUNAKAN deletedIds YANG SUDAH DITARIK (tanpa fetch ganda)
-    if (isAuthenticated && result.deletedIds.length > 0) {
+    const authedNow = isAuthenticated || Boolean(localStorage.getItem('aksara_user_email'));
+    if (authedNow && result.deletedIds.length > 0) {
       for (const deletedId of result.deletedIds) {
         await SessionRepository.delete(deletedId).catch(() => {});
       }
@@ -731,8 +744,20 @@ const doPullInspections = useCallback(async () => {
     if (hash.includes('access_token')) {
       const params = new URLSearchParams(hash.substring(1));
       const token = params.get('access_token');
+      const returnedState = params.get('state');
+      let expectedState: string | null = null;
+      try {
+        expectedState = sessionStorage.getItem('aksara_oauth_state');
+        sessionStorage.removeItem('aksara_oauth_state');
+      } catch {
+        // ignore storage error
+      }
+      const stateValid = !expectedState || returnedState === expectedState;
       const expiresIn = parseInt(params.get('expires_in') || '3600', 10);
-      if (token) {
+      if (!stateValid) {
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+      if (token && stateValid) {
         saveToken(token, expiresIn);
         setIsAuthenticated(true);
         setTokenError(null);
@@ -1137,7 +1162,7 @@ const handleDelete = async (id: string) => {
 
       {/* DESKTOP SIDEBAR - Only show on desktop */}
       {isDesktop && (
-        <aside style={{ position: 'fixed', left: 0, top: 0, bottom: 0, width: 260, background: darkMode ? '#0F172A' : '#FFFFFF', borderRight: `1px solid ${T.border}`, display: 'flex', flexDirection: 'column', zIndex: 50, transform: sidebarCollapsed ? 'translateX(-100%)' : 'translateX(0)', transition: 'transform 0.22s ease', pointerEvents: sidebarCollapsed ? 'none' : 'auto' }}>
+        <aside style={{ position: 'fixed', left: 0, top: 0, bottom: 0, width: 260, overflowY: 'auto', background: darkMode ? '#0F172A' : '#FFFFFF', borderRight: `1px solid ${T.border}`, display: 'flex', flexDirection: 'column', zIndex: 50, transform: sidebarCollapsed ? 'translateX(-100%)' : 'translateX(0)', transition: 'transform 0.22s ease', pointerEvents: sidebarCollapsed ? 'none' : 'auto' }}>
           {/* Logo */}
           <div style={{ padding: '20px 52px 20px 20px', borderBottom: `1px solid ${T.border}`, position: 'relative' }}>
             <button
@@ -1310,7 +1335,7 @@ const handleDelete = async (id: string) => {
       )}
 
       {/* MOBILE HEADER or DESKTOP TOP HEADER */}
-      <header style={{ position: isDesktop ? 'sticky' : 'sticky', top: 0, zIndex: isDesktop ? 40 : 50, background: darkMode ? 'rgba(15,23,42,0.97)' : 'rgba(255,255,255,0.97)', backdropFilter: 'blur(8px)', borderBottom: `0.5px solid ${T.border}`, padding: isDesktop ? (view === 'REPORT_WIZARD' ? '0 16px' : '0 24px') : '0 16px', paddingTop: isDesktop ? 16 : 'env(safe-area-inset-top)', height: isDesktop ? 64 : `calc(52px + env(safe-area-inset-top))`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', maxWidth: isDesktop ? 'none' : 640, marginLeft: isDesktop ? desktopSidebarOffset : 'auto', marginRight: isDesktop ? 0 : 'auto', transition: isDesktop ? 'margin-left 0.22s ease, padding 0.22s ease' : undefined }}>
+      <header style={{ position: isDesktop ? 'sticky' : 'sticky', top: 0, zIndex: isDesktop ? 40 : 50, background: darkMode ? 'rgba(15,23,42,0.97)' : 'rgba(255,255,255,0.97)', backdropFilter: 'blur(8px)', borderBottom: `0.5px solid ${T.border}`, padding: isDesktop ? (view === 'REPORT_WIZARD' ? '0 16px' : '0 24px') : '0 16px', paddingTop: isDesktop ? 0 : 'env(safe-area-inset-top)', height: isDesktop ? 64 : `calc(52px + env(safe-area-inset-top))`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', maxWidth: isDesktop ? 'none' : 640, marginLeft: isDesktop ? desktopSidebarOffset : 'auto', marginRight: isDesktop ? 0 : 'auto', transition: isDesktop ? 'margin-left 0.22s ease, padding 0.22s ease' : undefined }}>
         {isDesktop ? (
           /* Desktop Header - Page Title */
           <>
@@ -1385,6 +1410,17 @@ const handleDelete = async (id: string) => {
               {drafts.length > 0 && (
                 <button onClick={() => navigateTo('SYNC_HUB')} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `0.5px solid ${T.amberBorder}`, background: T.amberLight, color: T.amber800 }}>
                   Sync <span style={{ background: T.amber400, color: T.amber800, borderRadius: 10, padding: '1px 5px', fontSize: 10, fontWeight: 700 }}>{drafts.length}</span>
+                </button>
+              )}
+              {isOwner && (
+                <button
+                  type="button"
+                  onClick={() => navigateTo('ADMIN')}
+                  title="Admin Panel"
+                  aria-label="Buka Admin Panel"
+                  style={{ width: 32, height: 32, borderRadius: 10, background: view === 'ADMIN' ? '#ECFDF5' : (darkMode ? '#1E293B' : '#F1F5F9'), border: `0.5px solid ${view === 'ADMIN' ? '#10B981' : T.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 15 }}
+                >
+                  🛡️
                 </button>
               )}
               <button onClick={() => setDarkMode(d => !d)} style={{ width: 32, height: 32, borderRadius: 10, background: darkMode ? '#1E293B' : '#F1F5F9', border: `0.5px solid ${T.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 16 }} title="Toggle dark mode">{darkMode ? '☀️' : '🌙'}</button>
@@ -1503,7 +1539,7 @@ const handleDelete = async (id: string) => {
               {isDesktop && (
                 <>
                   <StatCard label="Total Inspeksi" value={drafts.length + history.length} color="#3B82F6" dot="#3B82F6" />
-                  <StatCard label="Total Foto" value={existingPhotos.length + newPhotos.length} color="#8B5CF6" dot="#8B5CF6" />
+                  <StatCard label="Total Foto" value={[...drafts, ...history].reduce((sum, s) => sum + (s.photos?.length || 0), 0)} color="#8B5CF6" dot="#8B5CF6" />
                 </>
               )}
             </div>
@@ -1649,7 +1685,7 @@ const handleDelete = async (id: string) => {
 
       {/* BOTTOM NAV + FAB - Only for Mobile */}
       {!isDesktop && (view === 'HOME' || view === 'HISTORY' || view === 'SYNC_HUB' || view === 'ADMIN' || view === 'REPORT_DASHBOARD') && (
-        <nav style={{ position: 'fixed', bottom: 0, left: 0, right: 0, background: darkMode ? 'rgba(15,23,42,0.97)' : 'rgba(255,255,255,0.97)', backdropFilter: 'blur(8px)', borderTop: `0.5px solid ${T.border}`, padding: '8px 16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-around', maxWidth: 640, margin: '0 auto', zIndex: 40 }}>
+        <nav style={{ position: 'fixed', bottom: 0, left: 0, right: 0, background: darkMode ? 'rgba(15,23,42,0.97)' : 'rgba(255,255,255,0.97)', backdropFilter: 'blur(8px)', borderTop: `0.5px solid ${T.border}`, paddingTop: 8, paddingLeft: 16, paddingRight: 16, paddingBottom: 'calc(14px + env(safe-area-inset-bottom, 0px))', display: 'flex', alignItems: 'center', justifyContent: 'space-around', maxWidth: 640, margin: '0 auto', zIndex: 40 }}>
           <NavTab icon={ICONS.home} label="Beranda" active={view === 'HOME'} onClick={() => { resetForm(); setScreenStack(['HOME']); }} />
           <NavTab icon={ICONS.clipboard} label="Riwayat" active={view === 'HISTORY'} onClick={() => setScreenStack(['HISTORY'])} />
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
@@ -1702,7 +1738,7 @@ const handleDelete = async (id: string) => {
         <div
           style={{
             position: 'fixed',
-            bottom: isDesktop ? 32 : 86,
+            bottom: isDesktop ? 32 : 'calc(84px + env(safe-area-inset-bottom, 0px))',
             left: '50%',
             transform: 'translateX(-50%)',
             zIndex: 99999,

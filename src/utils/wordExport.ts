@@ -6,6 +6,7 @@ import {
   PageBreak, ShadingType, convertInchesToTwip,
 } from 'docx';
 import { saveAs } from 'file-saver';
+import { getApiBaseUrl } from '../config';
 
 // ==========================================
 // LABEL MAP
@@ -112,7 +113,7 @@ async function resolvePhotoDataUrl(
   if (photo.dataUrl?.startsWith('data:image')) return photo.dataUrl;
   if (photo.driveFileId) {
     try {
-      const res = await fetch(`/api/photo-proxy?fileId=${photo.driveFileId}`);
+      const res = await fetch(`${getApiBaseUrl()}/api/photo-proxy?fileId=${encodeURIComponent(photo.driveFileId)}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const blob = await res.blob();
       return await new Promise<string>((resolve, reject) => {

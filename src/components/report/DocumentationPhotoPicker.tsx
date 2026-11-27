@@ -33,11 +33,40 @@ export function initDocPhotos(sourcePhotos: any[] = [], initialReportData?: any)
   const savedJointId = docMeta?.jointPhotoId ? String(docMeta.jointPhotoId) : '';
   const savedCaptions: Record<string, string> =
     docMeta?.captionsById && typeof docMeta.captionsById === 'object' ? docMeta.captionsById : {};
+  const savedPhotosArr: any[] = Array.isArray(docMeta?.photos) ? docMeta.photos : [];
+  const savedJointDataUrl = typeof docMeta?.jointPhoto === 'string' ? docMeta.jointPhoto : '';
+
+  // Jika dibuka di device lain yang belum menyimpan sesi foto lapangan lokal, pulihkan dari photoDocumentation tersimpan
+  if ((!sourcePhotos || sourcePhotos.length === 0) && (savedPhotosArr.length > 0 || savedJointDataUrl)) {
+    const hydrated: DocPhotoItemState[] = savedPhotosArr.map((p: any, idx: number) => ({
+      id: savedOrderIds[idx] || String(p?.sourceId || p?.id || `saved_${idx}`),
+      dataUrl: p?.dataUrl || '',
+      driveFileId: p?.driveFileId,
+      fileName: p?.fileName,
+      caption: p?.caption || `Dokumentasi Pemeriksaan ${idx + 1}`,
+      selectionOrder: idx + 1,
+      isJointPhoto: false,
+    }));
+    if (savedJointDataUrl) {
+      hydrated.push({
+        id: savedJointId || 'saved_joint_photo',
+        dataUrl: savedJointDataUrl,
+        caption: 'Foto Bersama Pihak Perusahaan',
+        selectionOrder: null,
+        isJointPhoto: true,
+      });
+    }
+    return normalizeSequentialOrders(hydrated);
+  }
 
   const items: DocPhotoItemState[] = (sourcePhotos || []).map((p: any, idx: number) => {
     const id = p?.id !== undefined && p?.id !== null && String(p.id) !== '' ? String(p.id) : String(idx);
-    const isJoint = Boolean(savedJointId && savedJointId === id);
-    const orderIdx = savedOrderIds.indexOf(id);
+    const driveId = p?.driveFileId ? String(p.driveFileId) : '';
+    const isJoint = Boolean(savedJointId && (savedJointId === id || (driveId && savedJointId === driveId)));
+    let orderIdx = savedOrderIds.indexOf(id);
+    if (orderIdx < 0 && driveId) {
+      orderIdx = savedOrderIds.indexOf(driveId);
+    }
     const selectionOrder = !isJoint && orderIdx >= 0 ? orderIdx + 1 : null;
 
     return {
@@ -45,13 +74,38 @@ export function initDocPhotos(sourcePhotos: any[] = [], initialReportData?: any)
       dataUrl: p?.dataUrl || '',
       driveFileId: p?.driveFileId,
       fileName: p?.fileName,
-      caption: savedCaptions[id] || p?.caption || p?.fileName || `Dokumentasi Pemeriksaan ${idx + 1}`,
+      caption:
+        savedCaptions[id] ||
+        (driveId ? savedCaptions[driveId] : '') ||
+        p?.caption ||
+        p?.fileName ||
+        `Dokumentasi Pemeriksaan ${idx + 1}`,
       selectionOrder,
       isJointPhoto: isJoint,
     };
   });
 
   return normalizeSequentialOrders(items);
+}
+
+/** Mengambil data URL base64 foto dari state lokal atau proxy Drive dengan pengecekan error HTTP. */
+export async function resolveDocPhotoDataUrl(
+  photo: Pick<DocPhotoItemState, 'dataUrl' | 'driveFileId'>,
+  apiBase: string
+): Promise<string> {
+  if (photo.dataUrl && photo.dataUrl.includes('base64,')) return photo.dataUrl;
+  if (!photo.driveFileId) return '';
+  const res = await fetch(`${apiBase}/api/photo-proxy?fileId=${encodeURIComponent(photo.driveFileId)}`);
+  if (!res.ok) {
+    throw new Error(`Gagal memuat foto Drive (HTTP ${res.status})`);
+  }
+  const blob = await res.blob();
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Gagal membaca data foto.'));
+    reader.readAsDataURL(blob);
+  });
 }
 
 /** Rapikan ulang nomor urutan agar selalu beruntun 1, 2, 3, ... tanpa celah angka. */

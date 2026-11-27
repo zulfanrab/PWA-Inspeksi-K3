@@ -1435,23 +1435,21 @@ export function CustomCamera({ onCapture, onClose, unitLabel, clientName }: Cust
     }
   }, [photos]);
 
-  // Cegah gesture swipe-back native browser (swipe kiri/kanan dari tepi layar)
+  // Cegah gesture swipe-back native browser (hanya pada touchmove, bukan touchstart agar tombol tepi tetap bisa di-tap)
   useEffect(() => {
     const blockEdgeSwipe = (e: TouchEvent) => {
       if (e.touches && e.touches.length > 0) {
         const x = e.touches[0].clientX;
         // Area tepi layar (40px kiri atau kanan)
         if (x < 40 || x > window.innerWidth - 40) {
-          e.preventDefault();
+          if (e.cancelable) e.preventDefault();
         }
       }
     };
 
-    window.addEventListener('touchstart', blockEdgeSwipe, { passive: false });
     window.addEventListener('touchmove', blockEdgeSwipe, { passive: false });
 
     return () => {
-      window.removeEventListener('touchstart', blockEdgeSwipe);
       window.removeEventListener('touchmove', blockEdgeSwipe);
     };
   }, []);

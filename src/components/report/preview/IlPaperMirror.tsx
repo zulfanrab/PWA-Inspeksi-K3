@@ -61,7 +61,7 @@ export function IlPaperMirror({
               ['Tanggal Pemeriksaan', renderedData.inspectionDate],
               [
                 'Pemeriksaan yang dilakukan',
-                '1. Pemeriksaan Data Teknis\n2. Pemeriksaan Visual Panel LVMDP\n3. Pengujian',
+                `1. Pemeriksaan Data Teknis\n2. Pemeriksaan Visual ${renderedData.lokasiPanel && renderedData.lokasiPanel !== '-' ? renderedData.lokasiPanel : 'Panel LVMDP'}\n3. Pengujian`,
               ],
             ].map(([label, val]) => (
               <tr key={String(label)}>
@@ -194,7 +194,11 @@ export function IlPaperMirror({
             </tbody>
           </table>
           <div className="pl-2 space-y-0.5">
-            <div>In = P / (V × cos φ × √3)</div>
+            <div>
+              {renderedData.jumlahPhasa === '1 Phase'
+                ? 'In = P / (V × cos φ)'
+                : 'In = P / (V × cos φ × √3)'}
+            </div>
             <div>
               In = {renderedData.dayaAktifWatt} / ({renderedData.inDenominatorExpr})
             </div>

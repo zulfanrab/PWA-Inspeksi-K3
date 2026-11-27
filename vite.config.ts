@@ -52,8 +52,9 @@ export default defineConfig({
       },
       // FIXED: workbox config untuk cache app shell + assets
       workbox: {
-        // Cache app shell (HTML, JS, CSS)
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+        // Cache app shell (HTML, JS, CSS, PDF worker .mjs)
+        globPatterns: ['**/*.{js,mjs,css,html,ico,png,svg,woff,woff2}'],
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         // FIXED: navigateFallback agar app bisa dibuka offline
         navigateFallback: '/index.html',
         navigateFallbackDenylist: [/^\/api\//, /\.[a-z0-9]+$/i],

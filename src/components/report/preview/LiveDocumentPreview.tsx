@@ -136,16 +136,16 @@ export function LiveDocumentPreview({
       candidates.slice(0, 12).map(async (p) => {
         try {
           const res = await fetch(`${apiBase}/api/photo-proxy?fileId=${p.driveFileId}`);
-          if (!res.ok) return null;
+          if (!res.ok) return [p.id, '__error__'] as const;
           const blob = await res.blob();
           const dataUrl = await new Promise<string>((resolve) => {
             const reader = new FileReader();
             reader.onloadend = () => resolve(String(reader.result || ''));
             reader.readAsDataURL(blob);
           });
-          return dataUrl ? ([p.id, dataUrl] as const) : null;
+          return [p.id, dataUrl || '__error__'] as const;
         } catch {
-          return null;
+          return [p.id, '__error__'] as const;
         }
       })
     ).then((pairs) => {
@@ -178,7 +178,10 @@ export function LiveDocumentPreview({
 
   // Render ulang .docx dengan debounce pintar 600ms & pertahankan posisi scroll
   useEffect(() => {
-    if (!activeDocxMode || !templateBuffer) return;
+    if (!activeDocxMode || !templateBuffer) {
+      setIsSyncingRender(false);
+      return;
+    }
 
     let cancelled = false;
     setIsSyncingRender(true);
@@ -187,7 +190,10 @@ export function LiveDocumentPreview({
       const bodyEl = docxBodyRef.current;
       const styleEl = docxStyleRef.current;
       const viewportEl = scrollViewportRef.current;
-      if (!bodyEl || !styleEl || !viewportEl) return;
+      if (!bodyEl || !styleEl || !viewportEl) {
+        if (!cancelled) setIsSyncingRender(false);
+        return;
+      }
 
       const savedScrollTop = viewportEl.scrollTop;
       const savedScrollLeft = viewportEl.scrollLeft;
@@ -438,10 +444,10 @@ export function LiveDocumentPreview({
         style={{ backgroundColor: '#CBD5E1' }}
       >
         <div
-          className="mx-auto relative"
+          className="mx-auto relative overflow-hidden"
           style={{
             width: `${Math.ceil(naturalSize.w * effectiveScale)}px`,
-            minHeight: `${Math.ceil(naturalSize.h * effectiveScale)}px`,
+            height: `${Math.ceil(naturalSize.h * effectiveScale)}px`,
           }}
         >
           <div

@@ -61,17 +61,18 @@ export function initGlobalGestureBlocker(): () => void {
     const deltaX = Math.abs(touch.clientX - touchStartX);
     const deltaY = Math.abs(touch.clientY - touchStartY);
 
-    // 1. Edge navigation prevention (Chrome/Safari back/forward gesture):
-    // If touch started near screen edge (<40px or >innerWidth - 40px) and moves horizontally:
+    // 1. Jika di dalam container horizontal scroll (mis. preview dokumen di-zoom), biarkan pan bebas
+    if (isHorizScrollable) return;
+
+    // 2. Edge navigation prevention (Chrome/Safari back/forward gesture):
     const isNearEdge = touchStartX < 40 || touchStartX > window.innerWidth - 40;
     if (isNearEdge && deltaX > 2) {
       if (e.cancelable) e.preventDefault();
       return;
     }
 
-    // 2. Prevent general horizontal page drag/swipe across entire app:
-    // If moving predominantly horizontally and NOT inside an approved horizontal scroll container:
-    if (!isHorizScrollable && deltaX > 4 && deltaX > deltaY) {
+    // 3. Prevent general horizontal page drag/swipe across entire app:
+    if (deltaX > 4 && deltaX > deltaY) {
       if (e.cancelable) e.preventDefault();
     }
   };

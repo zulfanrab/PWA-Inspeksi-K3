@@ -3,6 +3,8 @@
 const CACHE_NAME = 'aksara-docx-templates-v1';
 const memoryTemplates = new Map<string, ArrayBuffer>();
 const inFlightFetches = new Map<string, Promise<TemplateLoadResult>>();
+const invalidationEpochs = new Map<string, number>();
+let globalEpoch = 0;
 const updateListeners = new Map<string, Set<(result: TemplateLoadResult) => void>>();
 
 export interface TemplateLoadResult {
@@ -64,6 +66,7 @@ export async function invalidateDocxTemplateCache(typeCode?: string): Promise<vo
   if (typeCode) {
     const cleanCode = normalizeCode(typeCode);
     if (!cleanCode) return;
+    invalidationEpochs.set(cleanCode, (invalidationEpochs.get(cleanCode) || 0) + 1);
     memoryTemplates.delete(cleanCode);
     inFlightFetches.delete(`${cleanCode}:force`);
     inFlightFetches.delete(`${cleanCode}:normal`);
@@ -83,6 +86,7 @@ export async function invalidateDocxTemplateCache(typeCode?: string): Promise<vo
     return;
   }
 
+  globalEpoch++;
   memoryTemplates.clear();
   inFlightFetches.clear();
   if (typeof caches !== 'undefined') {
@@ -142,6 +146,9 @@ async function fetchTemplateFromNetwork(
     };
   }
 
+  const startEpoch = invalidationEpochs.get(cleanCode) || 0;
+  const startGlobal = globalEpoch;
+
   try {
     // Selalu bypass HTTP browser cache dengan cache: 'no-store' + cache-buster timestamp
     const url = `${apiBase}/api/report?action=template&typeCode=${encodeURIComponent(cleanCode)}&download=1&t=${Date.now()}`;
@@ -160,6 +167,15 @@ async function fetchTemplateFromNetwork(
     const buf = await res.arrayBuffer();
     if (!buf || buf.byteLength === 0) {
       return { buffer: null, source: 'unavailable', error: 'File template kosong.' };
+    }
+
+    // Jika cache baru saja di-invalidate selama fetch berjalan (mis. baru upload template),
+    // abaikan hasil fetch lama agar tidak menimpa template terbaru
+    if (
+      (invalidationEpochs.get(cleanCode) || 0) !== startEpoch ||
+      globalEpoch !== startGlobal
+    ) {
+      return loadCachedDocxTemplate(cleanCode, apiBase, true);
     }
 
     const modifiedTime = res.headers.get('X-Template-Modified');

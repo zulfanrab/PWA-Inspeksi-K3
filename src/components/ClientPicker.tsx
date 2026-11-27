@@ -507,10 +507,18 @@ export function ClientPicker({ onPick, onManual, onCancel, currentUserEmail, onD
               const hasPhotos = fullMeta?.hasPhotos ?? false;
 
               return (
-                <button
+                <div
                   key={u.id}
+                  role="button"
+                  tabIndex={0}
                   onClick={() => handleSelectDrilledUnit(u)}
-                  className="w-full bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 hover:border-emerald-500 dark:hover:border-emerald-500 hover:shadow-md rounded-2xl p-4 text-left transition-all active:scale-[0.99] group relative"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      handleSelectDrilledUnit(u);
+                    }
+                  }}
+                  className="w-full cursor-pointer bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 hover:border-emerald-500 dark:hover:border-emerald-500 hover:shadow-md rounded-2xl p-4 text-left transition-all active:scale-[0.99] group relative"
                 >
                   <div className="flex items-start gap-3">
                     <div className="w-10 h-10 rounded-xl bg-slate-50 dark:bg-slate-700/60 group-hover:bg-emerald-50 dark:group-hover:bg-emerald-950/40 flex items-center justify-center text-xl flex-shrink-0 transition-colors">
@@ -566,7 +574,7 @@ export function ClientPicker({ onPick, onManual, onCancel, currentUserEmail, onD
                       </button>
                     </div>
                   </div>
-                </button>
+                </div>
               );
             })}
           </div>
@@ -748,10 +756,18 @@ export function ClientPicker({ onPick, onManual, onCancel, currentUserEmail, onD
                 const relativeTime = formatRelativeTime(u.updatedAt || u.createdAt);
 
                 return (
-                  <button
+                  <div
                     key={u.id}
+                    role="button"
+                    tabIndex={0}
                     onClick={() => handleSelectRecentUnit(u)}
-                    className="w-full bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 hover:border-emerald-500 dark:hover:border-emerald-500 hover:shadow-md rounded-2xl p-4 text-left transition-all active:scale-[0.99] group relative"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        handleSelectRecentUnit(u);
+                      }
+                    }}
+                    className="w-full cursor-pointer bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 hover:border-emerald-500 dark:hover:border-emerald-500 hover:shadow-md rounded-2xl p-4 text-left transition-all active:scale-[0.99] group relative"
                   >
                     <div className="flex items-start gap-3">
                       {/* Icon Objek K3 */}
@@ -825,7 +841,7 @@ export function ClientPicker({ onPick, onManual, onCancel, currentUserEmail, onD
                         </button>
                       </div>
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
