@@ -1,5 +1,5 @@
 // src/components/report/preview/ReportWorkspaceLayout.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useResponsive } from '../../../hooks/useResponsive';
 import { registerBackInterceptor } from '../../../utils/navigationGuard';
 import type { ReportPreviewData } from '../../../utils/reportTemplatePayload';
@@ -25,6 +25,32 @@ export function ReportWorkspaceLayout({
   const { isDesktop } = useResponsive();
   const [showDesktopPreview, setShowDesktopPreview] = useState(true);
   const [showMobileModal, setShowMobileModal] = useState(false);
+  const [splitRatio, setSplitRatio] = useState<number>(44);
+  const [isDraggingSplit, setIsDraggingSplit] = useState(false);
+  const workspaceRef = useRef<HTMLDivElement>(null);
+
+  const handleStartDragSplit = (e: React.PointerEvent) => {
+    e.preventDefault();
+    setIsDraggingSplit(true);
+
+    const onMove = (ev: PointerEvent) => {
+      const el = workspaceRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      const pct = ((ev.clientX - rect.left) / rect.width) * 100;
+      setSplitRatio(Math.max(28, Math.min(68, Math.round(pct * 10) / 10)));
+    };
+
+    const onUp = () => {
+      setIsDraggingSplit(false);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
 
   // Pastikan tombol Back perangkat di Mobile menutup modal preview terlebih dahulu, bukan keluar wizard
   useEffect(() => {
@@ -39,14 +65,16 @@ export function ReportWorkspaceLayout({
   if (isDesktop) {
     return (
       <div
+        ref={workspaceRef}
         className={`flex bg-gray-50 border border-gray-200 rounded-2xl overflow-hidden shadow-sm ${
-          showDesktopPreview ? 'h-[calc(100vh-124px)] min-h-[600px]' : 'min-h-[600px]'
-        }`}
+          showDesktopPreview ? 'h-[calc(100vh-100px)] min-h-[580px]' : 'min-h-[600px]'
+        } ${isDraggingSplit ? 'select-none' : ''}`}
       >
-        {/* KIRI: Form Input Wizard (~45% saat split-screen, penuh saat preview disembunyikan) */}
+        {/* KIRI: Form Input Wizard (bisa digeser lebarnya lewat garis tengah) */}
         <div
+          style={showDesktopPreview ? { width: `${splitRatio}%` } : undefined}
           className={`flex flex-col min-w-0 bg-gray-50 ${
-            showDesktopPreview ? 'w-[46%] xl:w-[45%] h-full' : 'w-full'
+            showDesktopPreview ? 'h-full shrink-0' : 'w-full'
           }`}
         >
           <div className="shrink-0 bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between gap-2">
@@ -75,9 +103,25 @@ export function ReportWorkspaceLayout({
           </div>
         </div>
 
-        {/* KANAN: Real .docx Live Document Preview (~54%) */}
+        {/* PEMISAH TENGAH BISA DIGESER (DRAG TO RESIZE) */}
         {showDesktopPreview && (
-          <div className="w-[54%] xl:w-[55%] h-full border-l border-gray-200 flex flex-col min-w-0">
+          <div
+            onPointerDown={handleStartDragSplit}
+            onDoubleClick={() => setSplitRatio(44)}
+            title="Geser kiri/kanan untuk mengatur lebar Form & Preview (klik 2x untuk reset)"
+            className={`w-2 cursor-col-resize shrink-0 flex items-center justify-center transition-colors border-l border-r border-gray-200 ${
+              isDraggingSplit ? 'bg-emerald-500' : 'bg-gray-100 hover:bg-emerald-100'
+            }`}
+          >
+            <span className={`text-[10px] font-bold leading-none ${isDraggingSplit ? 'text-white' : 'text-gray-400'}`}>
+              ⋮
+            </span>
+          </div>
+        )}
+
+        {/* KANAN: Real .docx Live Document Preview */}
+        {showDesktopPreview && (
+          <div className="flex-1 h-full flex flex-col min-w-0">
             <LiveDocumentPreview
               previewData={previewData}
               mode="desktop"

@@ -428,6 +428,7 @@ function NavTab({ icon, label, active, onClick }: { icon: React.ReactNode; label
 
 export default function App() {
   const { isMobile, isDesktop } = useResponsive();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
   const [screenStack, setScreenStack] = useState<View[]>(() => {
     try {
       const saved = localStorage.getItem('aksara_navigation_stack');
@@ -444,6 +445,18 @@ export default function App() {
   });
 
   const view = screenStack[screenStack.length - 1] || 'HOME';
+
+  // Otomatis sembunyikan sidebar kiri saat masuk Wizard Laporan di Desktop agar Form + Live Preview lega
+  const prevDesktopViewRef = useRef<View | null>(null);
+  useEffect(() => {
+    if (!isDesktop) return;
+    if (view === 'REPORT_WIZARD' && prevDesktopViewRef.current !== 'REPORT_WIZARD') {
+      setSidebarCollapsed(true);
+    } else if (view !== 'REPORT_WIZARD' && prevDesktopViewRef.current === 'REPORT_WIZARD') {
+      setSidebarCollapsed(false);
+    }
+    prevDesktopViewRef.current = view;
+  }, [view, isDesktop]);
 
   const navigateTo = useCallback((newScreen: View) => {
     setScreenStack((prev) => [...prev, newScreen]);
@@ -1098,6 +1111,7 @@ const handleDelete = async (id: string) => {
   const firstName = currentUserName ? currentUserName.split(' ')[0] : '';
   const roleBadge = currentUserEmail ? getRoleBadge(currentUserEmail) : 'Ahli K3';
   const isOwner = currentUserEmail === OWNER_EMAIL;
+  const desktopSidebarOffset = isDesktop && !sidebarCollapsed ? 260 : 0;
 
   // ── RENDER ────────────────────────────────────────────────────────────────
 
@@ -1123,9 +1137,34 @@ const handleDelete = async (id: string) => {
 
       {/* DESKTOP SIDEBAR - Only show on desktop */}
       {isDesktop && (
-        <aside style={{ position: 'fixed', left: 0, top: 0, bottom: 0, width: 260, background: darkMode ? '#0F172A' : '#FFFFFF', borderRight: `1px solid ${T.border}`, display: 'flex', flexDirection: 'column', zIndex: 50 }}>
+        <aside style={{ position: 'fixed', left: 0, top: 0, bottom: 0, width: 260, background: darkMode ? '#0F172A' : '#FFFFFF', borderRight: `1px solid ${T.border}`, display: 'flex', flexDirection: 'column', zIndex: 50, transform: sidebarCollapsed ? 'translateX(-100%)' : 'translateX(0)', transition: 'transform 0.22s ease', pointerEvents: sidebarCollapsed ? 'none' : 'auto' }}>
           {/* Logo */}
-          <div style={{ padding: 20, borderBottom: `1px solid ${T.border}` }}>
+          <div style={{ padding: '20px 52px 20px 20px', borderBottom: `1px solid ${T.border}`, position: 'relative' }}>
+            <button
+              type="button"
+              onClick={() => setSidebarCollapsed(true)}
+              title="Sembunyikan menu samping"
+              aria-label="Sembunyikan menu samping"
+              style={{
+                position: 'absolute',
+                right: 14,
+                top: '50%',
+                transform: 'translateY(-50%)',
+                width: 30,
+                height: 30,
+                borderRadius: 8,
+                border: `1px solid ${T.border}`,
+                background: darkMode ? '#1E293B' : '#F8FAFC',
+                color: T.textSecondary,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                fontSize: 12,
+              }}
+            >
+              ◀
+            </button>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <img src="/icons/icon-192.png" alt="ARP" style={{ width: 36, height: 36, borderRadius: 10, objectFit: 'cover' }} />
               <div>
@@ -1271,13 +1310,38 @@ const handleDelete = async (id: string) => {
       )}
 
       {/* MOBILE HEADER or DESKTOP TOP HEADER */}
-      <header style={{ position: isDesktop ? 'sticky' : 'sticky', top: 0, zIndex: isDesktop ? 40 : 50, background: darkMode ? 'rgba(15,23,42,0.97)' : 'rgba(255,255,255,0.97)', backdropFilter: 'blur(8px)', borderBottom: `0.5px solid ${T.border}`, padding: isDesktop ? '0 24px' : '0 16px', paddingTop: isDesktop ? 16 : 'env(safe-area-inset-top)', height: isDesktop ? 64 : `calc(52px + env(safe-area-inset-top))`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', maxWidth: isDesktop ? 'none' : 640, marginLeft: isDesktop ? 260 : 'auto', marginRight: isDesktop ? 0 : 'auto' }}>
+      <header style={{ position: isDesktop ? 'sticky' : 'sticky', top: 0, zIndex: isDesktop ? 40 : 50, background: darkMode ? 'rgba(15,23,42,0.97)' : 'rgba(255,255,255,0.97)', backdropFilter: 'blur(8px)', borderBottom: `0.5px solid ${T.border}`, padding: isDesktop ? (view === 'REPORT_WIZARD' ? '0 16px' : '0 24px') : '0 16px', paddingTop: isDesktop ? 16 : 'env(safe-area-inset-top)', height: isDesktop ? 64 : `calc(52px + env(safe-area-inset-top))`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', maxWidth: isDesktop ? 'none' : 640, marginLeft: isDesktop ? desktopSidebarOffset : 'auto', marginRight: isDesktop ? 0 : 'auto', transition: isDesktop ? 'margin-left 0.22s ease, padding 0.22s ease' : undefined }}>
         {isDesktop ? (
           /* Desktop Header - Page Title */
           <>
-            <h2 style={{ fontSize: 20, fontWeight: 600, color: T.textPrimary }}>
-              {view === 'HOME' ? 'Dashboard' : view === 'HISTORY' ? 'Riwayat Inspeksi' : view === 'SYNC_HUB' ? 'Sinkronisasi' : view === 'ADMIN' ? 'Admin Panel' : view === 'REPORT_DASHBOARD' ? 'Laporan K3' : view === 'REPORT_WIZARD' ? 'Wizard Laporan' : 'Aksara Inspect'}
-            </h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <button
+                type="button"
+                onClick={() => setSidebarCollapsed((prev) => !prev)}
+                title={sidebarCollapsed ? 'Tampilkan menu samping' : 'Sembunyikan menu samping'}
+                aria-label={sidebarCollapsed ? 'Tampilkan menu samping' : 'Sembunyikan menu samping'}
+                style={{
+                  height: 34,
+                  padding: sidebarCollapsed ? '0 12px' : '0 10px',
+                  borderRadius: 10,
+                  border: `1px solid ${sidebarCollapsed ? '#10B981' : T.border}`,
+                  background: sidebarCollapsed ? (darkMode ? '#064E3B' : '#ECFDF5') : (darkMode ? '#1E293B' : '#F8FAFC'),
+                  color: sidebarCollapsed ? (darkMode ? '#6EE7B7' : '#047857') : T.textPrimary,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  cursor: 'pointer',
+                  fontSize: 13,
+                  fontWeight: 600,
+                }}
+              >
+                <span style={{ fontSize: 15, lineHeight: 1 }}>☰</span>
+                {sidebarCollapsed && <span>Menu</span>}
+              </button>
+              <h2 style={{ fontSize: 20, fontWeight: 600, color: T.textPrimary }}>
+                {view === 'HOME' ? 'Dashboard' : view === 'HISTORY' ? 'Riwayat Inspeksi' : view === 'SYNC_HUB' ? 'Sinkronisasi' : view === 'ADMIN' ? 'Admin Panel' : view === 'REPORT_DASHBOARD' ? 'Laporan K3' : view === 'REPORT_WIZARD' ? 'Wizard Laporan' : 'Aksara Inspect'}
+              </h2>
+            </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 20, background: isOnline ? '#ECFDF5' : '#FEF2F2', border: `1px solid ${isOnline ? '#6EE7B7' : '#FCA5A5'}` }}>
                 <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: isOnline ? '#10B981' : '#EF4444' }} />
@@ -1384,7 +1448,7 @@ const handleDelete = async (id: string) => {
       )}
 
       {/* MAIN */}
-      <main style={{ maxWidth: isDesktop ? 'calc(100vw - 260px)' : 640, margin: isDesktop ? 0 : '0 auto', padding: isDesktop ? '24px 24px 32px' : '16px 16px 100px', marginLeft: isDesktop ? 260 : 'auto', display: 'flex', flexDirection: 'column', gap: isDesktop ? 24 : 16, width: isDesktop ? 'calc(100% - 260px)' : '100%', minWidth: 0, boxSizing: 'border-box', overflowX: 'clip', touchAction: 'pan-y' }}>
+      <main style={{ maxWidth: isDesktop ? `calc(100vw - ${desktopSidebarOffset}px)` : 640, margin: isDesktop ? 0 : '0 auto', padding: isDesktop ? (view === 'REPORT_WIZARD' ? '12px 16px 16px' : '24px 24px 32px') : '16px 16px 100px', marginLeft: isDesktop ? desktopSidebarOffset : 'auto', display: 'flex', flexDirection: 'column', gap: isDesktop ? (view === 'REPORT_WIZARD' ? 12 : 24) : 16, width: isDesktop ? `calc(100% - ${desktopSidebarOffset}px)` : '100%', minWidth: 0, boxSizing: 'border-box', overflowX: 'clip', touchAction: 'pan-y', transition: isDesktop ? 'margin-left 0.22s ease, width 0.22s ease, max-width 0.22s ease, padding 0.22s ease' : undefined }}>
 
         {/* Desktop Alerts - Visible across all views on Desktop */}
         {isDesktop && (
