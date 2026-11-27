@@ -45,6 +45,18 @@ interface ExtraAttachmentState {
   dataUrl: string;
 }
 
+async function parseApiJson(res: Response): Promise<any> {
+  const raw = await res.text();
+  try {
+    return JSON.parse(raw);
+  } catch {
+    if (res.status === 504 || raw.toLowerCase().includes('timed out')) {
+      throw new Error('Server timeout (504). Silakan coba klik ulang beberapa detik lagi.');
+    }
+    throw new Error(`Respon server bukan JSON (HTTP ${res.status}): ${raw.slice(0, 120)}`);
+  }
+}
+
 function formatTanggalHuruf(dateStr?: string): string {
   if (!dateStr) return '-';
   const parsed = new Date(dateStr.includes('T') ? dateStr : `${dateStr}T00:00:00+07:00`);
@@ -551,7 +563,7 @@ export function IppReportWizard({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode: 'ocr_meter', imageDataUrl: compressed }),
       });
-      const data = await res.json();
+      const data = await parseApiJson(res);
       if (!res.ok || !data.success) throw new Error(data.error || 'Gagal membaca foto alat ukur.');
 
       const { resistanceValue, toolBrand } = data.data || {};
@@ -636,7 +648,7 @@ export function IppReportWizard({
           },
         }),
       });
-      const data = await res.json();
+      const data = await parseApiJson(res);
       if (!res.ok || !data.success) throw new Error(data.error || 'Gagal memoles narasi AI.');
       const d = data.data;
       if (d.executiveSummary) setVisualSummary(d.executiveSummary);
@@ -675,7 +687,7 @@ export function IppReportWizard({
           },
         }),
       });
-      const data = await res.json();
+      const data = await parseApiJson(res);
       if (!res.ok || !data.success) throw new Error(data.error || 'Gagal menyusun foto otomatis.');
       const items: Array<{ id: string; caption: string; isJointPhoto?: boolean }> = data.data?.items || [];
       setPhotos((prev) =>
@@ -729,7 +741,7 @@ export function IppReportWizard({
           },
         }),
       });
-      const data = await res.json();
+      const data = await parseApiJson(res);
       if (!res.ok || !data.success) throw new Error(data.error || 'Gagal menjalankan QC.');
       setQcNotes(data.data?.summary || 'Tidak ditemukan kontradiksi data.');
     } catch (err: any) {
@@ -897,7 +909,7 @@ export function IppReportWizard({
         body: JSON.stringify({ reportId: localId, reportData: reportPayload }),
       });
 
-      const data = await res.json();
+      const data = await parseApiJson(res);
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Gagal membuat dokumen laporan.');
       }

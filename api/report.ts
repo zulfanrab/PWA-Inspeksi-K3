@@ -160,7 +160,10 @@ async function generateContentWithRetry(
   requestConfig: any
 ) {
   let lastError: any;
+  const startedAt = Date.now();
   for (const modelName of modelCandidates) {
+    // Jaga agar total waktu tidak melewati batas timeout Vercel 10 detik
+    if (Date.now() - startedAt > 6500) break;
     const model = genAI.getGenerativeModel({ model: modelName });
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
@@ -170,11 +173,11 @@ async function generateContentWithRetry(
         const msg = String(err?.message || '');
         const isNotFound = err?.status === 404 || msg.includes('404') || msg.includes('no longer available');
         if (isNotFound) {
-          break; // model tidak tersedia -> coba kandidat berikutnya
+          break;
         }
         const isTransient = err?.status === 503 || err?.status === 429 || msg.includes('503') || msg.includes('high demand');
-        if (isTransient && attempt === 0) {
-          await new Promise((r) => setTimeout(r, 900));
+        if (isTransient && attempt === 0 && Date.now() - startedAt < 5000) {
+          await new Promise((r) => setTimeout(r, 450));
           continue;
         }
         break;
@@ -212,8 +215,9 @@ async function handleNarrative(req: VercelRequest, res: VercelResponse) {
   }
 
   const genAI = new GoogleGenerativeAI(apiKey);
+  // Gunakan gemini-3.8-flash langsung agar cepat (< 4 detik) dan aman dari timeout 10s Vercel Hobby
   const modelCandidates = modelTier === 'pro'
-    ? ['gemini-2.5-pro', 'gemini-3.8-pro', 'gemini-3.8-flash']
+    ? ['gemini-3.8-flash', 'gemini-3.8-flash-lite']
     : ['gemini-3.8-flash'];
 
   const promptInstructions = `
@@ -264,7 +268,7 @@ Kembalikan respon Anda strictly dalam bentuk JSON sesuai dengan schema yang dite
 
   const result = await generateContentWithRetry(genAI, modelCandidates, requestConfig);
 
-  const responseText = result.response.text();
+  const responseText = result.response.text().replace(/^```json\s*|\s*```$/g, '').trim();
   const parsedNarrative = JSON.parse(responseText);
 
   return res.status(200).json({
